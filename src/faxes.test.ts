@@ -310,6 +310,29 @@ describe("send", () => {
     ).rejects.toThrow(/exactly one/);
   });
 
+  it("refuses a document it cannot read, rather than sending an empty page", async () => {
+    // TypeScript stops this at compile time; JavaScript does not, and the
+    // commonest untyped mistake is passing a PATH — which is what the Python
+    // client takes. Left unguarded the string is not a Blob and not a
+    // Uint8Array, `new Uint8Array("chart.pdf")` is EMPTY, and the request
+    // goes out: a real fax, really sent, with no pages in it. The far end is
+    // dialled and the customer is charged for nothing.
+    //
+    // The refusal has to happen before the request is built, so this asserts
+    // that no send was recorded at all.
+    const sends = recordSends();
+    const faxes = client().faxes;
+
+    for (const bad of ["chart-4471.pdf", 42, null, {}] as unknown[]) {
+      await expect(
+        faxes.send({ faxAccount: ACCOUNT_ID, to: "+1302", file: bad as never }),
+        String(bad),
+      ).rejects.toThrow(/file takes/);
+    }
+
+    expect(sends.count, "a document that could not be read still reached the wire").toBe(0);
+  });
+
   it("refuses more than five documents", async () => {
     // The ceiling counts uploads PLUS urls, which is why it is checked on
     // the total rather than on each body.

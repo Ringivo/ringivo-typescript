@@ -57,9 +57,11 @@ const finished = await client.faxes.get(fax.id);
 console.log(finished.status, finished.pagesTransferred);
 ```
 
-`file` takes a `Buffer`, a `Uint8Array`, a `Blob`, a `File`, or an array of
-up to five of them. A `File` keeps its own name; anything else is named
-`document-0`, `document-1` and so on. Point at pages instead of uploading
+`file` takes a `Buffer`, a `Uint8Array`, a `Blob`, a `File`, an `ArrayBuffer`,
+or an array of up to five of them. A `File` keeps its own name; anything else
+is named `document-0`, `document-1` and so on. **A path is not a document** —
+read it first, as above; passing the path itself is refused rather than sent
+as an empty page. Point at pages instead of uploading
 them with `urls: [...]` (up to five `https` links). Uploads and URLs cannot
 be mixed in one request.
 
