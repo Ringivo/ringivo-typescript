@@ -59,7 +59,7 @@ const transports = new WeakMap<Ringivo, PathBasedClient<paths>>();
 export interface RingivoOptions {
   /**
    * The API root you were given, without a trailing slash —
-   * `https://api.yourprovider.example`. Required: this package names no host
+   * `https://api.ringivo.com`. Required: this package names no host
    * of its own.
    */
   baseUrl: string;
