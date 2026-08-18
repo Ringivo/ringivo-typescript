@@ -378,15 +378,57 @@ function dataObject(payload: unknown): RawJson {
   return isRecord(data) ? data : {};
 }
 
-/** Normalise whatever `file` was given into a list of documents. */
+/**
+ * Normalise whatever `file` was given into a list of documents, or refuse.
+ *
+ * THE REFUSAL IS THE POINT, and it is why this is not one line. TypeScript
+ * stops a wrong type at compile time; JavaScript does not, and the commonest
+ * untyped mistake is passing a PATH, because that is what the Python client
+ * takes. A string is neither a `Blob` nor a `Uint8Array`, `new
+ * Uint8Array("chart.pdf")` is EMPTY, and without this check the send went out
+ * anyway: a real fax, really dialled, with no pages in it, and the customer
+ * charged for nothing. Refusing here — before a request is built — costs a
+ * clear message instead.
+ *
+ * There is no `Path` to accept: reading a file is the caller's, so hand this
+ * the bytes (`await readFile(path)`) or a `Blob` (`await openAsBlob(path)`).
+ */
 function uploads(file: SendFaxOptions["file"]): readonly FaxUpload[] {
   if (file === undefined) {
     return [];
   }
-  if (Array.isArray(file)) {
-    return file as readonly FaxUpload[];
+
+  const given = Array.isArray(file) ? (file as readonly unknown[]) : [file as unknown];
+
+  return given.map((document) => {
+    if (
+      document instanceof Blob ||
+      document instanceof Uint8Array ||
+      document instanceof ArrayBuffer
+    ) {
+      return document;
+    }
+
+    throw new TypeError(
+      "file takes a Blob, a File, a Uint8Array, a Buffer, an ArrayBuffer, or an array of " +
+        `them; got ${describe(document)}. A path is not a document — read it first, with ` +
+        "readFile(path) or openAsBlob(path).",
+    );
+  });
+}
+
+/** What a rejected value was, in words a caller can act on. */
+function describe(value: unknown): string {
+  if (value === null) {
+    return "null";
   }
-  return [file as FaxUpload];
+  if (typeof value === "string") {
+    return `a string (${JSON.stringify(value.slice(0, 40))})`;
+  }
+  if (typeof value === "object") {
+    return `a ${value.constructor?.name ?? "plain object"}`;
+  }
+  return `a ${typeof value}`;
 }
 
 interface Part {
