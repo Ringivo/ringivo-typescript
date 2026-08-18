@@ -961,7 +961,8 @@ export interface components {
         };
         /**
          * @description The four fields of the built-in cover page. A cover page IS a page — it is counted in
-         *     `pages_total` and it bills.
+         *     `pages_total` and it bills. `null` is accepted the same as omitting the field or sending
+         *     `{}` — none of the three add a cover page.
          *
          *     Shared by both send bodies on purpose: the ceiling on each field is one validation rule in
          *     the application, so two copies here would be two places for it to drift.
@@ -971,7 +972,7 @@ export interface components {
             from_name?: string;
             subject?: string;
             message?: string;
-        };
+        } | null;
         /**
          * @description Upload the pages themselves. Up to five parts, sniffed on their bytes rather than on their
          *     names — PDF, TIFF, PNG and JPEG are what a fax can be made of.
@@ -1863,8 +1864,10 @@ export interface operations {
             /**
              * @description The request is malformed — a missing `Idempotency-Key`, a `to` that is not E.164, a
              *     JSON:API document body, more than five documents, uploads and URLs mixed in one request,
-             *     a document URL that is not `https` or points at a private address, or a `fax_account` id
-             *     that names no account of yours (`code: validation_failed`).
+             *     a document URL that is not `https` or points at a private address, a `fax_account` id
+             *     that names no account of yours, or — on a multipart send — a `tags` or `cover_page` part
+             *     whose body is not a JSON object, or whose decoded fields fail the same shape and length
+             *     rules the JSON body enforces on `tags.*` / `cover_page.*` (`code: validation_failed`).
              */
             422: {
                 headers: {
