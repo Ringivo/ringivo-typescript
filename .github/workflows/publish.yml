@@ -3,6 +3,13 @@ on:
   release:
     types: [published]
 permissions:
+  # Declaring ANY permission zeroes every one that is not listed, so
+  # `contents: read` is not decoration — without it `actions/checkout` is
+  # relying on this repository being public, and would stop working the day
+  # it was made private.
+  contents: read
+  # What npm's trusted publishing exchanges for a short-lived registry
+  # credential. There is no NPM_TOKEN secret in this repository on purpose.
   id-token: write
 jobs:
   npm:
@@ -10,9 +17,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 22, registry-url: "https://registry.npmjs.org" }
-      - run: npm ci || npm install
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+      # Node 22 bundles npm 10, which predates trusted publishing. The OIDC
+      # exchange needs npm 11.5.1 or newer, so the CLI is upgraded rather
+      # than trusted to be recent enough.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      # The same gates as ci.yml, run again against the exact tree being
+      # published. A release is the one build nobody gets to re-run.
+      - run: npm run typecheck
       - run: npm run build
-      # v0.0.1 was published locally; this workflow switches to npm trusted publishing (OIDC) before v0.1.0 — see Task 11.
-      - run: npm publish --provenance --access public
-        env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" }
+      - run: npm test
+      # No NODE_AUTH_TOKEN: trusted publishing mints the credential from the
+      # OIDC token above, and attaches a provenance attestation itself.
+      - run: npm publish --access public

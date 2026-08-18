@@ -1,27 +1,210 @@
 # ringivo
 
-Ringivo API client for TypeScript and JavaScript.
-
-This is a pre-release. The full client arrives in version 0.1.0.
-
-## Install
+The TypeScript and JavaScript client for the Ringivo fax API: send a fax,
+read one, list them, cancel one, fetch its pages, and verify the webhooks
+that tell you what happened.
 
 ```sh
 npm install ringivo
 ```
 
-## Use
+Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
+ships both ES modules and CommonJS, with types for each.
+
+**Webhook verification needs Node.** `verifyWebhook()` uses `node:crypto`,
+so it runs on a server. That is where it belongs: the signing secret is a
+server-side credential, and a `whsec_` sent to a browser is a `whsec_` that
+has been published.
+
+## Your base URL
+
+There is no default host, and none is compiled in. Your provider gives you
+the API root, a client id and a client secret; everything in this README uses
+`https://api.yourprovider.example` where yours goes.
+
+The client exchanges your credentials for a bearer token on the first call,
+caches it until a minute before it expires, and replaces it if the server
+ever refuses one. You never handle the token.
+
+## Send a fax
 
 ```ts
+import { readFile } from "node:fs/promises";
 import { Ringivo } from "ringivo";
 
 const client = new Ringivo({
-  baseUrl: "https://api.ringivo.com",
-  clientId: "your-client-id",
-  clientSecret: "your-client-secret",
+  baseUrl: "https://api.yourprovider.example",
+  clientId: "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
+  clientSecret: "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
+});
+
+const fax = await client.faxes.send({
+  faxAccount: "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+  to: "+13025556789",
+  file: await readFile("chart-4471.pdf"),
+  clientReference: "chart-4471",
+});
+
+console.log(fax.id, fax.status); // 0198c4a1-… queued
+```
+
+`send()` returns as soon as the fax is **accepted**. The render and the call
+happen afterwards, so `status` is `queued` here — read the fax again to see
+how it ended:
+
+```ts
+const finished = await client.faxes.get(fax.id);
+console.log(finished.status, finished.pagesTransferred);
+```
+
+`file` takes a `Buffer`, a `Uint8Array`, a `Blob`, a `File`, or an array of
+up to five of them. A `File` keeps its own name; anything else is named
+`document-0`, `document-1` and so on. Point at pages instead of uploading
+them with `urls: [...]` (up to five `https` links). Uploads and URLs cannot
+be mixed in one request.
+
+### Retrying a send safely
+
+Every send carries an `Idempotency-Key`, and the client invents one when you
+do not pass it. If you intend to **retry** a send whose response you never
+saw — a timeout, a dropped connection — pass your own key and reuse it. The
+server replays the first fax instead of sending a second, and tells you it
+did:
+
+```ts
+const fax = await client.faxes.send({
+  faxAccount,
+  to: "+13025556789",
+  file: pdfBytes,
+  idempotencyKey: "chart-4471-attempt-1",
+});
+
+if (fax.idempotentReplay) {
+  console.log("this was already sent");
+}
+```
+
+## Read, list, cancel, download
+
+```ts
+const fax = await client.faxes.get(faxId);
+
+const page = await client.faxes.list({
+  direction: "inbound",
+  read: false,
+  tags: { clinic: "north" },
+});
+for (const one of page.faxes) {
+  console.log(one.id, one.from, one.pagesTotal);
+}
+
+if (page.nextCursor) {
+  // newest first; follow the server's own cursor
+  const next = await client.faxes.list({ cursor: page.nextCursor });
+}
+
+await client.faxes.cancel(faxId); // before the far end answers
+
+const pdf = await client.faxes.media(faxId); // the document's bytes
+await writeFile("received.pdf", pdf);
+```
+
+`media()` mints a short-lived download link and follows it for you. Use
+`mediaLink()` instead if you want the URL and its expiry — but do not cache
+it or pass it on: anyone holding it reads that document.
+
+## Verify a webhook
+
+Every delivery carries a `Ringivo-Signature` header. Check it before you
+trust the body — this needs no client and no network:
+
+```ts
+import express from "express";
+import { SIGNATURE_HEADER, SignatureVerificationError, verifyWebhook } from "ringivo";
+
+const app = express();
+
+// Keep the RAW bytes. `express.json()` alone throws them away, and a
+// re-encoded body never verifies.
+app.use(express.json({ verify: (request, _response, raw) => { request.rawBody = raw; } }));
+
+app.post("/hooks/fax", (request, response) => {
+  try {
+    verifyWebhook(request.rawBody, request.get(SIGNATURE_HEADER), "whsec_...");
+  } catch (error) {
+    if (error instanceof SignatureVerificationError) {
+      // A bare 400. Do NOT echo the message: it names which check failed,
+      // which is help a forger should not get. Log it on your own side.
+      return response.sendStatus(400);
+    }
+    throw error;
+  }
+
+  handle(request.body);
+  return response.sendStatus(202);
 });
 ```
 
-## License
+Two rules decide whether this works:
 
-MIT
+- **Give it the raw body.** Parsing the JSON and re-encoding it before
+  verifying will fail, and correctly so — key order, escaping and number
+  formatting are free choices no two encoders make alike. Reach for your
+  framework's raw-body accessor.
+- **Answer any 2XX to accept.** Deliveries are at-least-once: dedupe on
+  `event_id`, because a retry carries the same one.
+
+`verifyWebhook()` returns nothing and throws `SignatureVerificationError` on
+any failure — a stale timestamp, the wrong secret, a malformed header.
+During a secret rotation the header carries two signatures and either secret
+verifies, so a rotation costs you no deliveries.
+
+## When something is refused
+
+```ts
+import { ApiError, AuthenticationError } from "ringivo";
+
+try {
+  await client.faxes.send({ faxAccount, to: "not-e164", file: pdf });
+} catch (error) {
+  if (error instanceof ApiError) {
+    error.statusCode; // 422
+    error.code; // "validation_failed" — the vocabulary to branch on
+    error.errors[0]?.detail; // "The to field format is invalid."
+    error.errors[0]?.source; // { parameter: "to" }
+  }
+}
+```
+
+`AuthenticationError` (a subclass) means the credential itself was refused —
+the client had already replaced its token and retried once by then.
+Connection failures, timeouts and TLS errors are the platform's own
+exceptions and are deliberately not wrapped.
+
+## What is in the box
+
+| | |
+|---|---|
+| `new Ringivo({ baseUrl, clientId, clientSecret, scopes?, timeoutMs? })` | The client. |
+| `client.faxes.send({ faxAccount, to, file \| urls, … })` | Send one fax. Resolves to the accepted `Fax`. |
+| `client.faxes.get(faxId, { include? })` | One fax, complete. |
+| `client.faxes.list({ …filters, cursor?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |
+| `client.faxes.cancel(faxId)` | Withdraw a fax before it is answered. |
+| `client.faxes.media(faxId, { format? })` | The document's bytes, as a `Uint8Array`. |
+| `client.faxes.mediaLink(faxId, { format? })` | The URL and its expiry, as a `MediaLink`. |
+| `client.request(request)` | Any endpoint this client does not wrap yet, with your credential. |
+| `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | Throws unless the body is genuine and fresh. |
+
+`Fax`, `FaxDocument`, `FaxPage` and `MediaLink` are frozen plain objects, and
+each keeps the JSON it was built from in `.raw` — so a member the API adds
+after this release reaches you without a new SDK. A member the API did not
+send reads `null`.
+
+The whole endpoint surface is typed from the OpenAPI document at
+`src/_generated/schema.d.ts`. Those types are private: they are regenerated
+wholesale by `scripts/generate.sh`, and none of them is published in this
+package's own types.
+
+## Licence
+
+MIT.

@@ -1,15 +1,42 @@
 {
   "name": "ringivo",
-  "version": "0.0.1",
-  "description": "Ringivo API client for TypeScript/JavaScript",
+  "version": "0.1.0",
+  "description": "Ringivo fax API client for TypeScript and JavaScript",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ringivo/ringivo-typescript.git"
+  },
+  "keywords": ["fax", "api", "client", "sdk", "webhooks"],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js", "require": "./dist/index.cjs" } },
+  "exports": {
+    ".": {
+      "import": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+    },
+    "./package.json": "./package.json"
+  },
   "files": ["dist"],
   "engines": { "node": ">=20" },
-  "scripts": { "build": "tsup src/index.ts --format esm,cjs --dts", "test": "vitest run" },
-  "devDependencies": { "tsup": "^8", "typescript": "^5", "vitest": "^3" }
+  "sideEffects": false,
+  "scripts": {
+    "generate": "./scripts/generate.sh",
+    "typecheck": "tsc --noEmit",
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "openapi-fetch": "^0.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "msw": "^2.15.0",
+    "openapi-typescript": "7.13.0",
+    "tsup": "^8",
+    "typescript": "^5",
+    "vitest": "^3"
+  }
 }

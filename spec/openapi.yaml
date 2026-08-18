@@ -1,0 +1,2836 @@
+openapi: 3.1.1
+info:
+  title: API Reference
+  version: 0.1.0
+  description: |
+    REST API for the fax platform and its outbound webhooks.
+
+    Authenticate with OAuth2 **client credentials**: exchange a client id and secret for a bearer
+    token at `POST /oauth/token`, then send `Authorization: Bearer <token>` on every call.
+
+    ## The resource surface is JSON:API
+
+    Everything under `/v1/` whose path names a resource collection speaks
+    [JSON:API 1.0](https://jsonapi.org/format/): send and accept `application/vnd.api+json`, and read
+    the document out of `data` (a resource object, or a list of them) with `errors` on a failure.
+
+    Four endpoints are deliberately NOT JSON:API documents, and each says so in its own description:
+    `POST /v1/faxes` (its body may be `multipart/form-data`), `GET /v1/faxes/{fax}/media` and
+    `GET /v1/faxes/{fax}/thumbnail` (a computed composite, not a stored resource), and
+    `POST /v1/faxes/{fax}/cancel` (a decision, not a field assignment). They take and answer plain
+    `application/json`, and their error documents are still JSON:API error documents.
+
+    ## What a credential can reach
+
+    A token's **scopes** are the front door; they are never the reach. A customer-scoped credential
+    reads its own customer's rows and a tenant-scoped one its own reseller's, decided before any
+    rule runs — so a resource belonging to somebody else answers **404**, never 403. A token issued
+    for a person additionally sees only the fax accounts that person was granted.
+
+    ## Two collections are cursor-paginated
+
+    `faxes` and `webhook-deliveries` only ever grow, so they page by `page[cursor]` and `page[size]`
+    (default 50, ceiling 200) and are ordered newest-first. Follow `links.next`; never rebuild a
+    cursor. Every other collection pages by `page[number]` and `page[size]`.
+  license:
+    # A description of a proprietary service. `identifier` is an SPDX expression, and SPDX reserves
+    # the `LicenseRef-` prefix for exactly this: a licence that is not one of the public ones.
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: https://api.example.com   # placeholder — rewritten per-tenant at serve time (Task 7)
+security:
+  - oauth2: []
+
+tags:
+  - name: Authentication
+    description: Exchange client credentials for a bearer token.
+  - name: Faxes
+    description: The inbox and the outbox, as one collection told apart by `direction`.
+  - name: Fax accounts
+    description: The customer-scoped container every fax hangs off.
+  - name: Fax account users
+    description: Which people may read which fax account's faxes.
+  - name: Webhook endpoints
+    description: |
+      Where you want to be called back, and with what signing secret.
+
+      **Scope note.** These operations accept EITHER vocabulary, and the two do not reach the same
+      endpoints: `fax:*` reaches only **fax-account-scoped** webhook endpoints, while
+      customer-scoped and tenant-scoped endpoints require `webhooks:*`. An endpoint your token
+      cannot reach answers **404**, exactly as an id that names nothing does.
+  - name: Webhook deliveries
+    description: |
+      What we owed each endpoint, and what became of it.
+
+      **Scope note.** A delivery borrows its endpoint's reach entirely, so the same narrowing
+      applies: `fax:*` reaches only the deliveries of **fax-account-scoped** endpoints, while the
+      deliveries of customer- and tenant-scoped endpoints require `webhooks:*`.
+
+paths:
+  /oauth/token:
+    post:
+      tags: [Authentication]
+      operationId: issueToken
+      summary: Exchange client credentials for a bearer token
+      description: |
+        The OAuth 2.0 client-credentials grant (RFC 6749 §4.4). Send the client id and secret you
+        were issued, plus the space-separated scopes you want.
+
+        **A scope outside your client's ceiling is dropped, not refused.** Ask for
+        `fax:read fax:write` with only `fax:read` granted and you receive a 200 carrying a token
+        that holds `fax:read` alone. Read the scopes back from the token rather than assuming the
+        request was honoured in full. A scope this platform does not publish at all is a different
+        case: that is a `400 invalid_scope`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRequest'
+            example:
+              grant_type: client_credentials
+              client_id: 0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01
+              client_secret: 9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6
+              scope: fax:read fax:write
+      responses:
+        '200':
+          description: A bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                token_type: Bearer
+                expires_in: 31536000
+                access_token: eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...
+        '400':
+          description: |
+            The request or the requested scope is not one this platform accepts — for example
+            `error: invalid_scope` for a scope name that is not published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+              example:
+                error: invalid_scope
+                error_description: The requested scope is invalid, unknown, or malformed
+        '401':
+          description: 'The client id or secret is wrong (`error: invalid_client`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthError'
+              example:
+                error: invalid_client
+                error_description: Client authentication failed
+
+  /v1/faxes:
+    get:
+      tags: [Faxes]
+      operationId: listFaxes
+      summary: List faxes
+      description: |
+        The inbox and the outbox in one cursor-paginated collection, newest first. Nothing is
+        sortable: the cursor's ordering IS the id ordering, so a client-supplied sort would make
+        pages overlap.
+      security:
+        - oauth2: [fax:read]
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+        - name: include
+          in: query
+          description: Related resources to side-load. `attempts` is the only path a fax publishes.
+          required: false
+          schema:
+            type: string
+            enum: [attempts]
+          example: attempts
+        - name: filter[fax_account]
+          in: query
+          required: false
+          description: Only faxes on this fax account.
+          schema: { type: string, format: uuid }
+        - name: filter[direction]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/FaxDirection'
+        - name: filter[status]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/FaxStatus'
+        - name: filter[from]
+          in: query
+          required: false
+          description: Exact match on the sending number, in E.164.
+          schema: { type: string }
+          example: '+14075550100'
+        - name: filter[to]
+          in: query
+          required: false
+          description: Exact match on the receiving number, in E.164.
+          schema: { type: string }
+          example: '+13025556789'
+        - name: filter[client_reference]
+          in: query
+          required: false
+          description: Exact match on the reference your own system supplied at send time.
+          schema: { type: string }
+        - name: filter[created_after]
+          in: query
+          required: false
+          description: Faxes created at or after this moment.
+          schema: { type: string }
+          example: '2026-08-05'
+        - name: filter[created_before]
+          in: query
+          required: false
+          description: Faxes created at or before this moment.
+          schema: { type: string }
+          example: '2026-08-20'
+        - name: filter[read]
+          in: query
+          required: false
+          description: '`true` for faxes somebody has marked read, `false` for the rest.'
+          schema: { type: boolean }
+        - name: filter[archived]
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: filter[tag]
+          in: query
+          required: false
+          description: |
+            Match on your own tags, one query member per tag name — `filter[tag][clinic]=north`.
+            Two of them mean BOTH, never either. `filter[tag]` with no tag name is refused with a
+            400 rather than ignored.
+          style: deepObject
+          explode: true
+          schema:
+            type: object
+            additionalProperties: { type: string }
+      responses:
+        '200':
+          description: A page of faxes.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxCollectionDocument'
+              example:
+                data:
+                  - type: faxes
+                    id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                    attributes:
+                      direction: inbound
+                      status: received
+                      failureCode: null
+                      from: '+13025556789'
+                      to: '+14075550100'
+                      pagesTotal: 3
+                      pagesTransferred: 3
+                      partial: false
+                      attemptCount: 1
+                      resolution: fine
+                      clientReference: null
+                      coverPage: null
+                      read: false
+                      archived: false
+                      tags:
+                        clinic: north
+                      documents:
+                        - kind: pdf
+                          ordinal: 0
+                          contentType: application/pdf
+                          byteSize: 40960
+                          sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                          pages: 3
+                      createdAt: '2026-08-16T11:02:31.000000Z'
+                      completedAt: '2026-08-16T11:03:04.000000Z'
+                links:
+                  next: 'https://api.example.com/v1/faxes?page%5Bcursor%5D=0198c4a1&page%5Bsize%5D=50'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Faxes]
+      operationId: sendFax
+      summary: Send a fax
+      description: |
+        Accepts one outbound fax and answers **202** — the render and the call happen after this
+        returns. Watch it finish with `GET /v1/faxes/{fax}`; there is no callback to wait on, and no
+        retry to perform.
+
+        **The body is flat, and it is not a JSON:API document.** A body carrying `data` is refused
+        outright rather than half-obeyed. Send either `multipart/form-data` with `documents[]` file
+        parts, or JSON whose `documents` is a list of `https` URLs — never both in one request.
+
+        **`Idempotency-Key` is mandatory.** A second POST carrying the same key replays the first
+        rather than sending a second fax, and the replay is marked with an `Idempotent-Replay: true`
+        response header. That header is the ONLY thing that tells the two apart: the body is the
+        same fax either way.
+      security:
+        - oauth2: [fax:write]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: |
+            Your own key for this send. Reusing one returns the original fax instead of sending a
+            second copy — which is what makes a retry of a request whose response you never saw
+            safe.
+          schema: { type: string }
+          example: chart-4471-attempt-1
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SendFaxMultipartRequest'
+            encoding:
+              cover_page:
+                contentType: application/json
+              tags:
+                contentType: application/json
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendFaxUrlRequest'
+            example:
+              fax_account: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+              to: '+13025556789'
+              from: '+14075550100'
+              resolution: fine
+              client_reference: chart-4471
+              tags:
+                clinic: north
+              cover_page:
+                to_name: Dr Ruiz
+                subject: Records
+              documents:
+                - https://records.acme-vet.example/charts/4471.pdf
+      responses:
+        '202':
+          description: |
+            Accepted. The fax exists and is readable at `GET /v1/faxes/{fax}`.
+          headers:
+            Idempotent-Replay:
+              description: |
+                Present, with the value `true`, only when this response replays an earlier send that
+                carried the same `Idempotency-Key`. Absent on a fresh accept.
+              schema: { type: string, enum: ['true'] }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendFaxAccepted'
+              example:
+                data:
+                  id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                  status: queued
+                  direction: outbound
+                  from: '+14075550100'
+                  to: '+13025556789'
+                  client_reference: chart-4471
+                  created_at: '2026-08-16T11:02:31+00:00'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          description: |
+            Either the credential may not create faxes, or `from` is a well-formed number this fax
+            account does not hold (`code: caller_id_not_permitted`).
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '403'
+                    code: caller_id_not_permitted
+                    title: Caller ID not permitted
+                    detail: That number is not routed to this fax account.
+                    source:
+                      parameter: from
+        '409':
+          description: The fax account is suspended, so it may receive but not send.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    code: fax_account_suspended
+                    title: Fax account suspended
+                    detail: >-
+                      That fax account is suspended, so it can receive faxes but not send them.
+                      Reinstate it first.
+        '413':
+          description: 'One document is past the per-file ceiling (`code: document_too_large`).'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '415':
+          description: |
+            A document's BYTES are not a PDF, TIFF, PNG or JPEG. The name and the declared content
+            type are both yours, so neither decides — the bytes are sniffed
+            (`code: unsupported_media_type`).
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          description: |
+            The request is malformed — a missing `Idempotency-Key`, a `to` that is not E.164, a
+            JSON:API document body, more than five documents, uploads and URLs mixed in one request,
+            a document URL that is not `https` or points at a private address, or a `fax_account` id
+            that names no account of yours (`code: validation_failed`).
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    code: validation_failed
+                    title: Invalid request
+                    detail: The to field format is invalid.
+                    source:
+                      parameter: to
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/faxes/{fax}:
+    parameters:
+      - $ref: '#/components/parameters/FaxId'
+    get:
+      tags: [Faxes]
+      operationId: getFax
+      summary: Read one fax
+      description: |
+        The fax and its document metadata. **No object key and no URL is ever published here** — the
+        bytes are reached only through `GET /v1/faxes/{fax}/media`, which mints a short-lived
+        download URL and records who asked.
+      security:
+        - oauth2: [fax:read]
+      parameters:
+        - name: include
+          in: query
+          required: false
+          description: Side-load the per-call attempt records.
+          schema:
+            type: string
+            enum: [attempts]
+      responses:
+        '200':
+          description: The fax.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [Faxes]
+      operationId: updateFax
+      summary: Move a fax's read, archived or tags flags
+      description: |
+        Three fields belong to the reader — `read`, `archived` and `tags` — and everything else
+        describes a transmission that already happened. Naming a machinery-owned field with a
+        CHANGED value is refused with a 422 rather than silently dropped; echoing the whole document
+        back unchanged is fine, which is what makes GET-then-PATCH work.
+
+        `tags` is replaced wholesale, never merged: sending `{"clinic":"north"}` means the tags ARE
+        that. `read` is idempotent — marking an already-read fax read again does not move when it
+        was first read.
+      security:
+        - oauth2: [fax:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/FaxUpdateRequest'
+            example:
+              data:
+                type: faxes
+                id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                attributes:
+                  read: true
+                  archived: true
+                  tags:
+                    clinic: north
+      responses:
+        '200':
+          description: The updated fax.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [Faxes]
+      operationId: deleteFax
+      summary: Delete a fax
+      description: |
+        Asymmetric on purpose: the **media is purged immediately** and the metadata row is retired
+        as the evidence that a transmission happened. A soft delete that left the images in place
+        would be a deletion in name only.
+      security:
+        - oauth2: [fax:write]
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/faxes/{fax}/media:
+    parameters:
+      - $ref: '#/components/parameters/FaxId'
+    get:
+      tags: [Faxes]
+      operationId: getFaxMedia
+      summary: Mint a download URL for a fax's document
+      description: |
+        Answers a small **plain-JSON composite**, not the bytes and not a JSON:API document: `url`
+        is a short-lived pre-signed link you follow yourself, and `expires_at` says until when.
+
+        Every call mints a fresh capability and writes an audit entry naming who asked, so do not
+        cache the URL past its expiry or share it — anyone holding it reads that document with no
+        further authorization.
+      security:
+        - oauth2: [fax:read]
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: '`pdf` is what a person reads; `tiff` is what went on the wire. Defaults to `pdf`.'
+          schema:
+            type: string
+            enum: [pdf, tiff]
+            default: pdf
+      responses:
+        '200':
+          description: A download URL and the facts about what is behind it.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaLink'
+              example:
+                url: https://objects.example.net/fax/0198c4a1/document.pdf?signature=...
+                expires_at: '2026-08-16T11:07:31+00:00'
+                byte_size: 40960
+                sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            The fax does not exist for you, OR it has no document of that kind — a fax accepted a
+            second ago has no rendered PDF yet, and a purged one has none any more
+            (`code: not_found`).
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          description: '`format` was neither `pdf` nor `tiff` (`code: validation_failed`).'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/faxes/{fax}/thumbnail:
+    parameters:
+      - $ref: '#/components/parameters/FaxId'
+    get:
+      tags: [Faxes]
+      operationId: getFaxThumbnail
+      summary: Mint a download URL for a fax's first-page preview
+      description: |
+        The same composite as `GET /v1/faxes/{fax}/media`, one document kind over: the first-page
+        PNG generated at conversion. Its own path rather than a third `format` value, because a
+        list screen asks for a preview from a different place in your code than the one that
+        downloads a fax.
+      security:
+        - oauth2: [fax:read]
+      responses:
+        '200':
+          description: A download URL for the preview image.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaLink'
+              example:
+                url: https://objects.example.net/fax/0198c4a1/thumb-p1.png?signature=...
+                expires_at: '2026-08-16T11:07:31+00:00'
+                byte_size: 128
+                sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: 'No fax of yours has that id, or it has no preview (`code: not_found`).'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/faxes/{fax}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/FaxId'
+    post:
+      tags: [Faxes]
+      operationId: cancelFax
+      summary: Cancel a fax before the far end answers
+      description: |
+        A decision recorded against a call that may already be up — which is why it is a verb and
+        not `PATCH {status: "cancelled"}`. **200 and not 202**: the decision is complete when this
+        returns, and no later result undoes it.
+
+        Once the far end has answered, or the fax has already finished, it cannot be cancelled:
+        that is a 409 whose `meta.reason` is `answered` or `terminal`. This refusal carries **no
+        `code` member** — the status is the contract.
+      security:
+        - oauth2: [fax:write]
+      responses:
+        '200':
+          description: Cancelled.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelFaxResult'
+              example:
+                data:
+                  id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                  status: cancelled
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The call has been answered, or the fax has already finished.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: Fax not cancellable
+                    detail: That fax's call has already been answered.
+                    meta:
+                      reason: answered
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/fax-accounts:
+    get:
+      tags: [Fax accounts]
+      operationId: listFaxAccounts
+      summary: List fax accounts
+      description: |
+        Not paged by default — an account list is small and a backend syncing state wants all of it.
+        A token issued for a person lists only the accounts that person was granted; a machine
+        credential lists every account in its scope.
+      security:
+        - oauth2: [fax:read]
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sort
+          in: query
+          required: false
+          description: 'Sortable fields: `name`, `createdAt`. Prefix with `-` to reverse.'
+          schema: { type: string }
+          example: '-createdAt'
+        - name: filter[customer]
+          in: query
+          required: false
+          description: Only the accounts of this customer.
+          schema: { type: string, format: uuid }
+        - name: filter[status]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/FaxAccountStatus'
+      responses:
+        '200':
+          description: The fax accounts.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountCollectionDocument'
+              example:
+                data:
+                  - type: fax-accounts
+                    id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                    attributes:
+                      name: Front desk
+                      headerText: ACME VETERINARY
+                      defaultFromE164: '+14075550100'
+                      retentionDays: 90
+                      complianceRetention: false
+                      maxAttempts: 2
+                      status: active
+                      createdAt: '2026-08-01T09:00:00.000000Z'
+                      updatedAt: '2026-08-16T11:00:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Fax accounts]
+      operationId: createFaxAccount
+      summary: Create a fax account
+      description: |
+        An account is created FOR one of your customers, named in the `customer` relationship. A
+        customer id that is not yours answers **404** on that relationship pointer — the same answer
+        an id that names nothing anywhere gets.
+
+        Numbers are not attached here: point a DID at the account through the routing API.
+      security:
+        - oauth2: [fax:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/FaxAccountCreateRequest'
+            example:
+              data:
+                type: fax-accounts
+                attributes:
+                  name: Front desk
+                  headerText: ACME VETERINARY
+                  retentionDays: 90
+                  maxAttempts: 2
+                relationships:
+                  customer:
+                    data:
+                      type: customers
+                      id: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
+      responses:
+        '201':
+          description: The created account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            The `customer` relationship names a customer that does not exist for you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '404'
+                    title: Not Found
+                    detail: The related resource does not exist.
+                    source:
+                      pointer: /data/relationships/customer
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/fax-accounts/{faxAccount}:
+    parameters:
+      - $ref: '#/components/parameters/FaxAccountId'
+    get:
+      tags: [Fax accounts]
+      operationId: getFaxAccount
+      summary: Read one fax account
+      security:
+        - oauth2: [fax:read]
+      responses:
+        '200':
+          description: The fax account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [Fax accounts]
+      operationId: updateFaxAccount
+      summary: Change a fax account's settings, or suspend it
+      description: |
+        `status` is the operational lever: suspending an account stops it SENDING while it goes on
+        receiving, without deleting the compliance record behind it.
+
+        An account cannot be moved to another customer — every fax it holds carries the customer it
+        was sent or received for — and naming a different one is a 422 rather than a silent drop. A
+        sparse PATCH of one attribute leaves every other field alone.
+      security:
+        - oauth2: [fax:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/FaxAccountUpdateRequest'
+            example:
+              data:
+                type: fax-accounts
+                id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                attributes:
+                  name: Front desk
+                  status: suspended
+      responses:
+        '200':
+          description: The updated account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [Fax accounts]
+      operationId: deleteFaxAccount
+      summary: Retire a fax account
+      description: The account stops being listed; its record survives.
+      security:
+        - oauth2: [fax:write]
+      responses:
+        '204':
+          description: Retired.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/fax-accounts/{faxAccount}/numbers:
+    parameters:
+      - $ref: '#/components/parameters/FaxAccountId'
+    get:
+      tags: [Fax accounts]
+      operationId: listFaxAccountNumbers
+      summary: List the numbers routed to a fax account
+      description: |
+        Read-only. Attaching a number is the routing API's act, because a number points at one
+        destination and that rule belongs to the number.
+      security:
+        - oauth2: [fax:read]
+      responses:
+        '200':
+          description: The DIDs routed to this account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberCollectionDocument'
+              example:
+                data:
+                  - type: phone-numbers
+                    id: 0198c4a1-5e6f-7081-b283-4d5e6f708192
+                    attributes:
+                      e164: '+14075550111'
+                      status: active
+                      country: US
+                      activatedAt: '2026-07-30T14:11:00.000000Z'
+                      createdAt: '2026-07-30T14:10:00.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/fax-account-users:
+    get:
+      tags: [Fax account users]
+      operationId: listFaxAccountUsers
+      summary: List fax-account grants
+      description: |
+        One row per (user, fax account) pair — the answer to "who can see this account's faxes?".
+      security:
+        - oauth2: [fax:read]
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: filter[fax_account]
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: filter[user]
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The grants.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountUserCollectionDocument'
+              example:
+                data:
+                  - type: fax-account-users
+                    id: 0198c4a1-6f70-7192-c394-5e6f70819203
+                    attributes:
+                      userEmail: records@acme-vet.example
+                      createdAt: '2026-08-02T10:00:00.000000Z'
+                      updatedAt: '2026-08-02T10:00:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Fax account users]
+      operationId: createFaxAccountUser
+      summary: Grant a user access to a fax account
+      description: |
+        A grant is a pair of foreign keys and a fact: it exists or it does not. There is no update
+        route — withdraw one by deleting it.
+
+        The account may be one the caller does not themselves hold: administering an account is
+        permission-gated, while reading its content is grant-gated, so somebody has to be able to
+        add the first member.
+      security:
+        - oauth2: [fax:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/FaxAccountUserCreateRequest'
+            example:
+              data:
+                type: fax-account-users
+                relationships:
+                  faxAccount:
+                    data:
+                      type: fax-accounts
+                      id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                  user:
+                    data:
+                      type: users
+                      id: 0198c4a1-7081-72a3-d4a5-6f7081920314
+      responses:
+        '201':
+          description: The created grant.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountUserDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: A relationship names a fax account or user that does not exist for you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/fax-account-users/{faxAccountUser}:
+    parameters:
+      - name: faxAccountUser
+        in: path
+        required: true
+        description: The grant's id.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Fax account users]
+      operationId: getFaxAccountUser
+      summary: Read one grant
+      security:
+        - oauth2: [fax:read]
+      responses:
+        '200':
+          description: The grant.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/FaxAccountUserDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [Fax account users]
+      operationId: deleteFaxAccountUser
+      summary: Withdraw a grant
+      security:
+        - oauth2: [fax:write]
+      responses:
+        '204':
+          description: Withdrawn.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/webhook-endpoints:
+    get:
+      tags: [Webhook endpoints]
+      operationId: listWebhookEndpoints
+      summary: List webhook endpoints
+      description: |
+        **No response ever carries a signing secret** except the create and the rotate that minted
+        it. Every other read answers `"secret": null` — an honest statement that the platform holds
+        no readable copy.
+
+        **Scope:** `fax:read` lists only **fax-account-scoped** endpoints; customer- and
+        tenant-scoped endpoints are absent from that list and require `webhooks:read`.
+      security:
+        - oauth2: [webhooks:read]
+        - oauth2: [fax:read]
+      parameters:
+        - $ref: '#/components/parameters/PageNumber'
+        - $ref: '#/components/parameters/PageSize'
+        - name: sort
+          in: query
+          required: false
+          description: 'Sortable field: `createdAt`. Prefix with `-` to reverse.'
+          schema: { type: string }
+          example: '-createdAt'
+        - name: filter[scope_type]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WebhookScopeType'
+        - name: filter[scope_id]
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: filter[active]
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: The endpoints.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointCollectionDocument'
+              example:
+                data:
+                  - type: webhook-endpoints
+                    id: 0198c4a1-8192-73b4-e5b6-708192031425
+                    attributes:
+                      scopeType: fax_account
+                      scopeId: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                      url: https://hooks.acme-vet.example/faxes
+                      events: [fax.received, fax.delivered]
+                      active: true
+                      secret: null
+                      secretPreviousExpiresAt: null
+                      createdAt: '2026-08-10T08:00:00.000000Z'
+                      updatedAt: '2026-08-10T08:00:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Webhook endpoints]
+      operationId: createWebhookEndpoint
+      summary: Register a webhook endpoint
+      description: |
+        **The signing secret is in this response and nowhere else, ever.** Store it before you do
+        anything else; there is no way to read it back.
+
+        The URL must be `https` with a public host — plain http, credentials in the URL, a private
+        address literal and a non-http scheme are each refused at registration. A hostname that
+        does not resolve yet is accepted on purpose, so you can register before publishing DNS.
+
+        `events` is the list you want. **`null` or `[]` both mean "every event in scope"**, and the
+        list is published back verbatim rather than normalised, so a client that sent `[]` can tell
+        its write was understood. An event name this platform does not publish is a 422 — a typo
+        would otherwise subscribe you to silence.
+
+        `scopeType`/`scopeId` say what the endpoint hears about, and neither can be changed
+        afterwards: the delivery history is the record of what THAT scope was told.
+
+        **Scope:** `fax:write` may register only a `fax_account`-scoped endpoint; naming a
+        `customer` or `tenant` scope with a `fax:*` token is refused with a 422, and needs
+        `webhooks:write`.
+      security:
+        - oauth2: [webhooks:write]
+        - oauth2: [fax:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/WebhookEndpointCreateRequest'
+            example:
+              data:
+                type: webhook-endpoints
+                attributes:
+                  url: https://hooks.acme-vet.example/faxes
+                  scopeType: fax_account
+                  scopeId: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                  events: [fax.received, fax.delivered]
+      responses:
+        '201':
+          description: |
+            The created endpoint, carrying its signing secret for the only time.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointDocumentResponse'
+              example:
+                data:
+                  type: webhook-endpoints
+                  id: 0198c4a1-8192-73b4-e5b6-708192031425
+                  attributes:
+                    scopeType: fax_account
+                    scopeId: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                    url: https://hooks.acme-vet.example/faxes
+                    events: [fax.received, fax.delivered]
+                    active: true
+                    secret: whsec_Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZmdo
+                    secretPreviousExpiresAt: null
+                    createdAt: '2026-08-10T08:00:00.000000Z'
+                    updatedAt: '2026-08-10T08:00:00.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: |
+            The URL, the event list or the scope was refused. A scope you may not use and a scope
+            that does not exist are refused with the SAME message, on purpose — telling them apart
+            would make this field a way to discover which ids are real. Supplying your own `secret`
+            is refused here too.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/webhook-endpoints/{webhookEndpoint}:
+    parameters:
+      - $ref: '#/components/parameters/WebhookEndpointId'
+    get:
+      tags: [Webhook endpoints]
+      operationId: getWebhookEndpoint
+      summary: Read one webhook endpoint
+      description: |
+        `secret` is always `null` here — see the create.
+
+        **Scope:** `fax:read` reaches only **fax-account-scoped** endpoints; a customer- or
+        tenant-scoped endpoint answers **404** to a `fax:*` token, exactly as an id that names
+        nothing does, and requires `webhooks:read`.
+      security:
+        - oauth2: [webhooks:read]
+        - oauth2: [fax:read]
+      responses:
+        '200':
+          description: The endpoint.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [Webhook endpoints]
+      operationId: updateWebhookEndpoint
+      summary: Change a webhook endpoint's URL, events or switch
+      description: |
+        `url`, `events` and `active` are editable. `scopeType` and `scopeId` are not — a caller who
+        wants a different scope removes this endpoint and registers another.
+
+        **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
+        tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
+      security:
+        - oauth2: [webhooks:write]
+        - oauth2: [fax:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/WebhookEndpointUpdateRequest'
+            example:
+              data:
+                type: webhook-endpoints
+                id: 0198c4a1-8192-73b4-e5b6-708192031425
+                attributes:
+                  url: https://hooks.acme-vet.example/faxes/v2
+                  events: [fax.received, fax.delivered]
+                  active: false
+      responses:
+        '200':
+          description: The updated endpoint.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [Webhook endpoints]
+      operationId: deleteWebhookEndpoint
+      summary: Remove a webhook endpoint
+      description: |
+        The fan-out stops at once. **The delivery history survives** — "why did our integration stop
+        hearing about faxes?" is answered by the deliveries of the endpoint somebody removed.
+
+        **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
+        tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
+      security:
+        - oauth2: [webhooks:write]
+        - oauth2: [fax:write]
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/webhook-endpoints/{webhookEndpoint}/rotate-secret:
+    parameters:
+      - $ref: '#/components/parameters/WebhookEndpointId'
+    post:
+      tags: [Webhook endpoints]
+      operationId: rotateWebhookEndpointSecret
+      summary: Mint a new signing secret
+      description: |
+        A verb and not a PATCH, because it MINTS A CREDENTIAL and starts a clock.
+
+        The new secret is in this response and nowhere else. The **previous secret goes on signing
+        for a 24-hour grace window**, and `secretPreviousExpiresAt` is the deadline — during that
+        window a delivery's signature header carries two `v1` values, newest first. Roll your own
+        copy before the deadline.
+
+        **Scope:** `fax:write` may rotate only a **fax-account-scoped** endpoint's secret; a
+        customer- or tenant-scoped endpoint answers **404** to a `fax:*` token and requires
+        `webhooks:write`.
+      security:
+        - oauth2: [webhooks:write]
+        - oauth2: [fax:write]
+      responses:
+        '200':
+          description: The endpoint, carrying the newly minted secret.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpointDocumentResponse'
+              example:
+                data:
+                  type: webhook-endpoints
+                  id: 0198c4a1-8192-73b4-e5b6-708192031425
+                  attributes:
+                    scopeType: fax_account
+                    scopeId: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                    url: https://hooks.acme-vet.example/faxes
+                    events: [fax.received, fax.delivered]
+                    active: true
+                    secret: whsec_bmV3c2VjcmV0dmFsdWUwMTIzNDU2Nzg5YWJjZGVm
+                    secretPreviousExpiresAt: '2026-08-17T08:00:00.000000Z'
+                    createdAt: '2026-08-10T08:00:00.000000Z'
+                    updatedAt: '2026-08-16T08:00:00.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/webhook-deliveries:
+    get:
+      tags: [Webhook deliveries]
+      operationId: listWebhookDeliveries
+      summary: List webhook deliveries
+      description: |
+        Read-only evidence about your endpoints — what we owed each one, and what became of it.
+
+        **`filter[status]=dead` is the query this collection exists for.** Delivery is at-least-once
+        with a dead-letter, so "we tried and gave up" is a state that is reached without your server
+        ever hearing about it; this is where you learn what you missed after an outage. An unknown
+        status value is refused with a 400 rather than ignored.
+
+        The body we POSTed is never published here — only its `payloadSha256` digest, so an
+        integrator who kept what they received can prove it is what we sent.
+
+        **Scope:** a delivery borrows its endpoint's reach, so `fax:read` lists only the deliveries
+        of **fax-account-scoped** endpoints; the deliveries of customer- and tenant-scoped endpoints
+        require `webhooks:read`.
+      security:
+        - oauth2: [webhooks:read]
+        - oauth2: [fax:read]
+      parameters:
+        - $ref: '#/components/parameters/PageCursor'
+        - $ref: '#/components/parameters/PageSize'
+        - name: include
+          in: query
+          required: false
+          description: Side-load the endpoint this delivery was for.
+          schema:
+            type: string
+            enum: [endpoint]
+        - name: filter[endpoint]
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+        - name: filter[event_type]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WebhookEventType'
+        - name: filter[status]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/WebhookDeliveryStatus'
+      responses:
+        '200':
+          description: A page of deliveries.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryCollectionDocument'
+              example:
+                data:
+                  - type: webhook-deliveries
+                    id: 0198c4a1-9203-74c5-f6c7-819203142536
+                    attributes:
+                      eventId: 0198c4a1-a314-75d6-07d8-92031425364a
+                      eventType: fax.received
+                      payloadSha256: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+                      status: dead
+                      attemptNo: 7
+                      statusCode: 500
+                      durationMs: 812
+                      error: null
+                      nextAttemptAt: null
+                      deliveredAt: null
+                      deadAt: '2026-08-16T19:45:00.000000Z'
+                      createdAt: '2026-08-16T11:02:31.000000Z'
+                      updatedAt: '2026-08-16T19:45:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/webhook-deliveries/{webhookDelivery}:
+    parameters:
+      - name: webhookDelivery
+        in: path
+        required: true
+        description: The delivery's id.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Webhook deliveries]
+      operationId: getWebhookDelivery
+      summary: Read one webhook delivery
+      description: |
+        **Scope:** a delivery borrows its endpoint's reach, so `fax:read` reaches only the
+        deliveries of **fax-account-scoped** endpoints; a delivery of a customer- or tenant-scoped
+        endpoint answers **404** to a `fax:*` token and requires `webhooks:read`.
+      security:
+        - oauth2: [webhooks:read]
+        - oauth2: [fax:read]
+      parameters:
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [endpoint]
+      responses:
+        '200':
+          description: The delivery.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/WebhookDeliveryDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+# -------------------------------------------------------------------------------------------------
+# Outbound webhooks — what WE send to YOUR server.
+# -------------------------------------------------------------------------------------------------
+webhooks:
+  fax.received:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxReceived
+      summary: A fax arrived and is ready to read
+      description: |
+        Fired when an inbound fax has been rendered, not when the call ended — nearly every
+        consumer's first act is to fetch the PDF, and the PDF does not exist until the render has
+        run.
+
+        **It fires on a failed render too, with `render_failed: true`.** That means the fax is real
+        and its metadata is complete, and only the document is missing. A call that answered and
+        turned out not to be a fax is NOT this event.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxReceivedEvent'
+            example:
+              event_id: 0198c4a1-a314-75d6-07d8-92031425364a
+              type: fax.received
+              occurred_at: '2026-08-16T11:02:31+00:00'
+              data:
+                id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                fax_account_id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                tenant_id: 0198c4a1-b425-76e7-18e9-031425364a5b
+                customer_id: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
+                direction: inbound
+                status: received
+                failure_code: null
+                from: '+13025556789'
+                to: '+14075550100'
+                region: use1
+                pages_total: 3
+                pages_transferred: 3
+                partial: false
+                attempt_count: 1
+                client_reference: null
+                tags: null
+                created_at: '2026-08-16T11:02:20+00:00'
+                completed_at: '2026-08-16T11:02:31+00:00'
+                render_failed: false
+      responses:
+        '2XX':
+          description: |
+            Any 2XX means you accepted it. Nothing else is read — not the body, not a header. A 3XX
+            is not a 2XX: redirects are never followed, and one is recorded as a failed attempt.
+  fax.queued:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxQueued
+      summary: An outbound fax was accepted and is owed a render or an attempt
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+  fax.converting:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxConverting
+      summary: The render is holding an outbound fax
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+  fax.sending:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxSending
+      summary: A call is up for an outbound fax
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+  fax.delivered:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxDelivered
+      summary: Every page transferred
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+            example:
+              event_id: 0198c4a1-c536-77f8-29fa-1425364a5b6c
+              type: fax.delivered
+              occurred_at: '2026-08-16T11:06:02+00:00'
+              data:
+                id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                fax_account_id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                tenant_id: 0198c4a1-b425-76e7-18e9-031425364a5b
+                customer_id: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
+                direction: outbound
+                status: delivered
+                failure_code: null
+                from: '+14075550100'
+                to: '+13025556789'
+                region: use1
+                pages_total: 3
+                pages_transferred: 3
+                partial: false
+                attempt_count: 1
+                client_reference: chart-4471
+                tags:
+                  clinic: north
+                created_at: '2026-08-16T11:02:31+00:00'
+                completed_at: '2026-08-16T11:06:02+00:00'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+  fax.partial:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxPartial
+      summary: Some pages transferred and the rest did not
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+  fax.failed:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxFailed
+      summary: The platform gave up on a fax
+      description: '`data.failure_code` says why, in a vocabulary of fixed size.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+  fax.cancelled:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onFaxCancelled
+      summary: A fax was withdrawn before the far end answered
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaxEvent'
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: |
+        OAuth2 client credentials. The scopes below are the FRONT DOOR — a credential's reach is
+        decided separately, by which tenant or customer it was issued for.
+
+        ## `fax:*` and `webhooks:*` are not interchangeable
+
+        Several webhook operations list `webhooks:*` and `fax:*` as alternatives. **They do not
+        reach the same endpoints.** A `fax:read`/`fax:write` token reaches only webhook endpoints
+        whose `scopeType` is **`fax_account`** — registering a callback for an inbox you already
+        administer is part of running that inbox. Endpoints scoped to a **customer** or to your
+        whole **tenant** require `webhooks:read`/`webhooks:write`, and a `fax:*` token gets a
+        **404** on one: not-yours reads exactly like no-such-endpoint, on every verb including
+        `rotate-secret`. The same narrowing carries to `webhook-deliveries`, which borrow their
+        endpoint's reach.
+
+        So a fax integrator managing its own inbox needs no webhook scope; anything wider does.
+      flows:
+        clientCredentials:
+          tokenUrl: /oauth/token    # relative on purpose: resolves against the served server URL
+          scopes:
+            fax:read: Read fax resources
+            fax:write: Send and manage faxes
+            webhooks:read: Read your webhook endpoints and their delivery history
+            webhooks:write: Register, change and remove your webhook endpoints
+
+  parameters:
+    FaxId:
+      name: fax
+      in: path
+      required: true
+      description: The fax's id.
+      schema: { type: string, format: uuid }
+    FaxAccountId:
+      name: faxAccount
+      in: path
+      required: true
+      description: The fax account's id.
+      schema: { type: string, format: uuid }
+    WebhookEndpointId:
+      name: webhookEndpoint
+      in: path
+      required: true
+      description: The webhook endpoint's id.
+      schema: { type: string, format: uuid }
+    PageCursor:
+      name: page[cursor]
+      in: query
+      required: false
+      description: |
+        An opaque cursor the server minted. Follow `links.next` rather than building one: it encodes
+        the row AND the direction, and its meaning is ours to change.
+      schema: { type: string }
+    PageSize:
+      name: page[size]
+      in: query
+      required: false
+      description: 'Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200.'
+      schema: { type: integer, minimum: 1, maximum: 200 }
+    PageNumber:
+      name: page[number]
+      in: query
+      required: false
+      description: |
+        The page to fetch, on the collections that page by number. Omit both page parameters to get
+        the whole collection unpaged.
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    Unauthenticated:
+      description: No usable bearer token was presented.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+    Forbidden:
+      description: |
+        Authenticated, and not entitled — a missing scope, permission or fax-account grant.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+    NotFound:
+      description: |
+        Nothing of yours has that id. **This includes "it belongs to another scope"** — a 403 there
+        would confirm the row exists.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+    BadQuery:
+      description: |
+        A query parameter was not one this collection accepts — an unknown filter value, a
+        `page[size]` past the ceiling, a `filter[tag]` with no tag name. Refused rather than
+        ignored, because a filter that silently did nothing would answer 200 with the WHOLE
+        collection to a caller who believes they narrowed it.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+    UnprocessableDocument:
+      description: |
+        The document was well formed and could not be applied — a field the machinery owns carrying
+        a CHANGED value, a value past a published limit, or a missing required member. Each error's
+        `source.pointer` names the member.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+    RateLimited:
+      description: 'Too many requests (`code: rate_limited`).'
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+
+  schemas:
+    # -- OAuth -----------------------------------------------------------------------------------
+    TokenRequest:
+      type: object
+      required: [grant_type, client_id, client_secret]
+      properties:
+        grant_type:
+          type: string
+          enum: [client_credentials]
+        client_id:
+          type: string
+        client_secret:
+          type: string
+        scope:
+          type: string
+          description: Space-separated scope names. Anything outside your client's ceiling is dropped.
+    TokenResponse:
+      type: object
+      required: [access_token, token_type]
+      properties:
+        access_token:
+          type: string
+          description: 'The bearer token. Send it as `Authorization: Bearer <token>`.'
+        token_type:
+          type: string
+          examples: [Bearer]
+        expires_in:
+          type: integer
+          description: Seconds until the token expires.
+    OAuthError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: 'The RFC 6749 error code — for example `invalid_scope` or `invalid_client`.'
+        error_description:
+          type: string
+
+    # -- JSON:API envelope -------------------------------------------------------------------------
+    ResourceIdentifier:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string }
+        id: { type: string }
+    ResourceLinks:
+      type: object
+      description: Links belonging to one resource object.
+      properties:
+        self: { type: string, format: uri }
+      additionalProperties: true
+    CollectionLinks:
+      type: object
+      description: |
+        Pagination links. `next` is the one to follow on a cursor-paginated collection; it is absent
+        or null on the last page.
+      properties:
+        self: { type: [string, 'null'], format: uri }
+        first: { type: [string, 'null'], format: uri }
+        last: { type: [string, 'null'], format: uri }
+        prev: { type: [string, 'null'], format: uri }
+        next: { type: [string, 'null'], format: uri }
+      additionalProperties: true
+    DocumentMeta:
+      type: object
+      description: |
+        Document-level metadata. On a paged collection this carries the pagination counters; the
+        member names are implementation-defined and should not be branched on.
+      additionalProperties: true
+    RelationshipToOne:
+      type: object
+      description: |
+        A to-one relationship. `data` is present only when the relationship was resolved — a plain
+        read that included nothing gives `links` alone.
+      properties:
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/ResourceIdentifier'
+            - type: 'null'
+    RelationshipToMany:
+      type: object
+      description: A to-many relationship.
+      properties:
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ResourceIdentifier'
+    ErrorSource:
+      type: object
+      description: |
+        Where the problem is. A JSON:API document body gets a `pointer`; a flat form body or a query
+        parameter gets a `parameter`.
+      properties:
+        pointer: { type: string }
+        parameter: { type: string }
+    Error:
+      type: object
+      description: One problem with one request.
+      required: [status, title]
+      properties:
+        status:
+          type: string
+          description: The HTTP status, as a string.
+        title:
+          type: string
+          description: A short human phrase — the same for every instance of a code.
+        detail:
+          type: string
+          description: What went wrong this time, in a sentence.
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        source:
+          $ref: '#/components/schemas/ErrorSource'
+        meta:
+          type: object
+          additionalProperties: true
+    ErrorCode:
+      type: string
+      description: |
+        The stable machine vocabulary an integrator branches on. Not every refusal carries one:
+        where no published code names the case, the status is the contract and `meta` carries the
+        detail.
+      enum:
+        - validation_failed
+        - caller_id_not_permitted
+        - document_too_large
+        - too_many_pages
+        - unsupported_media_type
+        - fax_account_suspended
+        - rate_limited
+        - not_found
+        - forbidden
+        - internal_error
+    ErrorDocument:
+      type: object
+      required: [errors]
+      properties:
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/Error'
+
+    # -- Shared vocabularies -----------------------------------------------------------------------
+    FaxDirection:
+      type: string
+      enum: [inbound, outbound]
+    FaxStatus:
+      type: string
+      description: |
+        `queued`, `converting`, `sending`, `delivered`, `partial` and `cancelled` belong to an
+        outbound fax; `received` to an inbound one; `failed` to both.
+      enum:
+        - queued
+        - converting
+        - sending
+        - delivered
+        - partial
+        - cancelled
+        - received
+        - failed
+    FaxFailureCode:
+      type: [string, 'null']
+      description: The stable machine reason a fax ended badly. Null on every fax that has not failed.
+      enum:
+        - busy
+        - no_answer
+        - no_fax_tone
+        - negotiation_failed
+        - line_quality
+        - line_dropped
+        - incompatible
+        - document_error
+        - invalid_number
+        - carrier_rejected
+        - internal_error
+        - null
+    FaxAccountStatus:
+      type: string
+      description: A suspended account may receive faxes but not send them.
+      enum: [active, suspended]
+    FaxResolution:
+      type: string
+      description: The two vertical resolutions the renderer produces.
+      enum: [fine, standard]
+    WebhookScopeType:
+      type: string
+      description: |
+        What an endpoint hears about. All three are matched as a containment order, so a
+        reseller-wide endpoint and a per-account one both hear about the same fax.
+      enum: [tenant, customer, fax_account]
+    WebhookEventType:
+      type: string
+      description: Every event name a subscriber may ask for.
+      enum:
+        - fax.received
+        - fax.queued
+        - fax.converting
+        - fax.sending
+        - fax.delivered
+        - fax.partial
+        - fax.failed
+        - fax.cancelled
+    WebhookDeliveryStatus:
+      type: string
+      description: |
+        Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
+        what an outage costs you.
+      enum: [pending, delivered, dead]
+    Tags:
+      type: [object, 'null']
+      description: |
+        A flat map of short labels you own — the only filing system there is. Replaced wholesale on
+        a write, never merged.
+      additionalProperties: { type: [string, 'null'] }
+    CoverPage:
+      type: [object, 'null']
+      description: |
+        The cover page this fax was sent with, as it was supplied: a recipient name, a sender name,
+        a subject and a message. A cover page IS a page — it is counted in `pages_total` and it
+        bills.
+      additionalProperties: true
+
+    # -- faxes -------------------------------------------------------------------------------------
+    FaxDocumentMetadata:
+      type: object
+      description: |
+        What one of a fax's documents is, WITHOUT any way to reach it. No object key and no URL is
+        ever published here.
+      properties:
+        kind:
+          type: string
+          description: '`source` is what you uploaded; `tiff` went on the wire; `pdf` is what a person reads; `thumb` is the preview.'
+          enum: [source, tiff, pdf, thumb]
+        ordinal: { type: integer }
+        contentType: { type: [string, 'null'] }
+        byteSize: { type: [integer, 'null'] }
+        sha256: { type: [string, 'null'] }
+        pages: { type: [integer, 'null'] }
+    FaxAttributes:
+      type: object
+      properties:
+        direction:
+          $ref: '#/components/schemas/FaxDirection'
+        status:
+          $ref: '#/components/schemas/FaxStatus'
+        failureCode:
+          $ref: '#/components/schemas/FaxFailureCode'
+        from: { type: [string, 'null'], description: 'The sending number, in E.164.' }
+        to: { type: [string, 'null'], description: 'The receiving number, in E.164.' }
+        pagesTotal: { type: [integer, 'null'] }
+        pagesTransferred: { type: [integer, 'null'] }
+        partial:
+          type: [boolean, 'null']
+          description: |
+            Are pages missing? Not folded into `status`, because an inbound fax that lost pages is
+            still `received` while an outbound one is `partial`.
+        attemptCount: { type: [integer, 'null'] }
+        resolution: { type: [string, 'null'] }
+        clientReference:
+          type: [string, 'null']
+          description: The reference your own system supplied at send time.
+        coverPage:
+          $ref: '#/components/schemas/CoverPage'
+        read:
+          type: boolean
+          description: Yours to set. Setting it twice does not move when the fax was first read.
+        archived:
+          type: boolean
+          description: Yours to set.
+        tags:
+          $ref: '#/components/schemas/Tags'
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/FaxDocumentMetadata'
+        createdAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+    FaxRelationships:
+      type: object
+      properties:
+        faxAccount:
+          $ref: '#/components/schemas/RelationshipToOne'
+        attempts:
+          $ref: '#/components/schemas/RelationshipToMany'
+    FaxResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [faxes] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/FaxAttributes'
+        relationships:
+          $ref: '#/components/schemas/FaxRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    FaxAttemptAttributes:
+      type: object
+      description: |
+        One call placed for one fax. Two independent sources fill it: a busy or unanswered call
+        produces no fax-protocol event, so `hangupCause` is the only classifier there — and the
+        reverse happens too. Both sides are nullable because both are nullable in fact.
+      properties:
+        attemptNo: { type: [integer, 'null'] }
+        transportProfile:
+          type: [object, 'null']
+          description: |
+            The ladder rung this call used, whole — the transport plus whether ECM and V.17 were on.
+            Null on an inbound call: nobody negotiated a rung for one.
+          additionalProperties: true
+        startedAt: { type: [string, 'null'], format: date-time }
+        answeredAt: { type: [string, 'null'], format: date-time }
+        endedAt: { type: [string, 'null'], format: date-time }
+        billableMs: { type: [integer, 'null'] }
+        hangupCause: { type: [string, 'null'] }
+        sipStatus: { type: [integer, 'null'] }
+        faxSuccess: { type: [boolean, 'null'] }
+        faxResultCode: { type: [integer, 'null'] }
+        faxResultText: { type: [string, 'null'] }
+        pagesTransferred: { type: [integer, 'null'] }
+        pagesTotal: { type: [integer, 'null'] }
+        transferRate: { type: [integer, 'null'] }
+        ecmUsed: { type: [boolean, 'null'] }
+        t38Used: { type: [boolean, 'null'] }
+        imageResolution: { type: [string, 'null'] }
+        badRows: { type: [integer, 'null'] }
+        remoteStationId: { type: [string, 'null'] }
+    FaxAttemptResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [fax-attempts] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/FaxAttemptAttributes'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    FaxDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/FaxResource'
+        included:
+          type: array
+          description: The side-loaded resources `include` asked for.
+          items:
+            $ref: '#/components/schemas/FaxAttemptResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    FaxCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FaxResource'
+        included:
+          type: array
+          items:
+            $ref: '#/components/schemas/FaxAttemptResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    FaxUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string, enum: [faxes] }
+            id: { type: string, format: uuid }
+            attributes:
+              type: object
+              description: |
+                Only `read`, `archived` and `tags` may CHANGE. Any other attribute may be echoed back
+                with its current value, and is a 422 with a different one.
+              properties:
+                read: { type: boolean }
+                archived: { type: boolean }
+                tags:
+                  $ref: '#/components/schemas/Tags'
+              additionalProperties: true
+
+    # -- POST /v1/faxes ----------------------------------------------------------------------------
+    CoverPageRequest:
+      type: object
+      description: |
+        The four fields of the built-in cover page. A cover page IS a page — it is counted in
+        `pages_total` and it bills.
+
+        Shared by both send bodies on purpose: the ceiling on each field is one validation rule in
+        the application, so two copies here would be two places for it to drift.
+      properties:
+        to_name: { type: string, maxLength: 128 }
+        from_name: { type: string, maxLength: 128 }
+        subject: { type: string, maxLength: 255 }
+        message: { type: string, maxLength: 2000 }
+    SendFaxMultipartRequest:
+      type: object
+      description: |
+        Upload the pages themselves. Up to five parts, sniffed on their bytes rather than on their
+        names — PDF, TIFF, PNG and JPEG are what a fax can be made of.
+      required: [fax_account, to, documents]
+      properties:
+        fax_account:
+          type: string
+          format: uuid
+          description: The account to send from.
+        to:
+          type: string
+          description: The destination, in E.164. Nothing looser — this string is dialled.
+          examples: ['+13025556789']
+        from:
+          type: string
+          description: |
+            The caller ID. Omit it to use the account's `defaultFromE164`; a number the account does
+            not hold is a 403, whichever way it arrived.
+          examples: ['+14075550100']
+        resolution:
+          $ref: '#/components/schemas/FaxResolution'
+        cover_page:
+          $ref: '#/components/schemas/CoverPageRequest'
+        client_reference:
+          type: string
+          maxLength: 128
+        tags:
+          $ref: '#/components/schemas/Tags'
+        documents:
+          type: array
+          # The ceiling counts UPLOADS PLUS URLS, so it is the same five on both bodies
+          # (FaxDocumentIntake::MAX_DOCUMENTS, applied to `count($uploads) + count($urls)`).
+          maxItems: 5
+          description: 'The file parts. Spell them `documents[]`; a single part named `documents` is accepted too.'
+          items:
+            type: string
+            format: binary
+    SendFaxUrlRequest:
+      type: object
+      description: |
+        Point at the pages instead of uploading them. Every URL must be `https` on a public host, and
+        uploads and URLs may not be mixed in one request.
+      required: [fax_account, to, documents]
+      properties:
+        fax_account: { type: string, format: uuid }
+        to: { type: string, examples: ['+13025556789'] }
+        from: { type: string, examples: ['+14075550100'] }
+        resolution:
+          $ref: '#/components/schemas/FaxResolution'
+        cover_page:
+          $ref: '#/components/schemas/CoverPageRequest'
+        client_reference: { type: string, maxLength: 128 }
+        tags:
+          $ref: '#/components/schemas/Tags'
+        documents:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+            format: uri
+    SendFaxAccepted:
+      type: object
+      description: |
+        A flat acknowledgement, not a JSON:API document. Read the whole fax at
+        `GET /v1/faxes/{fax}`.
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            status:
+              $ref: '#/components/schemas/FaxStatus'
+            direction:
+              $ref: '#/components/schemas/FaxDirection'
+            from: { type: [string, 'null'] }
+            to: { type: [string, 'null'] }
+            client_reference: { type: [string, 'null'] }
+            created_at: { type: [string, 'null'], format: date-time }
+    CancelFaxResult:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            status:
+              $ref: '#/components/schemas/FaxStatus'
+    MediaLink:
+      type: object
+      description: |
+        A capability that expires, plus the facts about what is behind it. Not a JSON:API resource:
+        there is no stored member this URI could be a collection of.
+      required: [url, expires_at, byte_size, sha256]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: A pre-signed download link. Short-lived — do not cache or share it.
+        expires_at:
+          type: string
+          format: date-time
+        byte_size:
+          type: integer
+        sha256:
+          type: string
+          description: The digest of the bytes behind `url`, so you can verify what you downloaded.
+
+    # -- fax-accounts ------------------------------------------------------------------------------
+    FaxAccountAttributes:
+      type: object
+      properties:
+        name: { type: string, maxLength: 128 }
+        headerText:
+          type: [string, 'null']
+          maxLength: 64
+          description: |
+            The header line printed across the top of every page. 64 characters is the fax
+            protocol's own column, not a product choice.
+        defaultFromE164:
+          type: [string, 'null']
+          description: |
+            The caller ID a send falls back to. May be set before the number is routed — whether the
+            account holds it is asked at the send.
+        retentionDays:
+          type: integer
+          minimum: 1
+          maximum: 2557
+          description: How long this account's fax media is kept.
+        complianceRetention: { type: boolean }
+        maxAttempts:
+          type: integer
+          minimum: 1
+          maximum: 3
+        status:
+          $ref: '#/components/schemas/FaxAccountStatus'
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    FaxAccountRelationships:
+      type: object
+      properties:
+        customer:
+          $ref: '#/components/schemas/RelationshipToOne'
+        numbers:
+          $ref: '#/components/schemas/RelationshipToMany'
+    FaxAccountResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [fax-accounts] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/FaxAccountAttributes'
+        relationships:
+          $ref: '#/components/schemas/FaxAccountRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    FaxAccountDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/FaxAccountResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    FaxAccountCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FaxAccountResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    FaxAccountWritableAttributes:
+      type: object
+      properties:
+        name: { type: string, maxLength: 128 }
+        headerText: { type: [string, 'null'], maxLength: 64 }
+        defaultFromE164: { type: [string, 'null'] }
+        retentionDays: { type: integer, minimum: 1, maximum: 2557 }
+        complianceRetention: { type: boolean }
+        maxAttempts: { type: integer, minimum: 1, maximum: 3 }
+        status:
+          $ref: '#/components/schemas/FaxAccountStatus'
+    FaxAccountCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes, relationships]
+          properties:
+            type: { type: string, enum: [fax-accounts] }
+            attributes:
+              allOf:
+                - $ref: '#/components/schemas/FaxAccountWritableAttributes'
+                - type: object
+                  required: [name]
+            relationships:
+              type: object
+              required: [customer]
+              properties:
+                customer:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+    FaxAccountUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [fax-accounts] }
+            id: { type: string, format: uuid }
+            attributes:
+              allOf:
+                - $ref: '#/components/schemas/FaxAccountWritableAttributes'
+                - type: object
+                  required: [name]
+
+    # -- fax-account-users -------------------------------------------------------------------------
+    FaxAccountUserAttributes:
+      type: object
+      properties:
+        userEmail:
+          type: [string, 'null']
+          description: |
+            The grantee's email — a grant list is read to answer "who can see this?", and a page of
+            ids answers nothing.
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    FaxAccountUserResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [fax-account-users] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/FaxAccountUserAttributes'
+        relationships:
+          type: object
+          properties:
+            faxAccount:
+              $ref: '#/components/schemas/RelationshipToOne'
+            user:
+              $ref: '#/components/schemas/RelationshipToOne'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    FaxAccountUserDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/FaxAccountUserResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    FaxAccountUserCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/FaxAccountUserResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    FaxAccountUserCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, relationships]
+          properties:
+            type: { type: string, enum: [fax-account-users] }
+            relationships:
+              type: object
+              required: [faxAccount, user]
+              properties:
+                faxAccount:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+                user:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+
+    # -- phone-numbers (read-only, through a fax account) ------------------------------------------
+    PhoneNumberResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [phone-numbers] }
+        id: { type: string, format: uuid }
+        attributes:
+          type: object
+          properties:
+            e164: { type: [string, 'null'] }
+            status:
+              type: [string, 'null']
+              enum: [pending, active, failed, releasing, null]
+            country: { type: [string, 'null'] }
+            activatedAt: { type: [string, 'null'], format: date-time }
+            createdAt: { type: [string, 'null'], format: date-time }
+        relationships:
+          type: object
+          properties:
+            customer:
+              $ref: '#/components/schemas/RelationshipToOne'
+            routingTarget:
+              $ref: '#/components/schemas/RelationshipToOne'
+            pbxNumber:
+              $ref: '#/components/schemas/RelationshipToOne'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    PhoneNumberCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PhoneNumberResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+
+    # -- webhook-endpoints -------------------------------------------------------------------------
+    WebhookEndpointAttributes:
+      type: object
+      properties:
+        scopeType:
+          $ref: '#/components/schemas/WebhookScopeType'
+        scopeId:
+          type: [string, 'null']
+          format: uuid
+          description: The id of the tenant, customer or fax account this endpoint hears about.
+        url: { type: [string, 'null'], format: uri, maxLength: 2048 }
+        events:
+          type: [array, 'null']
+          maxItems: 64
+          description: 'Null or `[]` both mean "every event in scope".'
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+        active: { type: [boolean, 'null'] }
+        secret:
+          type: [string, 'null']
+          description: |
+            The signing secret, `whsec_`-prefixed. **Non-null only in the response to the create or
+            the rotate that minted it** — every other read is `null`, because the platform holds no
+            readable copy.
+        secretPreviousExpiresAt:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            When the PREVIOUS secret stops signing. Null outside a rotation's grace window; the
+            previous secret itself is never published.
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    WebhookEndpointResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [webhook-endpoints] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/WebhookEndpointAttributes'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    WebhookEndpointDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/WebhookEndpointResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    WebhookEndpointCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEndpointResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    WebhookEndpointCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes]
+          properties:
+            type: { type: string, enum: [webhook-endpoints] }
+            attributes:
+              type: object
+              required: [url, scopeType, scopeId]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  maxLength: 2048
+                  description: '`https` only, on a public host.'
+                scopeType:
+                  $ref: '#/components/schemas/WebhookScopeType'
+                scopeId: { type: string, format: uuid }
+                events:
+                  type: [array, 'null']
+                  maxItems: 64
+                  items:
+                    $ref: '#/components/schemas/WebhookEventType'
+                active: { type: boolean }
+    WebhookEndpointUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [webhook-endpoints] }
+            id: { type: string, format: uuid }
+            attributes:
+              type: object
+              required: [url]
+              description: |
+                `scopeType` and `scopeId` may be echoed back unchanged; a different value is a 422.
+              properties:
+                url: { type: string, format: uri, maxLength: 2048 }
+                events:
+                  type: [array, 'null']
+                  maxItems: 64
+                  items:
+                    $ref: '#/components/schemas/WebhookEventType'
+                active: { type: boolean }
+              additionalProperties: true
+
+    # -- webhook-deliveries ------------------------------------------------------------------------
+    WebhookDeliveryAttributes:
+      type: object
+      properties:
+        eventId:
+          type: [string, 'null']
+          description: The dedupe key. A retried delivery of the same event carries the same id.
+        eventType:
+          $ref: '#/components/schemas/WebhookEventType'
+        payloadSha256:
+          type: [string, 'null']
+          description: |
+            The digest of the exact bytes we signed. The body itself is never published here.
+        status:
+          $ref: '#/components/schemas/WebhookDeliveryStatus'
+        attemptNo:
+          type: [integer, 'null']
+          description: How many POSTs have been made, not how many failed.
+        statusCode:
+          type: [integer, 'null']
+          description: What your server answered. Null when we never reached it.
+        durationMs: { type: [integer, 'null'] }
+        error:
+          type: [string, 'null']
+          description: Why we could not reach you, when that is the reason.
+        nextAttemptAt: { type: [string, 'null'], format: date-time }
+        deliveredAt: { type: [string, 'null'], format: date-time }
+        deadAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    WebhookDeliveryResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [webhook-deliveries] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/WebhookDeliveryAttributes'
+        relationships:
+          type: object
+          properties:
+            endpoint:
+              $ref: '#/components/schemas/RelationshipToOne'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+    WebhookDeliveryDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/WebhookDeliveryResource'
+        included:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEndpointResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    WebhookDeliveryCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookDeliveryResource'
+        included:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEndpointResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+
+    # -- The outbound webhook body -----------------------------------------------------------------
+    FaxEventData:
+      type: object
+      description: |
+        A SNAPSHOT of the fax, frozen when the transition happened — not a fresh read. A retry six
+        hours later carries the same values, so a `fax.sending` event never says `delivered`.
+
+        **No document content, no object keys and no URLs.** A webhook body travels to a third party
+        over the public internet and is stored in their logs. Fetch the pages with your own
+        credential at `GET /v1/faxes/{fax}/media`, which is also what records who looked.
+      properties:
+        id: { type: string, format: uuid }
+        fax_account_id: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid }
+        customer_id: { type: [string, 'null'], format: uuid }
+        direction:
+          $ref: '#/components/schemas/FaxDirection'
+        status:
+          $ref: '#/components/schemas/FaxStatus'
+        failure_code:
+          $ref: '#/components/schemas/FaxFailureCode'
+        from: { type: [string, 'null'] }
+        to: { type: [string, 'null'] }
+        region: { type: [string, 'null'] }
+        pages_total: { type: [integer, 'null'] }
+        pages_transferred: { type: [integer, 'null'] }
+        partial: { type: [boolean, 'null'] }
+        attempt_count: { type: [integer, 'null'] }
+        client_reference: { type: [string, 'null'] }
+        tags:
+          $ref: '#/components/schemas/Tags'
+        created_at: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time }
+    FaxReceivedEventData:
+      allOf:
+        - $ref: '#/components/schemas/FaxEventData'
+        - type: object
+          properties:
+            render_failed:
+              type: boolean
+              description: |
+                Always present, never conditional. `true` means the fax is real and its metadata is
+                complete, and only the rendered document is missing.
+    WebhookEventEnvelope:
+      type: object
+      description: |
+        The envelope every outbound webhook body shares. `data` is added by the event schema that
+        uses it — see `FaxEvent`.
+
+        ## Verify the signature before you trust it
+
+        Every delivery carries a `Ringivo-Signature` header:
+
+        ```
+        Ringivo-Signature: t=1755331200,v1=9f86d0…,v1=2c26b4…
+        ```
+
+        `t` is the Unix second the delivery was signed. Each `v1` is
+        `HMAC-SHA256(secret, "<t>.<raw body>")` in lowercase hex. To verify: recompute the MAC over
+        `"<t>.<raw body>"` with your `whsec_` secret, compare it to each `v1` in **constant time**,
+        and reject anything whose `t` is more than **300 seconds** from your own clock. Both halves
+        must pass — a good MAC with an old `t` is a replay, and a fresh `t` with no matching MAC is
+        a forgery.
+
+        **Sign the RAW BODY, never a re-encoding.** Parsing the JSON and re-encoding it before
+        verifying WILL fail, and correctly so: key order, unicode escaping and number formatting are
+        free choices no two encoders make identically. This is the commonest mistake with
+        signatures of this shape.
+
+        **A second `v1` appears only during a rotation's 24-hour grace window**, signed with the
+        previous secret, newest first — so a receiver that checks only the first one validates
+        against the secret we want it to hold.
+
+        ## Delivery is at-least-once
+
+        Dedupe on `event_id`: a retried delivery of the same event carries the same id, and two
+        genuine transitions never share one. A failed delivery is retried after **10s, 1m, 5m, 30m,
+        2h and 6h** — seven POSTs in all, the last about eight and three-quarter hours after the
+        event — and then dead-lettered. Ask
+        `GET /v1/webhook-deliveries?filter[status]=dead` for what you missed.
+
+        Answer any 2XX to accept. Redirects are never followed. We wait ten seconds; if your handler
+        needs longer, answer 202 and do the work afterwards.
+      required: [event_id, type, occurred_at]
+      properties:
+        event_id:
+          type: string
+          format: uuid
+          description: The dedupe key.
+        type:
+          $ref: '#/components/schemas/WebhookEventType'
+        occurred_at:
+          type: string
+          format: date-time
+          description: |
+            When the transition happened — captured at the event, not at delivery, so a retry does
+            not claim the fax was delivered when we finally reached you.
+    # The envelope and the payload are composed here rather than the envelope carrying a `data` of
+    # its own that each event overrides. Two `properties: {data: …}` in one `allOf` are BOTH applied
+    # — the narrower one does not replace the wider one — so `fax.received`'s extra member reads as
+    # an unevaluated property of the base payload and lint reds on the example. Probed 2026-08-18.
+    FaxEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/FaxEventData'
+    FaxReceivedEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/FaxReceivedEventData'
