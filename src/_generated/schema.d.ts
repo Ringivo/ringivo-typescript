@@ -129,7 +129,12 @@ export interface paths {
         /**
          * Mint a download URL for a fax's document
          * @description Answers a small **plain-JSON composite**, not the bytes and not a JSON:API document: `url`
-         *     is a short-lived pre-signed link you follow yourself, and `expires_at` says until when.
+         *     is a time-limited download URL **on your own API host**, and `expires_at` says until when.
+         *
+         *     Follow `url` with a plain `GET` and **no `Authorization` header**. It carries its own
+         *     signature, and that signature is the authorization — sending a bearer token is unnecessary
+         *     and adds nothing. Treat the URL as opaque: the signature covers the whole address, so
+         *     editing any part of it invalidates the link.
          *
          *     Every call mints a fresh capability and writes an audit entry naming who asked, so do not
          *     cache the URL past its expiry or share it — anyone holding it reads that document with no
@@ -160,6 +165,8 @@ export interface paths {
          *     PNG generated at conversion. Its own path rather than a third `format` value, because a
          *     list screen asks for a preview from a different place in your code than the one that
          *     downloads a fax.
+         *
+         *     Follow `url` the same way — a plain `GET`, no `Authorization` header.
          */
         get: operations["getFaxThumbnail"];
         put?: never;
@@ -976,6 +983,10 @@ export interface components {
         /**
          * @description Upload the pages themselves. Up to five parts, sniffed on their bytes rather than on their
          *     names — PDF, TIFF, PNG and JPEG are what a fax can be made of.
+         *
+         *     Send the `tags` and `cover_page` parts as plain JSON text, not as a `Blob`: append the JSON
+         *     string directly as the part body, because a `Blob` part gains a filename and arrives as an
+         *     upload instead of a field, which fails validation without saying why.
          */
         SendFaxMultipartRequest: {
             /**
@@ -1049,7 +1060,10 @@ export interface components {
         MediaLink: {
             /**
              * Format: uri
-             * @description A pre-signed download link. Short-lived — do not cache or share it.
+             * @description A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
+             *     `Authorization` header — the signature it carries is the authorization. Opaque: the
+             *     signature covers the whole address, so any edit invalidates it. Short-lived — do not
+             *     cache it past `expires_at` or share it.
              */
             url: string;
             /** Format: date-time */
@@ -2020,7 +2034,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "url": "https://objects.example.net/fax/0198c4a1/document.pdf?signature=...",
+                     *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/media/content?format=pdf&expires=1787057037&signature=...",
                      *       "expires_at": "2026-08-16T11:07:31+00:00",
                      *       "byte_size": 40960,
                      *       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
@@ -2076,7 +2090,7 @@ export interface operations {
                 content: {
                     /**
                      * @example {
-                     *       "url": "https://objects.example.net/fax/0198c4a1/thumb-p1.png?signature=...",
+                     *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/thumbnail/content?expires=1787057037&signature=...",
                      *       "expires_at": "2026-08-16T11:07:31+00:00",
                      *       "byte_size": 128,
                      *       "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
