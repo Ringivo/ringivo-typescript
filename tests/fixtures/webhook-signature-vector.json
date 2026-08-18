@@ -1,0 +1,12 @@
+{
+  "description": "One signature, computed by the SERVER's own signer, not by this package. Three implementations are locked to it: the server that mints the header, this Python client, and the TypeScript client. Any one of them drifting fails against a vector none of them produced.",
+  "recipe": "v1 = HMAC-SHA256(key=secret, message=\"<timestamp>.<body>\") in lowercase hex; header = \"t=<timestamp>\" followed by one \"v1=<hex>\" per signing secret, newest first.",
+  "recompute_it": "python -c \"import hmac,hashlib;print(hmac.new(b'whsec_test', b'1700000000.{\\\"a\\\":1}', hashlib.sha256).hexdigest())\"",
+  "header_name": "Ringivo-Signature",
+  "tolerance_seconds": 300,
+  "secret": "whsec_test",
+  "timestamp": 1700000000,
+  "body": "{\"a\":1}",
+  "expected_v1": "38877139021993b830af32feea6e18a8da83eb2f6e49ee50bd9e4cf4ca4d3789",
+  "header": "t=1700000000,v1=38877139021993b830af32feea6e18a8da83eb2f6e49ee50bd9e4cf4ca4d3789"
+}
