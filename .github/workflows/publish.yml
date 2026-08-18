@@ -14,6 +14,11 @@ permissions:
 jobs:
   npm:
     runs-on: ubuntu-latest
+    # Must match the trusted publisher registered on npmjs.com exactly —
+    # publisher fields are (owner, repo, workflow file, environment). A
+    # mismatch on any one of them and npm skips the OIDC exchange entirely
+    # (see the 404 note below).
+    environment: npm
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
