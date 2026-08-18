@@ -13,5 +13,6 @@ jobs:
         with: { node-version: 22, registry-url: "https://registry.npmjs.org" }
       - run: npm ci || npm install
       - run: npm run build
+      # v0.0.1 was published locally; this workflow switches to npm trusted publishing (OIDC) before v0.1.0 — see Task 11.
       - run: npm publish --provenance --access public
         env: { NODE_AUTH_TOKEN: "${{ secrets.NPM_TOKEN }}" }
