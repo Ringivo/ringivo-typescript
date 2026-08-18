@@ -33,4 +33,13 @@ jobs:
       - run: npm test
       # No NODE_AUTH_TOKEN: trusted publishing mints the credential from the
       # OIDC token above, and attaches a provenance attestation itself.
+      #
+      # THIS JOB CANNOT PUBLISH UNTIL npmjs.com HOLDS A TRUSTED PUBLISHER FOR
+      # THE `ringivo` PACKAGE naming this repository and this workflow file.
+      # That is configured by a package owner, on the web, and nothing in this
+      # repository can assert it. Without one npm does not attempt the OIDC
+      # exchange at all: it publishes UNAUTHENTICATED, and the registry
+      # answers `404 Not Found - PUT https://registry.npmjs.org/ringivo`,
+      # which reads like a missing package rather than a missing credential.
+      # If you are debugging that 404, this comment is the answer.
       - run: npm publish --access public
