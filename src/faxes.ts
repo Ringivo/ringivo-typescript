@@ -420,8 +420,9 @@ function uploads(file: SendFaxOptions["file"]): readonly FaxUpload[] {
     ) {
       if (isEmpty(document)) {
         throw new TypeError(
-          `file takes pages with bytes in them; got an empty ${describe(document)}. A fax ` +
-            "with no pages would still be dialled — read the whole document before sending it.",
+          `file takes pages with bytes in them; got ${describe(document)} with no bytes. A ` +
+            "fax with no pages would still be dialled — read the whole document before " +
+            "sending it.",
         );
       }
       return document;
