@@ -27,11 +27,40 @@ info:
     rule runs — so a resource belonging to somebody else answers **404**, never 403. A token issued
     for a person additionally sees only the fax accounts that person was granted.
 
-    ## Two collections are cursor-paginated
+    ## Pagination
 
-    `faxes` and `webhook-deliveries` only ever grow, so they page by `page[cursor]` and `page[size]`
-    (default 50, ceiling 200) and are ordered newest-first. Follow `links.next`; never rebuild a
-    cursor. Every other collection pages by `page[number]` and `page[size]`.
+    Every collection pages the same way, by **cursor**. Ask for `page[size]` rows — the default is
+    25 and the ceiling is 100 — then move with `page[after]` or `page[before]`. A size above the
+    ceiling, or one that is not a whole number of rows, is refused with a 400 whose error carries
+    `meta: {page: {maxSize: 100}}`; it is never quietly reduced to something you did not ask for.
+    The two directions are one walk, so sending both at once is a 400 as well.
+
+    A cursor is an opaque string we minted. Take one from `meta.page.nextCursor`, from a resource
+    object's own `meta.page.cursor`, or from a pagination link, and send it back unchanged — never
+    build one and never edit one. A cursor does not expire, and it belongs to the query that
+    produced it: replay one under a different `filter` or `sort` and the request is refused with a
+    400 rather than answered with rows from a different question.
+
+    Every collection has a stable order, so a walk neither repeats a row nor skips one. The default
+    is newest-first, `-createdAt,-id` — the id settles ties between rows created in the same
+    instant. Every collection also accepts `sort`, and each operation lists the fields it takes;
+    any other field is refused with a 400 rather than quietly ignored.
+
+    `links.first` is always present, `links.prev` whenever a previous page exists, and `links.next`
+    on every page but the last. On the final page `next` is **absent**, and `meta.page.nextCursor`
+    is `null` — that null is the end-of-feed signal to branch on, because it is there on every page.
+    There is no `last` link: finding the far end of the collection is the work a cursor exists to
+    avoid. Beside the links, `meta.page` carries `size` and `nextCursor`, and on some collections an
+    exact `total`. Treat `total` as optional: the `page` schema names the collections that have one.
+
+    **To read a whole collection**, follow `links.next` — or send `meta.page.nextCursor` back as
+    `page[after]` — until `meta.page.nextCursor` is `null`.
+
+    **To poll for what is new**, remember the FIRST item's `meta.page.cursor` from your last read,
+    then poll with `page[before]=<that cursor>`. You get only the rows that arrived since, newest
+    first, and the first item of each answer is the cursor to remember for the next poll. An empty
+    `data` means nothing arrived: keep the SAME cursor and poll again, because there is no new first
+    item to move it to.
   license:
     # A description of a proprietary service. `identifier` is an SPDX expression, and SPDX reserves
     # the `LicenseRef-` prefix for exactly this: a licence that is not one of the public ones.
@@ -135,14 +164,14 @@ paths:
       operationId: listFaxes
       summary: List faxes
       description: |
-        The inbox and the outbox in one cursor-paginated collection, newest first. Nothing is
-        sortable: the cursor's ordering IS the id ordering, so a client-supplied sort would make
-        pages overlap.
+        The inbox and the outbox in one collection, newest first.
       security:
         - oauth2: [fax:read]
       parameters:
-        - $ref: '#/components/parameters/PageCursor'
         - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
         - name: include
           in: query
           description: Related resources to side-load. `attempts` is the only path a fax publishes.
@@ -253,8 +282,16 @@ paths:
                           pages: 3
                       createdAt: '2026-08-16T11:02:31.000000Z'
                       completedAt: '2026-08-16T11:03:04.000000Z'
+                    meta:
+                      page:
+                        cursor: 'eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTYgMTE6MDI6MzEiLCIwMTk4YzRhMS0yYjNjLTdkNGUtOGY1MC0xYTJiM2M0ZDVlNmYiXSwiZCI6Ijc1NTYwMWEyNDE5ODljMzEifQ'
                 links:
-                  next: 'https://api.example.com/v1/faxes?page%5Bcursor%5D=0198c4a1&page%5Bsize%5D=50'
+                  first: 'https://api.example.com/v1/faxes?page%5Bsize%5D=25'
+                  next: 'https://api.example.com/v1/faxes?page%5Bafter%5D=eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTYgMTE6MDI6MzEiLCIwMTk4YzRhMS0yYjNjLTdkNGUtOGY1MC0xYTJiM2M0ZDVlNmYiXSwiZCI6Ijc1NTYwMWEyNDE5ODljMzEifQ&page%5Bsize%5D=25'
+                meta:
+                  page:
+                    size: 25
+                    nextCursor: 'eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTYgMTE6MDI6MzEiLCIwMTk4YzRhMS0yYjNjLTdkNGUtOGY1MC0xYTJiM2M0ZDVlNmYiXSwiZCI6Ijc1NTYwMWEyNDE5ODljMzEifQ'
         '400':
           $ref: '#/components/responses/BadQuery'
         '401':
@@ -710,20 +747,15 @@ paths:
       operationId: listFaxAccounts
       summary: List fax accounts
       description: |
-        Not paged by default — an account list is small and a backend syncing state wants all of it.
         A token issued for a person lists only the accounts that person was granted; a machine
         credential lists every account in its scope.
       security:
         - oauth2: [fax:read]
       parameters:
-        - $ref: '#/components/parameters/PageNumber'
         - $ref: '#/components/parameters/PageSize'
-        - name: sort
-          in: query
-          required: false
-          description: 'Sortable fields: `name`, `createdAt`. Prefix with `-` to reverse.'
-          schema: { type: string }
-          example: '-createdAt'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
         - name: filter[customer]
           in: query
           required: false
@@ -936,6 +968,18 @@ paths:
         destination and that rule belongs to the number.
       security:
         - oauth2: [fax:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - name: sort
+          in: query
+          required: false
+          description: |
+            Sortable fields: `createdAt`, `id`, `e164`. Prefix with `-` to reverse. The default is
+            `-createdAt,-id`, newest first. Any other field is refused with a 400.
+          schema: { type: string }
+          example: '-createdAt'
       responses:
         '200':
           description: The DIDs routed to this account.
@@ -972,8 +1016,10 @@ paths:
       security:
         - oauth2: [fax:read]
       parameters:
-        - $ref: '#/components/parameters/PageNumber'
         - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
         - name: filter[fax_account]
           in: query
           required: false
@@ -1128,14 +1174,10 @@ paths:
         - oauth2: [webhooks:read]
         - oauth2: [fax:read]
       parameters:
-        - $ref: '#/components/parameters/PageNumber'
         - $ref: '#/components/parameters/PageSize'
-        - name: sort
-          in: query
-          required: false
-          description: 'Sortable field: `createdAt`. Prefix with `-` to reverse.'
-          schema: { type: string }
-          example: '-createdAt'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
         - name: filter[scope_type]
           in: query
           required: false
@@ -1445,8 +1487,10 @@ paths:
         - oauth2: [webhooks:read]
         - oauth2: [fax:read]
       parameters:
-        - $ref: '#/components/parameters/PageCursor'
         - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
         - name: include
           in: query
           required: false
@@ -1936,28 +1980,49 @@ components:
       required: true
       description: The webhook endpoint's id.
       schema: { type: string, format: uuid }
-    PageCursor:
-      name: page[cursor]
-      in: query
-      required: false
-      description: |
-        An opaque cursor the server minted. Follow `links.next` rather than building one: it encodes
-        the row AND the direction, and its meaning is ours to change.
-      schema: { type: string }
     PageSize:
       name: page[size]
       in: query
       required: false
-      description: 'Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200.'
-      schema: { type: integer, minimum: 1, maximum: 200 }
-    PageNumber:
-      name: page[number]
+      description: |
+        Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+        that is not a positive whole number, is refused with a 400 whose error carries
+        `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+        one and a caller cannot tell the two apart.
+      schema: { type: integer, minimum: 1, maximum: 100 }
+    PageAfter:
+      name: page[after]
       in: query
       required: false
       description: |
-        The page to fetch, on the collections that page by number. Omit both page parameters to get
-        the whole collection unpaged.
-      schema: { type: integer, minimum: 1 }
+        Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+        resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+        replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+        `page[before]`.
+      schema: { type: string }
+    PageBefore:
+      name: page[before]
+      in: query
+      required: false
+      description: |
+        Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+        your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+        `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+        different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+      schema: { type: string }
+    Sort:
+      name: sort
+      in: query
+      required: false
+      description: |
+        Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+        `-createdAt,-id`, newest first. Any other field is refused with a 400.
+
+        The whitelist is short by design. A sortable field is a component of the cursor key, so it
+        must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+        boundary moves under a walker and a row is served twice or skipped.
+      schema: { type: string }
+      example: '-createdAt'
 
   responses:
     Unauthenticated:
@@ -2062,20 +2127,68 @@ components:
     CollectionLinks:
       type: object
       description: |
-        Pagination links. `next` is the one to follow on a cursor-paginated collection; it is absent
-        or null on the last page.
+        Pagination links. `first` is always present, `prev` whenever a previous page exists, and
+        `next` on every page but the last — on the final page `next` is ABSENT from the document
+        altogether. Branch on `meta.page.nextCursor` instead: it is `null` at the end and present on
+        every page, so one member answers "is there more?" everywhere. There is no `last` link.
+
+        A link that does not apply is ABSENT rather than null — the encoder cannot carry a null
+        href — so these three are plain strings whenever they appear at all.
       properties:
         self: { type: [string, 'null'], format: uri }
-        first: { type: [string, 'null'], format: uri }
-        last: { type: [string, 'null'], format: uri }
-        prev: { type: [string, 'null'], format: uri }
-        next: { type: [string, 'null'], format: uri }
+        first: { type: string, format: uri }
+        prev: { type: string, format: uri }
+        next: { type: string, format: uri }
+      additionalProperties: true
+    PageMeta:
+      type: object
+      description: |
+        Where this page sits in the collection it came from.
+      required: [size, nextCursor]
+      properties:
+        size:
+          type: integer
+          description: The number of rows a full page holds for this request.
+        nextCursor:
+          type: [string, 'null']
+          description: |
+            Send this back as `page[after]` for the page that follows. `null` on the final page —
+            the end-of-feed signal.
+        total:
+          type: integer
+          description: |
+            The exact number of rows the collection holds under the filters applied, repeated on
+            every page of the walk. Present on SOME collections only, so read it as optional: of the
+            collections documented here `fax-accounts`, `fax-account-users` and `webhook-endpoints`
+            publish it, and `faxes` and `webhook-deliveries` never do. Counting a table that only
+            grows costs more with every row, which is the price a cursor walk exists to not pay.
       additionalProperties: true
     DocumentMeta:
       type: object
       description: |
-        Document-level metadata. On a paged collection this carries the pagination counters; the
-        member names are implementation-defined and should not be branched on.
+        Document-level metadata. A paged collection carries `page` here.
+      properties:
+        page:
+          $ref: '#/components/schemas/PageMeta'
+      additionalProperties: true
+    ResourceMeta:
+      type: object
+      description: |
+        Metadata belonging to one resource object.
+      properties:
+        page:
+          type: object
+          description: |
+            This row's own place in the collection that served it. Present on the members of a
+            paginated collection, and absent everywhere else — a single-resource read and a
+            side-loaded `included` row were never positions in a walk.
+          properties:
+            cursor:
+              type: string
+              description: |
+                An opaque cursor for THIS row. Send it as `page[after]` for the rows after it or as
+                `page[before]` for the rows before it, under the same `filter` and `sort`.
+          additionalProperties: true
       additionalProperties: true
     RelationshipToOne:
       type: object
@@ -2308,6 +2421,8 @@ components:
           $ref: '#/components/schemas/FaxRelationships'
         links:
           $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
     FaxAttemptAttributes:
       type: object
       description: |
@@ -2586,6 +2701,8 @@ components:
           $ref: '#/components/schemas/FaxAccountRelationships'
         links:
           $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
     FaxAccountDocumentResponse:
       type: object
       required: [data]
@@ -2687,6 +2804,8 @@ components:
               $ref: '#/components/schemas/RelationshipToOne'
         links:
           $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
     FaxAccountUserDocumentResponse:
       type: object
       required: [data]
@@ -2763,6 +2882,8 @@ components:
               $ref: '#/components/schemas/RelationshipToOne'
         links:
           $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
     PhoneNumberCollectionDocument:
       type: object
       required: [data]
@@ -2818,6 +2939,8 @@ components:
           $ref: '#/components/schemas/WebhookEndpointAttributes'
         links:
           $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
     WebhookEndpointDocumentResponse:
       type: object
       required: [data]
@@ -2937,6 +3060,8 @@ components:
               $ref: '#/components/schemas/RelationshipToOne'
         links:
           $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
     WebhookDeliveryDocumentResponse:
       type: object
       required: [data]

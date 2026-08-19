@@ -46,9 +46,7 @@ export interface paths {
         };
         /**
          * List faxes
-         * @description The inbox and the outbox in one cursor-paginated collection, newest first. Nothing is
-         *     sortable: the cursor's ordering IS the id ordering, so a client-supplied sort would make
-         *     pages overlap.
+         * @description The inbox and the outbox in one collection, newest first.
          */
         get: operations["listFaxes"];
         put?: never;
@@ -215,8 +213,7 @@ export interface paths {
         };
         /**
          * List fax accounts
-         * @description Not paged by default — an account list is small and a backend syncing state wants all of it.
-         *     A token issued for a person lists only the accounts that person was granted; a machine
+         * @description A token issued for a person lists only the accounts that person was granted; a machine
          *     credential lists every account in its scope.
          */
         get: operations["listFaxAccounts"];
@@ -707,28 +704,69 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * @description Pagination links. `next` is the one to follow on a cursor-paginated collection; it is absent
-         *     or null on the last page.
+         * @description Pagination links. `first` is always present, `prev` whenever a previous page exists, and
+         *     `next` on every page but the last — on the final page `next` is ABSENT from the document
+         *     altogether. Branch on `meta.page.nextCursor` instead: it is `null` at the end and present on
+         *     every page, so one member answers "is there more?" everywhere. There is no `last` link.
+         *
+         *     A link that does not apply is ABSENT rather than null — the encoder cannot carry a null
+         *     href — so these three are plain strings whenever they appear at all.
          */
         CollectionLinks: {
             /** Format: uri */
             self?: string | null;
             /** Format: uri */
-            first?: string | null;
+            first?: string;
             /** Format: uri */
-            last?: string | null;
+            prev?: string;
             /** Format: uri */
-            prev?: string | null;
-            /** Format: uri */
-            next?: string | null;
+            next?: string;
         } & {
             [key: string]: unknown;
         };
-        /**
-         * @description Document-level metadata. On a paged collection this carries the pagination counters; the
-         *     member names are implementation-defined and should not be branched on.
-         */
+        /** @description Where this page sits in the collection it came from. */
+        PageMeta: {
+            /** @description The number of rows a full page holds for this request. */
+            size: number;
+            /**
+             * @description Send this back as `page[after]` for the page that follows. `null` on the final page —
+             *     the end-of-feed signal.
+             */
+            nextCursor: string | null;
+            /**
+             * @description The exact number of rows the collection holds under the filters applied, repeated on
+             *     every page of the walk. Present on SOME collections only, so read it as optional: of the
+             *     collections documented here `fax-accounts`, `fax-account-users` and `webhook-endpoints`
+             *     publish it, and `faxes` and `webhook-deliveries` never do. Counting a table that only
+             *     grows costs more with every row, which is the price a cursor walk exists to not pay.
+             */
+            total?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Document-level metadata. A paged collection carries `page` here. */
         DocumentMeta: {
+            page?: components["schemas"]["PageMeta"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Metadata belonging to one resource object. */
+        ResourceMeta: {
+            /**
+             * @description This row's own place in the collection that served it. Present on the members of a
+             *     paginated collection, and absent everywhere else — a single-resource read and a
+             *     side-loaded `included` row were never positions in a walk.
+             */
+            page?: {
+                /**
+                 * @description An opaque cursor for THIS row. Send it as `page[after]` for the rows after it or as
+                 *     `page[before]` for the rows before it, under the same `filter` and `sort`.
+                 */
+                cursor?: string;
+            } & {
+                [key: string]: unknown;
+            };
+        } & {
             [key: string]: unknown;
         };
         /**
@@ -890,6 +928,7 @@ export interface components {
             attributes?: components["schemas"]["FaxAttributes"];
             relationships?: components["schemas"]["FaxRelationships"];
             links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
         };
         /**
          * @description One call placed for one fax. Two independent sources fill it: a busy or unanswered call
@@ -1103,6 +1142,7 @@ export interface components {
             attributes?: components["schemas"]["FaxAccountAttributes"];
             relationships?: components["schemas"]["FaxAccountRelationships"];
             links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
         };
         FaxAccountDocumentResponse: {
             data: components["schemas"]["FaxAccountResource"];
@@ -1166,6 +1206,7 @@ export interface components {
                 user?: components["schemas"]["RelationshipToOne"];
             };
             links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
         };
         FaxAccountUserDocumentResponse: {
             data: components["schemas"]["FaxAccountUserResource"];
@@ -1212,6 +1253,7 @@ export interface components {
                 pbxNumber?: components["schemas"]["RelationshipToOne"];
             };
             links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
         };
         PhoneNumberCollectionDocument: {
             data: components["schemas"]["PhoneNumberResource"][];
@@ -1254,6 +1296,7 @@ export interface components {
             id: string;
             attributes?: components["schemas"]["WebhookEndpointAttributes"];
             links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
         };
         WebhookEndpointDocumentResponse: {
             data: components["schemas"]["WebhookEndpointResource"];
@@ -1335,6 +1378,7 @@ export interface components {
                 endpoint?: components["schemas"]["RelationshipToOne"];
             };
             links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
         };
         WebhookDeliveryDocumentResponse: {
             data: components["schemas"]["WebhookDeliveryResource"];
@@ -1525,17 +1569,36 @@ export interface components {
         /** @description The webhook endpoint's id. */
         WebhookEndpointId: string;
         /**
-         * @description An opaque cursor the server minted. Follow `links.next` rather than building one: it encodes
-         *     the row AND the direction, and its meaning is ours to change.
+         * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+         *     that is not a positive whole number, is refused with a 400 whose error carries
+         *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+         *     one and a caller cannot tell the two apart.
          */
-        PageCursor: string;
-        /** @description Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200. */
         PageSize: number;
         /**
-         * @description The page to fetch, on the collections that page by number. Omit both page parameters to get
-         *     the whole collection unpaged.
+         * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+         *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+         *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+         *     `page[before]`.
          */
-        PageNumber: number;
+        PageAfter: string;
+        /**
+         * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+         *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+         *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+         *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+         */
+        PageBefore: string;
+        /**
+         * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+         *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+         *
+         *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+         *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+         *     boundary moves under a walker and a row is served twice or skipped.
+         * @example -createdAt
+         */
+        Sort: string;
     };
     requestBodies: never;
     headers: never;
@@ -1619,12 +1682,36 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description An opaque cursor the server minted. Follow `links.next` rather than building one: it encodes
-                 *     the row AND the direction, and its meaning is ours to change.
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
                  */
-                "page[cursor]"?: components["parameters"]["PageCursor"];
-                /** @description Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200. */
                 "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
                 /**
                  * @description Related resources to side-load. `attempts` is the only path a fax publishes.
                  * @example attempts
@@ -1716,11 +1803,23 @@ export interface operations {
                      *             ],
                      *             "createdAt": "2026-08-16T11:02:31.000000Z",
                      *             "completedAt": "2026-08-16T11:03:04.000000Z"
+                     *           },
+                     *           "meta": {
+                     *             "page": {
+                     *               "cursor": "eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTYgMTE6MDI6MzEiLCIwMTk4YzRhMS0yYjNjLTdkNGUtOGY1MC0xYTJiM2M0ZDVlNmYiXSwiZCI6Ijc1NTYwMWEyNDE5ODljMzEifQ"
+                     *             }
                      *           }
                      *         }
                      *       ],
                      *       "links": {
-                     *         "next": "https://api.example.com/v1/faxes?page%5Bcursor%5D=0198c4a1&page%5Bsize%5D=50"
+                     *         "first": "https://api.example.com/v1/faxes?page%5Bsize%5D=25",
+                     *         "next": "https://api.example.com/v1/faxes?page%5Bafter%5D=eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTYgMTE6MDI6MzEiLCIwMTk4YzRhMS0yYjNjLTdkNGUtOGY1MC0xYTJiM2M0ZDVlNmYiXSwiZCI6Ijc1NTYwMWEyNDE5ODljMzEifQ&page%5Bsize%5D=25"
+                     *       },
+                     *       "meta": {
+                     *         "page": {
+                     *           "size": 25,
+                     *           "nextCursor": "eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTYgMTE6MDI6MzEiLCIwMTk4YzRhMS0yYjNjLTdkNGUtOGY1MC0xYTJiM2M0ZDVlNmYiXSwiZCI6Ijc1NTYwMWEyNDE5ODljMzEifQ"
+                     *         }
                      *       }
                      *     }
                      */
@@ -2214,17 +2313,36 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description The page to fetch, on the collections that page by number. Omit both page parameters to get
-                 *     the whole collection unpaged.
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
                  */
-                "page[number]"?: components["parameters"]["PageNumber"];
-                /** @description Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200. */
                 "page[size]"?: components["parameters"]["PageSize"];
                 /**
-                 * @description Sortable fields: `name`, `createdAt`. Prefix with `-` to reverse.
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
                  * @example -createdAt
                  */
-                sort?: string;
+                sort?: components["parameters"]["Sort"];
                 /** @description Only the accounts of this customer. */
                 "filter[customer]"?: string;
                 "filter[status]"?: components["schemas"]["FaxAccountStatus"];
@@ -2460,7 +2578,35 @@ export interface operations {
     };
     listFaxAccountNumbers: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`, `e164`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 * @example -createdAt
+                 */
+                sort?: string;
+            };
             header?: never;
             path: {
                 /** @description The fax account's id. */
@@ -2506,12 +2652,36 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description The page to fetch, on the collections that page by number. Omit both page parameters to get
-                 *     the whole collection unpaged.
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
                  */
-                "page[number]"?: components["parameters"]["PageNumber"];
-                /** @description Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200. */
                 "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
                 "filter[fax_account]"?: string;
                 "filter[user]"?: string;
             };
@@ -2678,17 +2848,36 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description The page to fetch, on the collections that page by number. Omit both page parameters to get
-                 *     the whole collection unpaged.
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
                  */
-                "page[number]"?: components["parameters"]["PageNumber"];
-                /** @description Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200. */
                 "page[size]"?: components["parameters"]["PageSize"];
                 /**
-                 * @description Sortable field: `createdAt`. Prefix with `-` to reverse.
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
                  * @example -createdAt
                  */
-                sort?: string;
+                sort?: components["parameters"]["Sort"];
                 "filter[scope_type]"?: components["schemas"]["WebhookScopeType"];
                 "filter[scope_id]"?: string;
                 "filter[active]"?: boolean;
@@ -2992,12 +3181,36 @@ export interface operations {
         parameters: {
             query?: {
                 /**
-                 * @description An opaque cursor the server minted. Follow `links.next` rather than building one: it encodes
-                 *     the row AND the direction, and its meaning is ours to change.
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
                  */
-                "page[cursor]"?: components["parameters"]["PageCursor"];
-                /** @description Rows per page. Default 50 on the cursor-paginated collections; the ceiling is 200. */
                 "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
                 /** @description Side-load the endpoint this delivery was for. */
                 include?: "endpoint";
                 "filter[endpoint]"?: string;
