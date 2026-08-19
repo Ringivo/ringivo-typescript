@@ -970,9 +970,6 @@ export interface components {
          * @description The four fields of the built-in cover page. A cover page IS a page — it is counted in
          *     `pages_total` and it bills. `null` is accepted the same as omitting the field or sending
          *     `{}` — none of the three add a cover page.
-         *
-         *     Shared by both send bodies on purpose: the ceiling on each field is one validation rule in
-         *     the application, so two copies here would be two places for it to drift.
          */
         CoverPageRequest: {
             to_name?: string;
@@ -1930,6 +1927,48 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "faxes",
+                     *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
+                     *         "attributes": {
+                     *           "direction": "outbound",
+                     *           "status": "delivered",
+                     *           "failureCode": null,
+                     *           "from": "+14075550100",
+                     *           "to": "+13025556789",
+                     *           "pagesTotal": 3,
+                     *           "pagesTransferred": 3,
+                     *           "partial": false,
+                     *           "attemptCount": 1,
+                     *           "resolution": "fine",
+                     *           "clientReference": "chart-4471",
+                     *           "coverPage": {
+                     *             "to_name": "Dr Ruiz",
+                     *             "subject": "Records"
+                     *           },
+                     *           "read": false,
+                     *           "archived": false,
+                     *           "tags": {
+                     *             "clinic": "north"
+                     *           },
+                     *           "documents": [
+                     *             {
+                     *               "kind": "pdf",
+                     *               "ordinal": 0,
+                     *               "contentType": "application/pdf",
+                     *               "byteSize": 40960,
+                     *               "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                     *               "pages": 3
+                     *             }
+                     *           ],
+                     *           "createdAt": "2026-08-16T11:02:31.000000Z",
+                     *           "completedAt": "2026-08-16T11:06:02.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/vnd.api+json": components["schemas"]["FaxDocumentResponse"];
                 };
             };
@@ -2322,6 +2361,25 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "fax-accounts",
+                     *         "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                     *         "attributes": {
+                     *           "name": "Front desk",
+                     *           "headerText": "ACME VETERINARY",
+                     *           "defaultFromE164": "+14075550100",
+                     *           "retentionDays": 90,
+                     *           "complianceRetention": false,
+                     *           "maxAttempts": 2,
+                     *           "status": "active",
+                     *           "createdAt": "2026-08-01T09:00:00.000000Z",
+                     *           "updatedAt": "2026-08-16T11:00:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/vnd.api+json": components["schemas"]["FaxAccountDocumentResponse"];
                 };
             };
@@ -2569,6 +2627,19 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "fax-account-users",
+                     *         "id": "0198c4a1-6f70-7192-c394-5e6f70819203",
+                     *         "attributes": {
+                     *           "userEmail": "records@acme-vet.example",
+                     *           "createdAt": "2026-08-02T10:00:00.000000Z",
+                     *           "updatedAt": "2026-08-02T10:00:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/vnd.api+json": components["schemas"]["FaxAccountUserDocumentResponse"];
                 };
             };
@@ -2764,6 +2835,28 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "webhook-endpoints",
+                     *         "id": "0198c4a1-8192-73b4-e5b6-708192031425",
+                     *         "attributes": {
+                     *           "scopeType": "fax_account",
+                     *           "scopeId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                     *           "url": "https://hooks.acme-vet.example/faxes",
+                     *           "events": [
+                     *             "fax.received",
+                     *             "fax.delivered"
+                     *           ],
+                     *           "active": true,
+                     *           "secret": null,
+                     *           "secretPreviousExpiresAt": null,
+                     *           "createdAt": "2026-08-10T08:00:00.000000Z",
+                     *           "updatedAt": "2026-08-10T08:00:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/vnd.api+json": components["schemas"]["WebhookEndpointDocumentResponse"];
                 };
             };
@@ -2977,6 +3070,29 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "webhook-deliveries",
+                     *         "id": "0198c4a1-9203-74c5-f6c7-819203142536",
+                     *         "attributes": {
+                     *           "eventId": "0198c4a1-a314-75d6-07d8-92031425364a",
+                     *           "eventType": "fax.received",
+                     *           "payloadSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                     *           "status": "dead",
+                     *           "attemptNo": 7,
+                     *           "statusCode": 500,
+                     *           "durationMs": 812,
+                     *           "error": null,
+                     *           "nextAttemptAt": null,
+                     *           "deliveredAt": null,
+                     *           "deadAt": "2026-08-16T19:45:00.000000Z",
+                     *           "createdAt": "2026-08-16T11:02:31.000000Z",
+                     *           "updatedAt": "2026-08-16T19:45:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
                     "application/vnd.api+json": components["schemas"]["WebhookDeliveryDocumentResponse"];
                 };
             };
@@ -3048,6 +3164,35 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-fd4a-7d5c-8035-9810682d6a03",
+                 *       "type": "fax.queued",
+                 *       "occurred_at": "2026-08-16T11:02:31+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
+                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "direction": "outbound",
+                 *         "status": "queued",
+                 *         "failure_code": null,
+                 *         "from": "+14075550100",
+                 *         "to": "+13025556789",
+                 *         "region": "use1",
+                 *         "pages_total": null,
+                 *         "pages_transferred": null,
+                 *         "partial": false,
+                 *         "attempt_count": 0,
+                 *         "client_reference": "chart-4471",
+                 *         "tags": {
+                 *           "clinic": "north"
+                 *         },
+                 *         "created_at": "2026-08-16T11:02:31+00:00",
+                 *         "completed_at": null
+                 *       }
+                 *     }
+                 */
                 "application/json": components["schemas"]["FaxEvent"];
             };
         };
@@ -3070,6 +3215,35 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-999d-7848-b2e7-bbe702b70bbe",
+                 *       "type": "fax.converting",
+                 *       "occurred_at": "2026-08-16T11:02:33+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
+                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "direction": "outbound",
+                 *         "status": "converting",
+                 *         "failure_code": null,
+                 *         "from": "+14075550100",
+                 *         "to": "+13025556789",
+                 *         "region": "use1",
+                 *         "pages_total": null,
+                 *         "pages_transferred": null,
+                 *         "partial": false,
+                 *         "attempt_count": 0,
+                 *         "client_reference": "chart-4471",
+                 *         "tags": {
+                 *           "clinic": "north"
+                 *         },
+                 *         "created_at": "2026-08-16T11:02:31+00:00",
+                 *         "completed_at": null
+                 *       }
+                 *     }
+                 */
                 "application/json": components["schemas"]["FaxEvent"];
             };
         };
@@ -3092,6 +3266,35 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-a9c5-7dfa-8b21-e496eb133f02",
+                 *       "type": "fax.sending",
+                 *       "occurred_at": "2026-08-16T11:03:12+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
+                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "direction": "outbound",
+                 *         "status": "sending",
+                 *         "failure_code": null,
+                 *         "from": "+14075550100",
+                 *         "to": "+13025556789",
+                 *         "region": "use1",
+                 *         "pages_total": 3,
+                 *         "pages_transferred": 0,
+                 *         "partial": false,
+                 *         "attempt_count": 1,
+                 *         "client_reference": "chart-4471",
+                 *         "tags": {
+                 *           "clinic": "north"
+                 *         },
+                 *         "created_at": "2026-08-16T11:02:31+00:00",
+                 *         "completed_at": null
+                 *       }
+                 *     }
+                 */
                 "application/json": components["schemas"]["FaxEvent"];
             };
         };
@@ -3165,6 +3368,35 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-a042-7b22-8128-83269b5b6aae",
+                 *       "type": "fax.partial",
+                 *       "occurred_at": "2026-08-16T14:21:48+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-ad4e-7f76-aa5a-9d4fa78f680f",
+                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "direction": "outbound",
+                 *         "status": "partial",
+                 *         "failure_code": null,
+                 *         "from": "+14075550100",
+                 *         "to": "+13025557788",
+                 *         "region": "use1",
+                 *         "pages_total": 6,
+                 *         "pages_transferred": 4,
+                 *         "partial": true,
+                 *         "attempt_count": 2,
+                 *         "client_reference": "chart-4472",
+                 *         "tags": {
+                 *           "clinic": "north"
+                 *         },
+                 *         "created_at": "2026-08-16T14:18:02+00:00",
+                 *         "completed_at": "2026-08-16T14:21:48+00:00"
+                 *       }
+                 *     }
+                 */
                 "application/json": components["schemas"]["FaxEvent"];
             };
         };
@@ -3187,6 +3419,35 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-8a0e-74d0-bb6b-f6912a204a16",
+                 *       "type": "fax.failed",
+                 *       "occurred_at": "2026-08-16T15:40:19+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-a0df-7565-a317-611491d82c4b",
+                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "direction": "outbound",
+                 *         "status": "failed",
+                 *         "failure_code": "no_answer",
+                 *         "from": "+14075550100",
+                 *         "to": "+13025554321",
+                 *         "region": "use1",
+                 *         "pages_total": 2,
+                 *         "pages_transferred": 0,
+                 *         "partial": false,
+                 *         "attempt_count": 2,
+                 *         "client_reference": "chart-4473",
+                 *         "tags": {
+                 *           "clinic": "south"
+                 *         },
+                 *         "created_at": "2026-08-16T15:11:07+00:00",
+                 *         "completed_at": "2026-08-16T15:40:19+00:00"
+                 *       }
+                 *     }
+                 */
                 "application/json": components["schemas"]["FaxEvent"];
             };
         };
@@ -3209,6 +3470,33 @@ export interface operations {
         };
         requestBody: {
             content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-d684-7b7a-b815-35a1a923001a",
+                 *       "type": "fax.cancelled",
+                 *       "occurred_at": "2026-08-16T16:02:55+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-335a-710a-97ad-4f0121e05e45",
+                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "direction": "outbound",
+                 *         "status": "cancelled",
+                 *         "failure_code": null,
+                 *         "from": "+14075550100",
+                 *         "to": "+13025559090",
+                 *         "region": "use1",
+                 *         "pages_total": 1,
+                 *         "pages_transferred": 0,
+                 *         "partial": false,
+                 *         "attempt_count": 1,
+                 *         "client_reference": "chart-4474",
+                 *         "tags": null,
+                 *         "created_at": "2026-08-16T16:02:40+00:00",
+                 *         "completed_at": "2026-08-16T16:02:55+00:00"
+                 *       }
+                 *     }
+                 */
                 "application/json": components["schemas"]["FaxEvent"];
             };
         };
