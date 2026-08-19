@@ -251,6 +251,19 @@ export class Faxes {
    * to walk forward.
    */
   async list(options: ListFaxesOptions = {}): Promise<FaxPage> {
+    // TypeScript stops a caller passing 0.1.x's `cursor` at compile time;
+    // plain JavaScript does not, and a dropped option is silent — a caller
+    // polling `if (page.nextCursor) list({ cursor: page.nextCursor })`
+    // would re-fetch page 1 forever instead of ever seeing an error. Refuse
+    // it here, before any request is built, rather than let it vanish.
+    if ("cursor" in options) {
+      throw new TypeError(
+        "list()'s cursor option was replaced by after/before in 0.2.0; pass the previous " +
+          "page's FaxPage.nextCursor as after to walk forward, or a cursor you already hold " +
+          "as before to poll for rows that arrived since your last read.",
+      );
+    }
+
     const tags = options.tags;
 
     const { data } = await transportOf(this.client)["/v1/faxes"].GET({

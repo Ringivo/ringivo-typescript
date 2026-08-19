@@ -587,6 +587,43 @@ describe("list", () => {
     expect(calls.last.url.search).toBe("");
   });
 
+  it("refuses the removed cursor option rather than silently dropping it", async () => {
+    // TypeScript stops a `cursor` caller at compile time; plain JavaScript
+    // does not, and this option is just as unrecognised at runtime as any
+    // other stray key — openapi-fetch drops it and the request goes out
+    // with NO page parameter at all. A caller polling
+    // `if (page.nextCursor) list({ cursor: page.nextCursor })` would never
+    // see an error: they would just re-fetch page 1 forever.
+    const calls = new Calls();
+    server.use(
+      http.get(FAXES_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await expect(
+      client().faxes.list({ cursor: "abc" } as never),
+    ).rejects.toThrow(/cursor.*replaced by after\/before/);
+
+    expect(calls.count, "the dropped option still reached the wire").toBe(0);
+  });
+
+  it("still lists with after — the control for the removed-cursor refusal", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(FAXES_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().faxes.list({ after: "0198c4a1" });
+
+    expect(calls.count).toBe(1);
+    expect(calls.last.url.searchParams.get("page[after]")).toBe("0198c4a1");
+  });
+
   it("sends page[before] to poll for rows that arrived since the last read", async () => {
     const calls = new Calls();
     server.use(

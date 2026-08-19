@@ -141,10 +141,10 @@ export class Ringivo {
    * check a status code — including the 401 that has already been retried
    * once just below.
    *
-   * This is also the ESCAPE HATCH, and it is public for that reason: 0.1.0
-   * wraps the fax surface, and an endpoint it does not wrap yet is still
-   * reachable with your credential, your timeout, your User-Agent and the
-   * same typed errors:
+   * This is also the ESCAPE HATCH, and it is public for that reason: this
+   * client wraps the fax surface, and an endpoint it does not wrap yet is
+   * still reachable with your credential, your timeout, your User-Agent and
+   * the same typed errors:
    *
    *     const response = await client.request(
    *       new Request(`${client.baseUrl}/v1/webhook-endpoints`, {
