@@ -103,7 +103,7 @@ for (const one of page.faxes) {
 
 if (page.nextCursor) {
   // newest first; follow the server's own cursor
-  const next = await client.faxes.list({ cursor: page.nextCursor });
+  const next = await client.faxes.list({ after: page.nextCursor });
 }
 
 await client.faxes.cancel(faxId); // before the far end answers
@@ -191,7 +191,7 @@ exceptions and are deliberately not wrapped.
 | `new Ringivo({ baseUrl, clientId, clientSecret, scopes?, timeoutMs? })` | The client. |
 | `client.faxes.send({ faxAccount, to, file \| urls, … })` | Send one fax. Resolves to the accepted `Fax`. |
 | `client.faxes.get(faxId, { include? })` | One fax, complete. |
-| `client.faxes.list({ …filters, cursor?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |
+| `client.faxes.list({ …filters, after?, before?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |
 | `client.faxes.cancel(faxId)` | Withdraw a fax before it is answered. |
 | `client.faxes.media(faxId, { format? })` | The document's bytes, as a `Uint8Array`. |
 | `client.faxes.mediaLink(faxId, { format? })` | The URL and its expiry, as a `MediaLink`. |

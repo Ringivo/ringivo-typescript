@@ -90,9 +90,9 @@ export interface Fax {
 /**
  * One page of `faxes.list()`, newest first.
  *
- * `nextCursor` is the server's own cursor, lifted out of `links.next` —
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` —
  * never one this client built. The cursor encodes the row AND the direction,
- * and its meaning belongs to the server; pass it straight back as `cursor`
+ * and its meaning belongs to the server; pass it straight back as `after`
  * to read the following page. It is `null` on the last page.
  */
 export interface FaxPage {
@@ -250,16 +250,21 @@ export function mediaLinkFromJson(payload: RawJson): MediaLink {
 export function faxPageFromDocument(document: RawJson): FaxPage {
   const data = document.data;
   const faxes = (Array.isArray(data) ? data : []).filter(isRecord).map(faxFromResource);
-  const nextUrl = nextLink(document);
 
   return Object.freeze({
     faxes: Object.freeze(faxes),
-    nextUrl,
-    nextCursor: cursorOf(nextUrl),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
     raw: document,
   });
 }
 
+/**
+ * `links.next`, present on every page but the last — on the final page the
+ * key is ABSENT from the document altogether, never present-and-null. Both
+ * are read as "no next", because a client that trusted only the documented
+ * shape would still choke on the other one showing up.
+ */
 function nextLink(document: RawJson): string | null {
   const links = nested(document, "links");
   if (!links) {
@@ -271,19 +276,18 @@ function nextLink(document: RawJson): string | null {
 }
 
 /**
- * Lift the server's own cursor out of `links.next`.
- *
- * Never rebuilt — the value is read back out of the link the server minted,
- * so the client is passing the server its own token.
+ * `meta.page.nextCursor` — the server's own cursor, never one this client
+ * builds. `null` on the final page and present on every page otherwise, so
+ * this one member answers "is there more?" everywhere, unlike `links.next`
+ * which is simply missing at the end.
  */
-function cursorOf(url: string | null): string | null {
-  if (!url) {
+function nextCursorOf(document: RawJson): string | null {
+  const meta = nested(document, "meta");
+  const page = meta ? nested(meta, "page") : null;
+  if (!page) {
     return null;
   }
 
-  try {
-    return new URL(url).searchParams.get("page[cursor]");
-  } catch {
-    return null;
-  }
+  const cursor = page.nextCursor;
+  return typeof cursor === "string" ? cursor : null;
 }

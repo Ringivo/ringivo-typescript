@@ -1,6 +1,6 @@
 {
   "name": "ringivo",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Ringivo fax API client for TypeScript and JavaScript",
   "license": "MIT",
   "repository": {

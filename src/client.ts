@@ -21,9 +21,11 @@
  * a supported escape hatch rather than a way around the client.
  *
  * Pre-signed media downloads are the deliberate exception: they go out
- * UNAUTHENTICATED (see `downloadUnauthenticated` in faxes.ts), because the
- * download URL points at an object store that is not us and must never
- * receive our bearer token.
+ * UNAUTHENTICATED (see `downloadUnauthenticated` in faxes.ts). The download
+ * URL sits on the tenant's own API host, behind a branded media proxy, but
+ * it must still never receive our bearer token: the signature in the URL is
+ * what authorizes the read, and handing over a credential good for the
+ * whole account would extend it to a link that could end up anywhere.
  *
  * -- WHY THE TYPED TRANSPORT IS HELD IN A WeakMap ---------------------------
  * `openapi-fetch`'s client is typed by `paths`, and `paths` is the

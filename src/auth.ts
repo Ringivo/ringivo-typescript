@@ -32,7 +32,10 @@
  * calls awaiting a token at the same moment would both find the cache empty
  * and both mint, which costs the server two tokens and races over which one
  * is cached. The in-flight mint is held in `pending` and shared, so the
- * second caller awaits the first caller's request instead of making its own.
+ * second caller awaits the first caller's request instead of making its own
+ * — and that holds for a FORCED refresh too: two callers that both meet a
+ * 401 on the same stale token join the same in-flight mint rather than each
+ * buying a fresh token for a refresh already under way.
  */
 import { AuthenticationError, throwForResponse } from "./errors.js";
 import { VERSION } from "./version.js";
@@ -82,15 +85,22 @@ export class ClientCredentialsAuth {
     this.timeoutMs = options.timeoutMs;
   }
 
-  /** The token to send, minting or replacing it if that is what it takes. */
+  /**
+   * The token to send, minting or replacing it if that is what it takes.
+   *
+   * The pending-mint check runs for a forced refresh too, not only the
+   * cache-miss path above it: two callers that both meet a 401 on the same
+   * stale token can both land here before either mint finishes, and a mint
+   * already in flight always answers with a token newer than anything
+   * either caller is holding. Skipping this check for `forceRefresh` was
+   * the bug — it bought a second token for a refresh already under way.
+   */
   async accessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
-    if (!options.forceRefresh) {
-      if (this.accessTokenValue !== null && this.isFresh()) {
-        return this.accessTokenValue;
-      }
-      if (this.pending) {
-        return this.pending;
-      }
+    if (!options.forceRefresh && this.accessTokenValue !== null && this.isFresh()) {
+      return this.accessTokenValue;
+    }
+    if (this.pending) {
+      return this.pending;
     }
 
     const pending = this.mint().finally(() => {

@@ -208,6 +208,53 @@ describe("the 401 retry", () => {
     expect(fax.at(1).request.headers.get("authorization")).toBe("Bearer fresh");
   });
 
+  it("mints once when two requests race to force the same refresh", async () => {
+    // Two callers can each meet a 401 on the SAME stale token and both call
+    // `accessToken({ forceRefresh: true })` before either mint finishes.
+    // Without a shared in-flight promise each would mint its own — two
+    // tokens bought for one refresh, the forced-refresh twin of the
+    // cache-miss race already covered above.
+    const token = new Calls();
+    const fax = new Calls();
+    // tok-1 is good until the server revokes it — flipped only AFTER the
+    // warmup call below has already succeeded with it.
+    let revoked = false;
+
+    server.use(
+      http.post(TOKEN_URL, async ({ request }) => {
+        await token.record(request);
+        return HttpResponse.json(tokenBody(`tok-${token.count}`));
+      }),
+      http.get(FAX_URL, async ({ request }) => {
+        await fax.record(request);
+        // Routed on the bearer actually sent, so this holds regardless of
+        // which of the two concurrent attempts the mock server sees first.
+        const stale = revoked && request.headers.get("authorization") === "Bearer tok-1";
+        return stale
+          ? HttpResponse.json({ errors: [{ status: "401", title: "Unauthenticated" }] }, { status: 401 })
+          : HttpResponse.json(faxDocument());
+      }),
+    );
+
+    const ringivo = client();
+    await ringivo.faxes.get(FAX_ID); // warms the cache with tok-1, while it is still good
+    expect(token.count).toBe(1);
+
+    revoked = true; // now both concurrent calls below meet a 401 on tok-1
+
+    const [a, b] = await Promise.all([ringivo.faxes.get(FAX_ID), ringivo.faxes.get(FAX_ID)]);
+
+    expect(a.id).toBe(FAX_ID);
+    expect(b.id).toBe(FAX_ID);
+    // ONE shared refresh, not one per caller that met the 401.
+    expect(token.count).toBe(2);
+    // Both first attempts on the stale token, both retries on the new one.
+    expect(fax.all.filter((call) => call.request.headers.get("authorization") === "Bearer tok-1"))
+      .toHaveLength(3); // the warmup call plus both concurrent first attempts
+    expect(fax.all.filter((call) => call.request.headers.get("authorization") === "Bearer tok-2"))
+      .toHaveLength(2);
+  });
+
   it("does not retry a second 401", async () => {
     // ONCE, not "until it works". A credential that has genuinely lost its
     // reach would otherwise spin, and every retry costs the server a token

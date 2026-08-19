@@ -19,6 +19,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
 import { ApiError, Ringivo, VERSION } from "./index.js";
+import type { FaxUpload } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -333,6 +334,51 @@ describe("send", () => {
     expect(sends.count, "a document that could not be read still reached the wire").toBe(0);
   });
 
+  it("refuses an empty page rather than sending a fax with nothing in it", async () => {
+    // A zero-length Blob, Uint8Array or ArrayBuffer is not a document read
+    // that came back empty by accident — every one of these types is a
+    // caller who read zero bytes and did not notice. Sent as-is, this is
+    // the same real fax, really dialled, that the type-refusal test above
+    // exists to stop: the customer is charged for a call carrying no pages.
+    const sends = recordSends();
+    const faxes = client().faxes;
+
+    const empties: [string, FaxUpload][] = [
+      ["Blob", new Blob([])],
+      ["Uint8Array", new Uint8Array(0)],
+      ["ArrayBuffer", new ArrayBuffer(0)],
+    ];
+
+    for (const [label, empty] of empties) {
+      await expect(
+        faxes.send({ faxAccount: ACCOUNT_ID, to: "+1302", file: empty }),
+        label,
+      ).rejects.toThrow(TypeError);
+    }
+
+    expect(sends.count, "an empty upload still reached the wire").toBe(0);
+  });
+
+  it("does not refuse a one-byte page — the control for the empty-upload guard", async () => {
+    // The guard above must catch exactly zero bytes, not "small" — a
+    // one-byte page for each type is a real (if tiny) document and has to
+    // go out like any other.
+    const ones: [string, FaxUpload][] = [
+      ["Blob", new Blob([new Uint8Array([97])])],
+      ["Uint8Array", new Uint8Array([97])],
+      ["ArrayBuffer", new Uint8Array([97]).buffer],
+    ];
+
+    for (const [label, one] of ones) {
+      const sends = recordSends();
+      await expect(
+        client().faxes.send({ faxAccount: ACCOUNT_ID, to: "+1302", file: one }),
+        label,
+      ).resolves.toMatchObject({ id: FAX_ID });
+      expect(sends.count, label).toBe(1);
+    }
+  });
+
   it("refuses more than five documents", async () => {
     // The ceiling counts uploads PLUS urls, which is why it is checked on
     // the total rather than on each body.
@@ -506,7 +552,7 @@ describe("list", () => {
       archived: undefined,
       tags: { clinic: "north", site: "east" },
       pageSize: 50,
-      cursor: "0198c4a1",
+      after: "0198c4a1",
     });
 
     const params = calls.last.url.searchParams;
@@ -517,7 +563,7 @@ describe("list", () => {
     expect(params.get("filter[tag][clinic]")).toBe("north");
     expect(params.get("filter[tag][site]")).toBe("east");
     expect(params.get("page[size]")).toBe("50");
-    expect(params.get("page[cursor]")).toBe("0198c4a1");
+    expect(params.get("page[after]")).toBe("0198c4a1");
     // An unset filter is absent, not empty: `filter[archived]=` would be a
     // 400 rather than "no opinion".
     expect(params.has("filter[archived]")).toBe(false);
@@ -541,12 +587,32 @@ describe("list", () => {
     expect(calls.last.url.search).toBe("");
   });
 
-  it("lifts the server's own cursor out of the next link", async () => {
+  it("sends page[before] to poll for rows that arrived since the last read", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(FAXES_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().faxes.list({ before: "0198c4a1-first-row" });
+
+    expect(calls.last.url.searchParams.get("page[before]")).toBe("0198c4a1-first-row");
+    expect(calls.last.url.searchParams.has("page[after]")).toBe(false);
+  });
+
+  it("reads nextCursor from meta.page, not by parsing the next link", async () => {
+    // `nextCursor` is the server's own cursor, lifted out of `meta.page` —
+    // never rebuilt from `links.next`. A client that parsed the link instead
+    // would break the day the link's query grammar changed even though the
+    // cursor itself did not.
     server.use(
       http.get(FAXES_URL, () =>
         HttpResponse.json({
           data: [faxResource()],
-          links: { next: `${FAXES_URL}?page%5Bcursor%5D=0198c4a1-next&page%5Bsize%5D=50` },
+          links: { next: `${FAXES_URL}?page%5Bafter%5D=0198c4a1-next&page%5Bsize%5D=50` },
+          meta: { page: { size: 50, nextCursor: "0198c4a1-next" } },
         }),
       ),
     );
@@ -556,17 +622,48 @@ describe("list", () => {
     expect(page.faxes).toHaveLength(1);
     expect(page.faxes[0]?.id).toBe(FAX_ID);
     expect(page.nextCursor).toBe("0198c4a1-next");
-    expect(page.nextUrl).toContain("page%5Bcursor%5D");
+    expect(page.nextUrl).toContain("page%5Bafter%5D");
   });
 
-  it("has no cursor to follow on the last page", async () => {
-    server.use(http.get(FAXES_URL, () => HttpResponse.json({ data: [], links: { next: null } })));
+  it("has no cursor to follow on the last page, where links.next is ABSENT", async () => {
+    // The deployed contract: `next` is missing from `links` altogether on
+    // the final page, not present-and-null — `meta.page.nextCursor` is the
+    // one member that answers "is there more?" on every page, this one
+    // included.
+    server.use(
+      http.get(FAXES_URL, () =>
+        HttpResponse.json({
+          data: [],
+          links: {},
+          meta: { page: { size: 25, nextCursor: null } },
+        }),
+      ),
+    );
 
     const page = await client().faxes.list();
 
     expect(page.faxes).toHaveLength(0);
     expect(page.nextCursor).toBeNull();
     expect(page.nextUrl).toBeNull();
+  });
+
+  it("treats a null links.next the same as an absent one", async () => {
+    // Defensive: the deployed API omits the key rather than nulling it, but
+    // the builder must not choke on a null either.
+    server.use(
+      http.get(FAXES_URL, () =>
+        HttpResponse.json({
+          data: [],
+          links: { next: null },
+          meta: { page: { size: 25, nextCursor: null } },
+        }),
+      ),
+    );
+
+    const page = await client().faxes.list();
+
+    expect(page.nextUrl).toBeNull();
+    expect(page.nextCursor).toBeNull();
   });
 });
 
@@ -626,9 +723,10 @@ describe("cancel", () => {
 
 describe("media", () => {
   it("mints a link and then downloads it WITHOUT the bearer", async () => {
-    // The URL is pre-signed and points at an object store that is NOT the
-    // API. Sending our bearer token there would hand a third party a
-    // credential that reads every fax this client can reach.
+    // The URL is pre-signed and lives on the tenant's own API host, behind
+    // a branded media proxy. Sending our bearer token there anyway would
+    // hand out a credential that reads every fax this client can reach, for
+    // a link the signature alone already authorizes.
     const downloadUrl = "https://objects.example.net/fax/0198c4a1/document.pdf?signature=abc";
     const link = new Calls();
     const download = new Calls();
@@ -655,7 +753,7 @@ describe("media", () => {
     expect(link.last.request.headers.get("authorization")).toBe("Bearer tok");
     expect(download.last.request.headers.get("authorization")).toBeNull();
     // It drops the token and NOTHING else: the download is still this SDK
-    // asking, and an operator reading an object store's access log should
+    // asking, and an operator reading the media proxy's access log should
     // see which client fetched the document.
     expect(download.last.request.headers.get("user-agent")).toBe(`Ringivo/TS ${VERSION}`);
     expect(link.last.url.searchParams.get("format")).toBe("pdf");

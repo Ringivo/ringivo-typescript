@@ -133,8 +133,17 @@ export interface ListFaxesOptions {
   /** Match on your own tags, one member per tag name. Two of them mean BOTH. */
   tags?: Readonly<Record<string, string>>;
   include?: "attempts";
-  /** The previous page's `nextCursor`. */
-  cursor?: string;
+  /**
+   * Walk forward: the previous page's `FaxPage.nextCursor`. Cannot be
+   * combined with `before`.
+   */
+  after?: string;
+  /**
+   * Walk backward from a cursor you already hold — this is how you poll for
+   * rows that arrived since your last read. Cannot be combined with `after`.
+   */
+  before?: string;
+  /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
 
@@ -238,8 +247,8 @@ export class Faxes {
    *
    * The collection is cursor-paginated and nothing is sortable: the cursor's
    * ordering IS the id ordering, so a client-supplied sort would make pages
-   * overlap. Pass the previous page's `nextCursor` back as `cursor` to walk
-   * it.
+   * overlap. Pass the previous page's `FaxPage.nextCursor` back as `after`
+   * to walk forward.
    */
   async list(options: ListFaxesOptions = {}): Promise<FaxPage> {
     const tags = options.tags;
@@ -247,7 +256,8 @@ export class Faxes {
     const { data } = await transportOf(this.client)["/v1/faxes"].GET({
       params: {
         query: {
-          "page[cursor]": options.cursor,
+          "page[after]": options.after,
+          "page[before]": options.before,
           "page[size]": options.pageSize,
           include: options.include,
           "filter[fax_account]": options.faxAccount,
@@ -314,8 +324,8 @@ export class Faxes {
    * The document's bytes: mint the link, then follow it.
    *
    * The download itself goes out UNAUTHENTICATED — the URL is pre-signed and
-   * points at an object store, which must never be sent this client's bearer
-   * token.
+   * served from the tenant's own API host, behind a branded media proxy, and
+   * it must still never be sent this client's bearer token.
    *
    * A fax accepted a second ago has no rendered PDF yet, and a purged one
    * has none any more; both are an `ApiError` with status 404.
@@ -330,13 +340,15 @@ export class Faxes {
  * Follow a pre-signed URL and return the bytes behind it.
  *
  * Deliberately NOT through `client.request()`: that path carries our bearer
- * token, and this URL is somebody else's host. Sending the token there would
- * hand a third party a credential that reads every fax this client can
- * reach.
+ * token, and this URL — though it lives on the tenant's own API host, behind
+ * a branded media proxy — is already authorized by its own signature.
+ * Sending the bearer token with it would hand out a credential that reads
+ * every fax this client can reach, for no reason: the signature already
+ * grants the read.
  *
  * It drops the token and nothing else — the User-Agent stays, because the
- * download is still this SDK asking and an operator reading an object
- * store's access log should see which client fetched the document.
+ * download is still this SDK asking and an operator reading the media
+ * proxy's access log should see which client fetched the document.
  */
 async function downloadUnauthenticated(url: string, timeoutMs: number): Promise<Uint8Array> {
   const response = await fetch(url, {
@@ -406,6 +418,12 @@ function uploads(file: SendFaxOptions["file"]): readonly FaxUpload[] {
       document instanceof Uint8Array ||
       document instanceof ArrayBuffer
     ) {
+      if (isEmpty(document)) {
+        throw new TypeError(
+          `file takes pages with bytes in them; got an empty ${describe(document)}. A fax ` +
+            "with no pages would still be dialled — read the whole document before sending it.",
+        );
+      }
       return document;
     }
 
@@ -415,6 +433,16 @@ function uploads(file: SendFaxOptions["file"]): readonly FaxUpload[] {
         "readFile(path) or openAsBlob(path).",
     );
   });
+}
+
+/**
+ * A page with nothing in it — a zero-length read that went unnoticed rather
+ * than a document that really has no bytes. Refused for the same reason as
+ * a wrong TYPE just above: sent as-is, this is still a real fax, really
+ * dialled, with no pages behind it.
+ */
+function isEmpty(document: Blob | Uint8Array | ArrayBuffer): boolean {
+  return document instanceof Blob ? document.size === 0 : document.byteLength === 0;
 }
 
 /** What a rejected value was, in words a caller can act on. */
