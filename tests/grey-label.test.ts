@@ -25,9 +25,16 @@ import { describe, expect, it } from "vitest";
 
 import { Ringivo } from "../src/index.js";
 
-// The two platform names this product is grey-labelled away from, and the
-// provider hostname that must never be compiled in.
-const FORBIDDEN = new RegExp(["gryanzvp", "gryvzngvp"].map((s) => s.replace(/[a-z]/g, (c) => String.fromCharCode(((c.charCodeAt(0) - 97 + 13) % 26) + 97))).join("|") + "|ringivo\\.com", "gi");
+// The names this package must never carry, kept rot13-encoded so this public
+// repository does not itself spell them anywhere.
+const rot13 = (s: string): string =>
+  s.replace(/[a-z]/g, (c) =>
+    String.fromCharCode(((c.charCodeAt(0) - 97 + 13) % 26) + 97),
+  );
+const FORBIDDEN = new RegExp(
+  `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|ringivo\\.com`,
+  "gi",
+);
 
 const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 
