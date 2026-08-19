@@ -8,6 +8,8 @@
  *       baseUrl: "https://api.yourprovider.example",
  *       clientId: "...",
  *       clientSecret: "...",
+ *       tenant: "...",
+ *       scopes: ["fax:read", "fax:write"],
  *     });
  *
  *     const fax = await client.faxes.send({

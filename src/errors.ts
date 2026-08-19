@@ -7,10 +7,11 @@
  * string. The message exists for a log line and a stack trace, not for code.
  *
  * The API answers errors as JSON:API error documents (`{"errors": [...]}`),
- * including on the four endpoints whose SUCCESS bodies are plain JSON. The
- * token endpoint is the one exception: it answers RFC 6749's flat
- * `{"error": ..., "error_description": ...}`, and both shapes are folded into
- * `ApiError` here so a caller has one thing to catch.
+ * including on the token mint and on the four other endpoints whose SUCCESS
+ * bodies are plain JSON. RFC 6749's flat
+ * `{"error": ..., "error_description": ...}` — what the platform's older
+ * OAuth token endpoint answers — is folded into `ApiError` here as well, so a
+ * caller has one thing to catch wherever it turns up.
  */
 
 /**

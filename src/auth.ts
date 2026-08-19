@@ -1,10 +1,19 @@
 /**
- * The OAuth 2.0 client-credentials grant, held so a caller never sees it.
+ * The integration token, minted and kept good so a caller never sees it.
  *
- * A caller hands over a client id and secret once, at construction.
- * Everything after that — minting the token, caching it, replacing it before
- * it expires, and replacing it again when the server says it is no longer
- * good — happens here, on the way out of every request.
+ * A caller hands over a client id, a secret and the context those act for
+ * once, at construction. Everything after that — minting the token, caching
+ * it, replacing it before it expires, and replacing it again when the server
+ * says it is no longer good — happens here, on the way out of every request.
+ *
+ * -- WHY THE CONTEXT IS NAMED AT THE MINT AND NOWHERE ELSE ------------------
+ * `POST /v1/integration/token` issues a token that CARRIES its tenant and,
+ * when one is named, a customer inside it. Which rows a request reaches is
+ * decided by the token, never by a header or a path sent later — so acting
+ * for another tenant means another client, and one token is one context for
+ * its whole life. A member the caller did not configure is left out of the
+ * body altogether: `tenant` absent asks the server to decide from the single
+ * grant it holds, which is not the same request as `tenant` sent empty.
  *
  * -- WHY THIS IS A SEPARATE OBJECT AND NOT A WRAPPER METHOD -----------------
  * The token cache, the expiry margin and the single 401 retry belong to the
@@ -19,8 +28,10 @@
  * minted, not `expires_in`. Without the margin a token that expires
  * mid-flight is discovered by the SERVER, which costs a refused request and
  * a retry; with it the replacement happens before a request ever carries the
- * dying token. The 401 retry stays anyway — a token can also be revoked, or
- * a server restarted, long before its clock runs out.
+ * dying token. The life is whatever the answer said — a short one is the
+ * point of this endpoint, and no number is compiled in here. The 401 retry
+ * stays anyway: a grant can be withdrawn, or a secret rotated, long before
+ * the clock runs out.
  *
  * -- WHY A MONOTONIC CLOCK --------------------------------------------------
  * Expiry is measured with `performance.now()`, which cannot be moved by an
@@ -61,6 +72,8 @@ export interface ClientCredentialsAuthOptions {
   baseUrl: string;
   clientId: string;
   clientSecret: string;
+  tenant?: string;
+  customer?: string;
   scopes?: readonly string[];
   timeoutMs: number;
 }
@@ -70,6 +83,8 @@ export class ClientCredentialsAuth {
   private readonly tokenUrl: string;
   private readonly clientId: string;
   private readonly clientSecret: string;
+  private readonly tenant: string | undefined;
+  private readonly customer: string | undefined;
   private readonly scopes: readonly string[] | undefined;
   private readonly timeoutMs: number;
 
@@ -78,9 +93,11 @@ export class ClientCredentialsAuth {
   private pending: Promise<string> | null = null;
 
   constructor(options: ClientCredentialsAuthOptions) {
-    this.tokenUrl = `${options.baseUrl.replace(/\/+$/, "")}/oauth/token`;
+    this.tokenUrl = `${options.baseUrl.replace(/\/+$/, "")}/v1/integration/token`;
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
+    this.tenant = options.tenant;
+    this.customer = options.customer;
     this.scopes = options.scopes;
     this.timeoutMs = options.timeoutMs;
   }
@@ -122,23 +139,31 @@ export class ClientCredentialsAuth {
   }
 
   private async mint(): Promise<string> {
-    const form = new URLSearchParams({
-      grant_type: "client_credentials",
+    // Only what the caller actually configured. A member sent as `null` or
+    // as an empty string is a value the server has to interpret; a member
+    // left out is the absence the endpoint documents.
+    const asked: Record<string, unknown> = {
       client_id: this.clientId,
       client_secret: this.clientSecret,
-    });
+    };
+    if (this.tenant !== undefined) {
+      asked.tenant = this.tenant;
+    }
+    if (this.customer !== undefined) {
+      asked.customer = this.customer;
+    }
     if (this.scopes && this.scopes.length > 0) {
-      form.set("scope", this.scopes.join(" "));
+      asked.scopes = [...this.scopes];
     }
 
     const response = await fetch(this.tokenUrl, {
       method: "POST",
       headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Content-Type": "application/json",
         Accept: "application/json",
         "User-Agent": USER_AGENT,
       },
-      body: form.toString(),
+      body: JSON.stringify(asked),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     await throwForResponse(response);

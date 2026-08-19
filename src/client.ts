@@ -70,10 +70,31 @@ export interface RingivoOptions {
   /** Its secret. */
   clientSecret: string;
   /**
-   * The scopes to ask for, or omitted to take your credential's default. A
-   * scope outside your client's ceiling is dropped by the server rather than
-   * refused, so read the scopes back rather than assuming the request was
-   * honoured in full.
+   * The tenant this client acts for — the id your provider named in the
+   * grant behind your credential. **Set it:** almost every integrator has to
+   * today. Omit it only where your provider can resolve the grant without
+   * one.
+   *
+   * It is named once, here, because the token CARRIES it: which rows you
+   * reach is decided by the token, so acting for another tenant means
+   * another client. The token itself is short-lived and this client re-mints
+   * it for you — you never handle one.
+   */
+  tenant?: string;
+  /**
+   * One customer inside that tenant, when your grant names one. It SELECTS a
+   * context your provider already granted and narrows nothing by itself:
+   * naming a customer your credential was not granted is refused, and
+   * omitting it asks for the tenant-wide token your grant allows.
+   */
+  customer?: string;
+  /**
+   * The scopes to ask for. What you get is the intersection with your grant,
+   * and anything outside it — including a scope name that does not exist —
+   * is dropped silently rather than refused, so read the scopes back off
+   * your provider's answer rather than assuming the request was honoured in
+   * full. **Ask for something:** a token minted with no scopes at all is
+   * refused by every endpoint you spend it on.
    */
   scopes?: readonly string[];
   /**
@@ -110,6 +131,8 @@ export class Ringivo {
       baseUrl: this.baseUrl,
       clientId: options.clientId,
       clientSecret: options.clientSecret,
+      tenant: options.tenant,
+      customer: options.customer,
       scopes: options.scopes,
       timeoutMs: this.timeoutMs,
     });

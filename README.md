@@ -16,15 +16,21 @@ so it runs on a server. That is where it belongs: the signing secret is a
 server-side credential, and a `whsec_` sent to a browser is a `whsec_` that
 has been published.
 
-## Your base URL
+## Your base URL, your tenant, your scopes
 
 There is no default host, and none is compiled in. Your provider gives you
-the API root, a client id and a client secret; everything in this README uses
+the API root, a client id, a client secret, and the **tenant** id your
+credential was granted for; everything in this README uses
 `https://api.yourprovider.example` where yours goes.
 
-The client exchanges your credentials for a bearer token on the first call,
-caches it until a minute before it expires, and replaces it if the server
-ever refuses one. You never handle the token.
+The client exchanges all of that for a bearer token on the first call, and
+mints a fresh one before the short-lived token it holds expires — or as soon
+as the server refuses the one it has. You never handle a token.
+
+**Ask for the scopes you need.** A token minted without them carries none and
+is refused by every endpoint you spend it on. What you get back is your
+request narrowed to what your grant allows: a scope outside it is dropped
+silently rather than refused.
 
 ## Send a fax
 
@@ -36,6 +42,8 @@ const client = new Ringivo({
   baseUrl: "https://api.yourprovider.example",
   clientId: "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
   clientSecret: "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
+  tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+  scopes: ["fax:read", "fax:write"],
 });
 
 const fax = await client.faxes.send({
@@ -188,7 +196,7 @@ exceptions and are deliberately not wrapped.
 
 | | |
 |---|---|
-| `new Ringivo({ baseUrl, clientId, clientSecret, scopes?, timeoutMs? })` | The client. |
+| `new Ringivo({ baseUrl, clientId, clientSecret, tenant?, customer?, scopes?, timeoutMs? })` | The client. |
 | `client.faxes.send({ faxAccount, to, file \| urls, … })` | Send one fax. Resolves to the accepted `Fax`. |
 | `client.faxes.get(faxId, { include? })` | One fax, complete. |
 | `client.faxes.list({ …filters, after?, before?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |
