@@ -66,8 +66,8 @@ function sent(call: Recorded): Record<string, unknown> {
 }
 
 /**
- * A client with a tenant, which is what an integrator has today. Pass
- * `{ tenant: undefined }` for the credential that names none.
+ * A client with a tenant and a scope, which is what an integrator has today.
+ * Pass `{ tenant: undefined }` for the credential that names no tenant.
  */
 function client(
   options: { scopes?: string[]; tenant?: string; customer?: string } = {},
@@ -77,6 +77,7 @@ function client(
     clientId: "cid",
     clientSecret: "csecret",
     tenant: TENANT_ID,
+    scopes: ["fax:read"],
     ...options,
   });
 }
@@ -125,19 +126,17 @@ describe("the token request", () => {
       client_id: "cid",
       client_secret: "csecret",
       tenant: TENANT_ID,
+      scopes: ["fax:read"],
     });
   });
 
-  it("asks for scopes as a list, and leaves the member out when none were asked for", async () => {
+  it("asks for the scopes it was given, as a list", async () => {
     // A list, not the space-separated string the older OAuth endpoint took.
-    const asked = wire();
-    await client({ scopes: ["fax:read", "fax:write"] }).faxes.get(FAX_ID);
-    expect(sent(asked.token.last).scopes).toEqual(["fax:read", "fax:write"]);
+    const { token } = wire();
 
-    server.resetHandlers();
-    const silent = wire();
-    await client().faxes.get(FAX_ID);
-    expect(sent(silent.token.last)).not.toHaveProperty("scopes");
+    await client({ scopes: ["fax:read", "fax:write"] }).faxes.get(FAX_ID);
+
+    expect(sent(token.last).scopes).toEqual(["fax:read", "fax:write"]);
   });
 
   it("names a customer only when one was configured", async () => {
@@ -162,7 +161,11 @@ describe("the token request", () => {
 
     await client({ tenant: undefined }).faxes.get(FAX_ID);
 
-    expect(sent(token.last)).toEqual({ client_id: "cid", client_secret: "csecret" });
+    expect(sent(token.last)).toEqual({
+      client_id: "cid",
+      client_secret: "csecret",
+      scopes: ["fax:read"],
+    });
   });
 
   it("carries no bearer of its own", async () => {
@@ -462,14 +465,60 @@ describe("the surface", () => {
     // there is (the grey-label rule, asserted from the other side in
     // tests/grey-label.test.ts).
     expect(
-      new Ringivo({ baseUrl: `${BASE_URL}/`, clientId: "c", clientSecret: "s" }).baseUrl,
+      new Ringivo({
+        baseUrl: `${BASE_URL}/`,
+        clientId: "c",
+        clientSecret: "s",
+        scopes: ["fax:read"],
+      }).baseUrl,
     ).toBe(BASE_URL);
 
-    expect(() => new Ringivo({ baseUrl: "", clientId: "c", clientSecret: "s" })).toThrow(
-      "baseUrl is required",
+    expect(
+      () => new Ringivo({ baseUrl: "", clientId: "c", clientSecret: "s", scopes: ["fax:read"] }),
+    ).toThrow("baseUrl is required");
+    expect(
+      () =>
+        new Ringivo({ baseUrl: BASE_URL, clientId: "", clientSecret: "s", scopes: ["fax:read"] }),
+    ).toThrow("clientId and clientSecret are required");
+  });
+
+  it("refuses to construct with no scopes, before anything reaches the wire", () => {
+    // A token minted with no scopes CARRIES none: the server intersects what
+    // you ask for with what your grant allows, so asking for nothing is not
+    // "the credential's default" — it is a token every endpoint refuses,
+    // discovered as a 403 nowhere near the line that caused it. The refusal
+    // is bought here instead, where the message can name the fix, and no
+    // default is invented on the caller's behalf.
+    const { token, fax } = wire();
+
+    // Omitted, and empty: two spellings of the same ask.
+    expect(() => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s" })).toThrow(
+      TypeError,
     );
-    expect(() => new Ringivo({ baseUrl: BASE_URL, clientId: "", clientSecret: "s" })).toThrow(
-      "clientId and clientSecret are required",
+    expect(() => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s" })).toThrow(
+      /scopes is required/,
     );
+    expect(
+      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: [] }),
+    ).toThrow(TypeError);
+    expect(
+      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: [] }),
+    ).toThrow(/scopes is required/);
+
+    // And NOTHING went out on either: the refusal happens at construction,
+    // before there is a client to mint with.
+    expect(token.count).toBe(0);
+    expect(fax.count).toBe(0);
+  });
+
+  it("constructs and mints with one scope", async () => {
+    // The control for the refusal above: the guard turns away an empty ask,
+    // not every ask.
+    const { token } = wire();
+
+    await client({ scopes: ["fax:read"] }).faxes.get(FAX_ID);
+
+    expect(token.count).toBe(1);
+    expect(sent(token.last).scopes).toEqual(["fax:read"]);
   });
 });

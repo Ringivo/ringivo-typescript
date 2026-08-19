@@ -44,7 +44,12 @@ const VECTOR: Vector = JSON.parse(
 
 /** The surface both entrypoints must present, named rather than inferred. */
 interface Surface {
-  Ringivo: new (options: { baseUrl: string; clientId: string; clientSecret: string }) => {
+  Ringivo: new (options: {
+    baseUrl: string;
+    clientId: string;
+    clientSecret: string;
+    scopes: readonly string[];
+  }) => {
     baseUrl: string;
     faxes: object;
     request: unknown;
@@ -74,6 +79,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       baseUrl: "https://api.yourprovider.example/",
       clientId: "id",
       clientSecret: "secret",
+      scopes: ["fax:read"],
     });
 
     expect(client.baseUrl).toBe("https://api.yourprovider.example");
@@ -88,6 +94,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       baseUrl: "https://api.yourprovider.example",
       clientId: "id",
       clientSecret: "secret",
+      scopes: ["fax:read"],
     });
 
     expect(

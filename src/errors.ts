@@ -138,7 +138,11 @@ function errorsFromBody(body: string, statusCode: number): readonly ApiErrorDeta
     return errors.filter(isRecord).map(detailFromJson);
   }
 
-  // RFC 6749's flat shape, from the token endpoint.
+  // RFC 6749's flat shape. Nothing this client calls on its own answers it —
+  // the mint speaks JSON:API — but `Ringivo.request()` is a supported escape
+  // hatch onto any endpoint, the platform's own /oauth/token included, and a
+  // caller who reaches one still gets the same typed error as everywhere
+  // else. src/errors.test.ts is what keeps this branch honest.
   const oauthError = document.error;
   if (typeof oauthError === "string") {
     const description = document.error_description;

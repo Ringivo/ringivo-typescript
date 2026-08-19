@@ -89,12 +89,15 @@ export interface RingivoOptions {
    */
   customer?: string;
   /**
-   * The scopes to ask for. What you get is the intersection with your grant,
-   * and anything outside it — including a scope name that does not exist —
-   * is dropped silently rather than refused, so read the scopes back off
+   * The scopes to ask for. **At least one, or the constructor refuses to
+   * build the client:** what you get is the intersection with your grant, so
+   * an empty ask mints a token that carries nothing and is refused by every
+   * endpoint you spend it on. There is no default to fall back to.
+   *
+   * Anything outside your grant — including a scope name that does not exist
+   * — is dropped silently rather than refused, so read the scopes back off
    * your provider's answer rather than assuming the request was honoured in
-   * full. **Ask for something:** a token minted with no scopes at all is
-   * refused by every endpoint you spend it on.
+   * full.
    */
   scopes?: readonly string[];
   /**
@@ -123,6 +126,19 @@ export class Ringivo {
     }
     if (!options.clientId || !options.clientSecret) {
       throw new Error("clientId and clientSecret are required");
+    }
+    // REFUSED HERE, LOUDLY, RATHER THAN IN PRODUCTION. Asking for no scopes
+    // is not "the default scopes": the server intersects what you ask for
+    // with what your grant allows, so an empty ask mints a token that holds
+    // nothing and is refused by every endpoint it is spent on — a 403 whose
+    // cause is nowhere near where it is read. There is no default to invent
+    // on the caller's behalf, so the only honest moment to say so is now.
+    if (!options.scopes || options.scopes.length === 0) {
+      throw new TypeError(
+        "scopes is required: name the scopes your credential was granted, e.g. " +
+          'scopes: ["fax:read", "fax:write"]. A token minted with none carries none, and ' +
+          "every endpoint refuses it.",
+      );
     }
 
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");

@@ -27,10 +27,14 @@ The client exchanges all of that for a bearer token on the first call, and
 mints a fresh one before the short-lived token it holds expires — or as soon
 as the server refuses the one it has. You never handle a token.
 
-**Ask for the scopes you need.** A token minted without them carries none and
-is refused by every endpoint you spend it on. What you get back is your
-request narrowed to what your grant allows: a scope outside it is dropped
-silently rather than refused.
+**Ask for the scopes you need**, or the client refuses to build one at all: a
+token minted without scopes carries none, and is refused by every endpoint
+you spend it on. There is no default set, so an empty ask is a mistake worth
+hearing about at construction rather than as a puzzling 403 in production.
+
+What you get back is your ask narrowed to what your grant allows, and a scope
+outside it is dropped silently rather than refused — so read the scopes back
+off your provider's answer.
 
 ## Send a fax
 
@@ -196,7 +200,7 @@ exceptions and are deliberately not wrapped.
 
 | | |
 |---|---|
-| `new Ringivo({ baseUrl, clientId, clientSecret, tenant?, customer?, scopes?, timeoutMs? })` | The client. |
+| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant?, customer?, timeoutMs? })` | The client. `scopes` may not be empty. |
 | `client.faxes.send({ faxAccount, to, file \| urls, … })` | Send one fax. Resolves to the accepted `Fax`. |
 | `client.faxes.get(faxId, { include? })` | One fax, complete. |
 | `client.faxes.list({ …filters, after?, before?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |

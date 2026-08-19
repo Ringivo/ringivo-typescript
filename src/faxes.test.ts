@@ -40,7 +40,13 @@ beforeEach(() => {
 });
 
 function client(): Ringivo {
-  return new Ringivo({ baseUrl: BASE_URL, clientId: "cid", clientSecret: "csecret" });
+  return new Ringivo({
+    baseUrl: BASE_URL,
+    clientId: "cid",
+    clientSecret: "csecret",
+    tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+    scopes: ["fax:read", "fax:write"],
+  });
 }
 
 function accepted(overrides: Record<string, unknown> = {}): object {
