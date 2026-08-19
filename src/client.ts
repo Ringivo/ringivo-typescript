@@ -70,6 +70,19 @@ export interface RingivoOptions {
   /** Its secret. */
   clientSecret: string;
   /**
+   * The scopes to ask for. **Required, and never empty:** what you get is the
+   * intersection with what your grant allows, so an empty ask mints a token
+   * that carries nothing and is refused by every endpoint you spend it on.
+   * There is no default to fall back to and there never will be — unlike the
+   * tenant, this is not something a server can decide for you.
+   *
+   * Anything outside your grant — including a scope name that does not exist
+   * — is dropped silently rather than refused, so read the scopes back off
+   * your provider's answer rather than assuming the request was honoured in
+   * full.
+   */
+  scopes: readonly string[];
+  /**
    * The tenant this client acts for — the id your provider named in the
    * grant behind your credential. **Set it:** almost every integrator has to
    * today. Omit it only where your provider can resolve the grant without
@@ -88,18 +101,6 @@ export interface RingivoOptions {
    * omitting it asks for the tenant-wide token your grant allows.
    */
   customer?: string;
-  /**
-   * The scopes to ask for. **At least one, or the constructor refuses to
-   * build the client:** what you get is the intersection with your grant, so
-   * an empty ask mints a token that carries nothing and is refused by every
-   * endpoint you spend it on. There is no default to fall back to.
-   *
-   * Anything outside your grant — including a scope name that does not exist
-   * — is dropped silently rather than refused, so read the scopes back off
-   * your provider's answer rather than assuming the request was honoured in
-   * full.
-   */
-  scopes?: readonly string[];
   /**
    * Milliseconds any single request may take, token requests and media
    * downloads included. Thirty seconds by default.
@@ -133,6 +134,13 @@ export class Ringivo {
     // nothing and is refused by every endpoint it is spent on — a 403 whose
     // cause is nowhere near where it is read. There is no default to invent
     // on the caller's behalf, so the only honest moment to say so is now.
+    //
+    // BOTH HALVES ARE GATES, and this is the half that runs. `scopes` is
+    // REQUIRED in `RingivoOptions`, which stops a TypeScript caller at
+    // compile time (src/auth.test.ts holds the `@ts-expect-error` that fails
+    // the build the day it stops being required). This check is what a
+    // JavaScript caller meets, and it is also the only one of the two that
+    // can see an EMPTY list: `readonly string[]` is a type `[]` satisfies.
     if (!options.scopes || options.scopes.length === 0) {
       throw new TypeError(
         "scopes is required: name the scopes your credential was granted, e.g. " +

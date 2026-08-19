@@ -22,6 +22,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Calls, mockServer } from "../tests/msw.js";
 import type { Recorded } from "../tests/msw.js";
 import { ApiError, AuthenticationError, Ringivo, VERSION } from "./index.js";
+import type { RingivoOptions } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/v1/integration/token`;
@@ -489,15 +490,23 @@ describe("the surface", () => {
     // discovered as a 403 nowhere near the line that caused it. The refusal
     // is bought here instead, where the message can name the fix, and no
     // default is invented on the caller's behalf.
+    //
+    // This is the RUNTIME half of the gate, and it is the half a JavaScript
+    // caller meets — hence the cast, which spells in TypeScript what a
+    // plain-JS caller writes for free. The compile-time half is the test
+    // below.
     const { token, fax } = wire();
+    const scopeless = {
+      baseUrl: BASE_URL,
+      clientId: "c",
+      clientSecret: "s",
+    } as unknown as RingivoOptions;
 
-    // Omitted, and empty: two spellings of the same ask.
-    expect(() => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s" })).toThrow(
-      TypeError,
-    );
-    expect(() => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s" })).toThrow(
-      /scopes is required/,
-    );
+    // Omitted, and empty: two spellings of the same ask. Only the first is
+    // stopped by the type — `[]` satisfies `readonly string[]` — which is
+    // why this check stays even now that `scopes` is required.
+    expect(() => new Ringivo(scopeless)).toThrow(TypeError);
+    expect(() => new Ringivo(scopeless)).toThrow(/scopes is required/);
     expect(
       () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: [] }),
     ).toThrow(TypeError);
@@ -509,6 +518,21 @@ describe("the surface", () => {
     // before there is a client to mint with.
     expect(token.count).toBe(0);
     expect(fax.count).toBe(0);
+  });
+
+  it("does not typecheck without scopes", () => {
+    // The COMPILE-TIME half of the same gate, and the one that stops a
+    // TypeScript caller before they ever run the code. `scopes` will never
+    // be server-defaulted the way a single-grant client's tenant can be, so
+    // the required type is the honest shape rather than a temporary one.
+    //
+    // The directive is the gate: `tsc --noEmit` reports an UNUSED
+    // `@ts-expect-error` — and fails the build — the day `scopes` goes back
+    // to optional and this line starts compiling.
+    expect(
+      // @ts-expect-error scopes is required, so omitting it must not typecheck
+      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s" }),
+    ).toThrow(/scopes is required/);
   });
 
   it("constructs and mints with one scope", async () => {

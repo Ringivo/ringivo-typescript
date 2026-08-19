@@ -99,7 +99,7 @@ describe("the published tarball", () => {
     // suppression the day `baseUrl` stops being required.
     expect(
       // @ts-expect-error baseUrl has no default, so omitting it must not typecheck
-      () => new Ringivo({ clientId: "c", clientSecret: "s" }),
+      () => new Ringivo({ clientId: "c", clientSecret: "s", scopes: ["fax:read"] }),
     ).toThrow("baseUrl is required");
   });
 });
