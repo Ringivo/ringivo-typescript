@@ -611,6 +611,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/number-lookups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Look up a phone number
+         * @description Everything we can find out about one number: who carries it now, what name it presents, and
+         *     whether it can receive text messages.
+         *
+         *     **This call costs you money.** It is billed at your per-lookup rate, every time, for any
+         *     number — including one you do not own and never will. There is no free or cached variant, and
+         *     a repeated lookup of the same number is a second lookup.
+         *
+         *     **It needs a personal access token, not a client-credentials token.** This is the only
+         *     operation here with that requirement, and it follows from the line above: because a lookup
+         *     spends your balance, it is not something a third-party integration's credential may do on
+         *     your behalf. Mint a token for one of your own console users from the portal's Security page.
+         *     That user needs permission to look numbers up, which is held by exactly the roles that can
+         *     already buy a number — so if they can purchase a DID, they can run a lookup.
+         *
+         *     **A POST, not a GET, for that reason.** A GET is safe and idempotent by definition, so
+         *     proxies, prefetchers and retry logic are entitled to repeat one — and each repeat would be
+         *     another charge.
+         *
+         *     **Nothing is stored.** We return the answer and keep no copy of it, so there is no
+         *     `GET /v1/number-lookups/{id}` to come back to and no id to come back with. Keep what you need
+         *     from the response.
+         *
+         *     ## The two geographies are two different facts
+         *
+         *     `dialedNumber` describes the number you asked about. `components.lrn.data.rateCenter` and
+         *     `.state` describe its **LRN** — the routing number it currently ports to. **They frequently
+         *     disagree, and both are right**: `6502530000` is `MT VIEW` by dialed number and `MILLVALLEY`
+         *     by LRN. Do not merge them, and do not treat one as a correction of the other. Use the LRN's
+         *     when you care where the call actually lands, and the dialed number's when you care where the
+         *     number is nominally from.
+         *
+         *     `dialedNumber.rateCenter` and `.state` are `null` for a toll-free number. That is **absent,
+         *     not missing**: toll-free numbers are assigned individually rather than in geographic blocks,
+         *     so there is no rate center to report. Nothing failed.
+         *
+         *     ## Read `status` before you read `data`
+         *
+         *     Each of the three components reports its own outcome, and `data` is `null` for two of them:
+         *
+         *     | `status` | What it means | Charged |
+         *     |---|---|---|
+         *     | `answered` | The provider returned data. It is in `data`. | yes |
+         *     | `no_data` | The provider answered, and holds nothing for this number. | yes |
+         *     | `failed` | We could not get an answer. | see `charged` |
+         *
+         *     **`no_data` and `failed` are not the same fact.** "This number has no CNAM record" and "we
+         *     could not ask" look identical if you only check `data == null`, and only the first is
+         *     something to show a user as an answer.
+         *
+         *     `charged` tells you whether this lookup was billed. A lookup where **some** components
+         *     answered is billed in full; one where **every** component failed is not billed at all.
+         */
+        post: operations["lookUpNumber"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -1604,6 +1674,120 @@ export interface components {
         };
         FaxReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["FaxReceivedEventData"];
+        };
+        NumberLookupRequest: {
+            /**
+             * @description The number to look up. 10 digits, or 11 beginning with `1`; punctuation and spaces are
+             *     ignored, so `(650) 253-0000` and `+16502530000` are the same request.
+             */
+            number: string;
+        };
+        /**
+         * @description What one component did. `no_data` and `failed` both carry `data: null` and mean different
+         *     things — see the operation description.
+         * @enum {string}
+         */
+        NumberLookupDipStatus: "answered" | "no_data" | "failed";
+        /**
+         * @description Where the number you asked about is nominally from, from our own copy of LERG. **Not the
+         *     LRN's** rate center, which is a different fact and lives under `components.lrn`.
+         */
+        DialedNumberGeography: {
+            /** @description Null for a toll-free number, which has no rate center. Absent, not missing. */
+            rateCenter: string | null;
+            /** @description Two-letter state or province code. Null for a toll-free number. */
+            state: string | null;
+        };
+        /** @description The porting facts — who the number routes to now, and who owns its block. */
+        LrnFacts: {
+            /** @description The location routing number, 11 digits. */
+            lrn: string;
+            /**
+             * @description Who the number is ported to **now** — this is the one porting cares about. A string,
+             *     never a number: values like `506J` exist.
+             */
+            spid: string | null;
+            /** @description Who owns the number block. Often differs from `spid`. A string, never a number. */
+            ocn: string | null;
+            lata: string | null;
+            /** @description The carrier's full name, as the source spells it. */
+            lec: string | null;
+            /**
+             * @description `CLEC`, `WIRELESS`, `ILEC`. This is what the **network** says. It is not what a losing
+             *     carrier's bill says, and it must not be used to correct a port order's number type.
+             */
+            lineType: string | null;
+            /** @description The **LRN's** rate center — not the dialed number's. The two often differ. */
+            rateCenter: string | null;
+            /** @description The **LRN's** state or province code. */
+            state: string | null;
+            /** @description A string, not a boolean — commonly the literal `INDETERMINATE`, which is not false. */
+            jurisdiction: string | null;
+            /** @description A string, not a boolean, for the same reason as `jurisdiction`. */
+            local: string | null;
+            /**
+             * Format: date-time
+             * @description When the number last ported. Null if it never has.
+             */
+            portedAt: string | null;
+        };
+        CallerNameFacts: {
+            /** @description The name the number presents, as the carrier spells it — uppercase, up to 15 characters. */
+            name: string;
+        };
+        /** @description Whether the number can carry text messages, and who carries them. */
+        MessagingFacts: {
+            /**
+             * @description Whether the number is enabled for messaging. **`false` means it cannot receive messages**
+             *     — it never means "we do not know", which arrives as `status: no_data` with this whole
+             *     object null.
+             */
+            enabled: boolean;
+            /** @description The messaging carrier's name. */
+            provider: string | null;
+            country: string | null;
+            countryCode: string | null;
+        };
+        NumberLookupLrnComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["LrnFacts"] | null;
+        };
+        NumberLookupCallerNameComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["CallerNameFacts"] | null;
+        };
+        NumberLookupMessagingComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["MessagingFacts"] | null;
+        };
+        /**
+         * @description The three paid components. Each reports its own outcome and they fail independently — a
+         *     lookup with two answers and one failure is normal, and is billed in full.
+         */
+        NumberLookupComponents: {
+            lrn: components["schemas"]["NumberLookupLrnComponent"];
+            callerName: components["schemas"]["NumberLookupCallerNameComponent"];
+            messaging: components["schemas"]["NumberLookupMessagingComponent"];
+        };
+        NumberLookup: {
+            /** @description The number that was looked up, normalized to E.164. */
+            number: string;
+            /**
+             * Format: date-time
+             * @description When the components ran — so you can tell "we asked and learned nothing" from "we never
+             *     asked".
+             */
+            lookedUpAt: string;
+            /**
+             * @description Whether this lookup was billed. True when any component answered; false only when every
+             *     one of them failed.
+             */
+            charged: boolean;
+            dialedNumber: components["schemas"]["DialedNumberGeography"];
+            components: components["schemas"]["NumberLookupComponents"];
+        };
+        NumberLookupResult: {
+            data: components["schemas"]["NumberLookup"];
         };
     };
     responses: {
@@ -3500,6 +3684,109 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    lookUpNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "number": "6502530000"
+                 *     }
+                 */
+                "application/json": components["schemas"]["NumberLookupRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description The lookup. **200 and not 201** — nothing was created, and there is nothing to fetch
+             *     again.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "number": "+16502530000",
+                     *         "lookedUpAt": "2026-08-19T18:04:11+00:00",
+                     *         "charged": true,
+                     *         "dialedNumber": {
+                     *           "rateCenter": "MT VIEW",
+                     *           "state": "CA"
+                     *         },
+                     *         "components": {
+                     *           "lrn": {
+                     *             "status": "answered",
+                     *             "data": {
+                     *               "lrn": "14159686199",
+                     *               "spid": "8824",
+                     *               "ocn": "8826",
+                     *               "lata": "722",
+                     *               "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
+                     *               "lineType": "WIRELESS",
+                     *               "rateCenter": "MILLVALLEY",
+                     *               "state": "CA",
+                     *               "jurisdiction": "INDETERMINATE",
+                     *               "local": "INDETERMINATE",
+                     *               "portedAt": "2014-12-23T15:47:47+00:00"
+                     *             }
+                     *           },
+                     *           "callerName": {
+                     *             "status": "answered",
+                     *             "data": {
+                     *               "name": "GOOGLEPLEX"
+                     *             }
+                     *           },
+                     *           "messaging": {
+                     *             "status": "no_data",
+                     *             "data": null
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["NumberLookupResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description Not a number we will look up — it is not a North American number, or its area
+             *     code/exchange does not exist. **Nothing was looked up and you were not charged**: this
+             *     check runs before any provider is asked.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Not a number we can look up",
+                     *           "detail": "No exchange 650-999 exists, so +16509999999 is not a real number. Nothing was looked up and nothing was charged.",
+                     *           "source": {
+                     *             "pointer": "/number"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
