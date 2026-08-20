@@ -5,8 +5,25 @@ info:
   description: |
     REST API for the fax platform and its outbound webhooks.
 
-    Authenticate with OAuth2 **client credentials**: exchange a client id and secret for a bearer
-    token at `POST /oauth/token`, then send `Authorization: Bearer <token>` on every call.
+    ## Authentication
+
+    Mint a token at `POST /v1/integration/token`, then send `Authorization: Bearer <token>` on
+    every call. One request does it: send your client id and secret in the body, name the
+    **tenant** you are acting for — and, if you were granted one, a **customer** inside it — and
+    ask for the `scopes` you need. The token comes back already scoped to that context. Leave
+    `scopes` out and it comes back holding none, which every resource then refuses. Nothing later
+    in the call chain picks a tenant; the token carries it for its whole life.
+
+    A token lasts **15 minutes** (`expires_in: 900`), and there is no refresh token. Mint another
+    when it expires, and mint another when a call answers **401**. Hold each token for its full
+    life rather than minting one per request — that endpoint is throttled harder than the rest of
+    the API. Its own description carries the rest: which scopes you end up holding, why a mint is
+    refused, and how quickly a withdrawn grant stops you.
+
+    **`POST /oauth/token` is platform-internal and not for API integrators.** It serves this
+    platform's own machine principals, and this document deliberately does not describe it. A
+    token minted there carries no tenant, so every `/v1` resource refuses it; nothing in the flow
+    above uses it.
 
     ## The resource surface is JSON:API
 
@@ -72,7 +89,7 @@ servers:
   # reaches only the linters and the SDK generators.
   - url: https://api.example.com
 security:
-  - oauth2: []
+  - bearerAuth: []
 
 tags:
   - name: Authentication
@@ -100,64 +117,6 @@ tags:
       deliveries of customer- and tenant-scoped endpoints require `webhooks:*`.
 
 paths:
-  /oauth/token:
-    post:
-      tags: [Authentication]
-      operationId: issueToken
-      summary: Exchange client credentials for a bearer token
-      description: |
-        The OAuth 2.0 client-credentials grant (RFC 6749 §4.4). Send the client id and secret you
-        were issued, plus the space-separated scopes you want.
-
-        **A scope outside your client's ceiling is dropped, not refused.** Ask for
-        `fax:read fax:write` with only `fax:read` granted and you receive a 200 carrying a token
-        that holds `fax:read` alone. Read the scopes back from the token rather than assuming the
-        request was honoured in full. A scope this platform does not publish at all is a different
-        case: that is a `400 invalid_scope`.
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TokenRequest'
-            example:
-              grant_type: client_credentials
-              client_id: 0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01
-              client_secret: 9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6
-              scope: fax:read fax:write
-      responses:
-        '200':
-          description: A bearer token.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/TokenResponse'
-              example:
-                token_type: Bearer
-                expires_in: 31536000
-                access_token: eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...
-        '400':
-          description: |
-            The request or the requested scope is not one this platform accepts — for example
-            `error: invalid_scope` for a scope name that is not published.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OAuthError'
-              example:
-                error: invalid_scope
-                error_description: The requested scope is invalid, unknown, or malformed
-        '401':
-          description: 'The client id or secret is wrong (`error: invalid_client`).'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OAuthError'
-              example:
-                error: invalid_client
-                error_description: Client authentication failed
-
   /v1/integration/token:
     post:
       tags: [Authentication]
@@ -220,8 +179,7 @@ paths:
         **A scope outside that set is dropped, not refused.** You get a 200 carrying a token that
         simply does not hold it. That covers a scope your grant does not carry, a scope no customer
         credential may hold, **and a scope name this platform does not publish at all** — so a typo
-        costs you a capability rather than an error. (`POST /oauth/token` differs on that last case:
-        there an unpublished name is a 400 `invalid_scope`.)
+        costs you a capability rather than an error.
 
         So **read `scopes` back off the response** and treat it as the authoritative answer. A call
         made on the assumption that you got what you asked for fails later at the resource instead,
@@ -361,7 +319,7 @@ paths:
       description: |
         The inbox and the outbox in one collection, newest first.
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
@@ -513,7 +471,7 @@ paths:
         response header. That header is the ONLY thing that tells the two apart: the body is the
         same fax either way.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       parameters:
         - name: Idempotency-Key
           in: header
@@ -656,7 +614,7 @@ paths:
         bytes are reached only through `GET /v1/faxes/{fax}/media`, which mints a short-lived
         download URL and records who asked.
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       parameters:
         - name: include
           in: query
@@ -726,7 +684,7 @@ paths:
         that. `read` is idempotent — marking an already-read fax read again does not move when it
         was first read.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       requestBody:
         required: true
         content:
@@ -768,7 +726,7 @@ paths:
         as the evidence that a transmission happened. A soft delete that left the images in place
         would be a deletion in name only.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       responses:
         '204':
           description: Deleted.
@@ -801,7 +759,7 @@ paths:
         cache the URL past its expiry or share it — anyone holding it reads that document with no
         further authorization.
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       parameters:
         - name: format
           in: query
@@ -860,7 +818,7 @@ paths:
 
         Follow `url` the same way — a plain `GET`, no `Authorization` header.
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       responses:
         '200':
           description: A download URL for the preview image.
@@ -902,7 +860,7 @@ paths:
         that is a 409 whose `meta.reason` is `answered` or `terminal`. This refusal carries **no
         `code` member** — the status is the contract.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       responses:
         '200':
           description: Cancelled.
@@ -945,7 +903,7 @@ paths:
         A token issued for a person lists only the accounts that person was granted; a machine
         credential lists every account in its scope.
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
@@ -1001,7 +959,7 @@ paths:
 
         Numbers are not attached here: point a DID at the account through the routing API.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       requestBody:
         required: true
         content:
@@ -1059,7 +1017,7 @@ paths:
       operationId: getFaxAccount
       summary: Read one fax account
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       responses:
         '200':
           description: The fax account.
@@ -1101,7 +1059,7 @@ paths:
         was sent or received for — and naming a different one is a 422 rather than a silent drop. A
         sparse PATCH of one attribute leaves every other field alone.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       requestBody:
         required: true
         content:
@@ -1138,7 +1096,7 @@ paths:
       summary: Retire a fax account
       description: The account stops being listed; its record survives.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       responses:
         '204':
           description: Retired.
@@ -1162,7 +1120,7 @@ paths:
         Read-only. Attaching a number is the routing API's act, because a number points at one
         destination and that rule belongs to the number.
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
@@ -1209,7 +1167,7 @@ paths:
       description: |
         One row per (user, fax account) pair — the answer to "who can see this account's faxes?".
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
@@ -1258,7 +1216,7 @@ paths:
         permission-gated, while reading its content is grant-gated, so somebody has to be able to
         add the first member.
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       requestBody:
         required: true
         content:
@@ -1311,7 +1269,7 @@ paths:
       operationId: getFaxAccountUser
       summary: Read one grant
       security:
-        - oauth2: [fax:read]
+        - bearerAuth: [fax:read]
       responses:
         '200':
           description: The grant.
@@ -1340,7 +1298,7 @@ paths:
       operationId: deleteFaxAccountUser
       summary: Withdraw a grant
       security:
-        - oauth2: [fax:write]
+        - bearerAuth: [fax:write]
       responses:
         '204':
           description: Withdrawn.
@@ -1366,8 +1324,8 @@ paths:
         **Scope:** `fax:read` lists only **fax-account-scoped** endpoints; customer- and
         tenant-scoped endpoints are absent from that list and require `webhooks:read`.
       security:
-        - oauth2: [webhooks:read]
-        - oauth2: [fax:read]
+        - bearerAuth: [webhooks:read]
+        - bearerAuth: [fax:read]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
@@ -1439,8 +1397,8 @@ paths:
         `customer` or `tenant` scope with a `fax:*` token is refused with a 422, and needs
         `webhooks:write`.
       security:
-        - oauth2: [webhooks:write]
-        - oauth2: [fax:write]
+        - bearerAuth: [webhooks:write]
+        - bearerAuth: [fax:write]
       requestBody:
         required: true
         content:
@@ -1508,8 +1466,8 @@ paths:
         tenant-scoped endpoint answers **404** to a `fax:*` token, exactly as an id that names
         nothing does, and requires `webhooks:read`.
       security:
-        - oauth2: [webhooks:read]
-        - oauth2: [fax:read]
+        - bearerAuth: [webhooks:read]
+        - bearerAuth: [fax:read]
       responses:
         '200':
           description: The endpoint.
@@ -1550,8 +1508,8 @@ paths:
         **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
         tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
       security:
-        - oauth2: [webhooks:write]
-        - oauth2: [fax:write]
+        - bearerAuth: [webhooks:write]
+        - bearerAuth: [fax:write]
       requestBody:
         required: true
         content:
@@ -1594,8 +1552,8 @@ paths:
         **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
         tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
       security:
-        - oauth2: [webhooks:write]
-        - oauth2: [fax:write]
+        - bearerAuth: [webhooks:write]
+        - bearerAuth: [fax:write]
       responses:
         '204':
           description: Removed.
@@ -1627,8 +1585,8 @@ paths:
         customer- or tenant-scoped endpoint answers **404** to a `fax:*` token and requires
         `webhooks:write`.
       security:
-        - oauth2: [webhooks:write]
-        - oauth2: [fax:write]
+        - bearerAuth: [webhooks:write]
+        - bearerAuth: [fax:write]
       responses:
         '200':
           description: The endpoint, carrying the newly minted secret.
@@ -1679,8 +1637,8 @@ paths:
         of **fax-account-scoped** endpoints; the deliveries of customer- and tenant-scoped endpoints
         require `webhooks:read`.
       security:
-        - oauth2: [webhooks:read]
-        - oauth2: [fax:read]
+        - bearerAuth: [webhooks:read]
+        - bearerAuth: [fax:read]
       parameters:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
@@ -1757,8 +1715,8 @@ paths:
         deliveries of **fax-account-scoped** endpoints; a delivery of a customer- or tenant-scoped
         endpoint answers **404** to a `fax:*` token and requires `webhooks:read`.
       security:
-        - oauth2: [webhooks:read]
-        - oauth2: [fax:read]
+        - bearerAuth: [webhooks:read]
+        - bearerAuth: [fax:read]
       parameters:
         - name: include
           in: query
@@ -2129,11 +2087,22 @@ webhooks:
 
 components:
   securitySchemes:
-    oauth2:
-      type: oauth2
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
       description: |
-        OAuth2 client credentials. The scopes below are the FRONT DOOR — a credential's reach is
-        decided separately, by which tenant or customer it was issued for.
+        A bearer token minted at `POST /v1/integration/token` and short-lived — `expires_in: 900`,
+        re-minted rather than refreshed.
+
+        The scopes named on each operation are the FRONT DOOR — a credential's reach is decided
+        separately, by which tenant or customer it was issued for. The four this platform
+        publishes:
+
+        - `fax:read` — read fax resources
+        - `fax:write` — send and manage faxes
+        - `webhooks:read` — read your webhook endpoints and their delivery history
+        - `webhooks:write` — register, change and remove your webhook endpoints
 
         ## `fax:*` and `webhooks:*` are not interchangeable
 
@@ -2147,14 +2116,6 @@ components:
         endpoint's reach.
 
         So a fax integrator managing its own inbox needs no webhook scope; anything wider does.
-      flows:
-        clientCredentials:
-          tokenUrl: /oauth/token    # relative on purpose: resolves against the served server URL
-          scopes:
-            fax:read: Read fax resources
-            fax:write: Send and manage faxes
-            webhooks:read: Read your webhook endpoints and their delivery history
-            webhooks:write: Register, change and remove your webhook endpoints
 
   parameters:
     FaxId:
@@ -2268,44 +2229,7 @@ components:
             $ref: '#/components/schemas/ErrorDocument'
 
   schemas:
-    # -- OAuth -----------------------------------------------------------------------------------
-    TokenRequest:
-      type: object
-      required: [grant_type, client_id, client_secret]
-      properties:
-        grant_type:
-          type: string
-          enum: [client_credentials]
-        client_id:
-          type: string
-        client_secret:
-          type: string
-        scope:
-          type: string
-          description: Space-separated scope names. Anything outside your client's ceiling is dropped.
-    TokenResponse:
-      type: object
-      required: [access_token, token_type]
-      properties:
-        access_token:
-          type: string
-          description: 'The bearer token. Send it as `Authorization: Bearer <token>`.'
-        token_type:
-          type: string
-          examples: [Bearer]
-        expires_in:
-          type: integer
-          description: Seconds until the token expires.
-    OAuthError:
-      type: object
-      required: [error]
-      properties:
-        error:
-          type: string
-          description: 'The RFC 6749 error code — for example `invalid_scope` or `invalid_client`.'
-        error_description:
-          type: string
-
+    # -- The integrator token mint ---------------------------------------------------------------
     IntegrationTokenRequest:
       type: object
       required: [client_id, client_secret, tenant]
