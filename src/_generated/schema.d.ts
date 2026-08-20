@@ -25,11 +25,30 @@ export interface paths {
          *     you were issued, name the **tenant** you are acting for, and you get back a token that
          *     carries that tenant — and, when you name one, a **customer** inside it.
          *
+         *     Both halves have a second spelling, so an OAuth client library can call this endpoint the
+         *     way it already writes: the credentials may ride an `Authorization: Basic` header instead of
+         *     the body, and the tenant may be left out when your client holds exactly one active grant.
+         *     Each has its own section below.
+         *
          *     Which rows you reach is decided by the token, never by a header or a path you send later.
          *     That is why the tenant is named here and nowhere else: acting for another tenant means
          *     asking for another token, and one token is one context for its whole life.
          *
          *     The token lasts **15 minutes**. There is no refresh token — mint another when it expires.
+         *
+         *     ## Two ways to send your credentials
+         *
+         *     Put `client_id` and `client_secret` in the JSON body, **or** send them as an
+         *     `Authorization: Basic` header — base64 of `client_id:client_secret`, the spelling
+         *     RFC 6749 section 2.3.1 defines and every OAuth client library already writes. The two are
+         *     equal: the same secret check runs either way, and you are rate-limited as the same client
+         *     whichever you pick.
+         *
+         *     **Send one, never both.** A request carrying credentials in the body *and* in the header is
+         *     refused with a **422**, because RFC 6749 section 2.3 says a client must not use more than
+         *     one authentication method. Presence is the conflict, not disagreement — the same pair sent
+         *     twice is still two methods, and picking one silently would leave you unable to tell from
+         *     the wire which credential was checked.
          *
          *     ## Your client must already hold a grant
          *
@@ -40,6 +59,30 @@ export interface paths {
          *
          *     Grants are made out of band and never through this API. Ask the reseller whose platform you
          *     are integrating with for a client id, its secret, and the grant behind them.
+         *
+         *     ## `tenant` is optional when your client holds exactly one active grant
+         *
+         *     Leave `tenant` out and we resolve it from your client's own grants, because a client with a
+         *     single active grant has a single context it could possibly mean. That grant's **customer**
+         *     comes with it, so a client granted one customer gets its customer-scoped token from a
+         *     request that names neither.
+         *
+         *     | your client's ACTIVE grants | what you get |
+         *     |---|---|
+         *     | exactly one | a token for that grant's tenant, and its customer when the grant names one |
+         *     | more than one | **422** naming the ambiguity — start sending `tenant` |
+         *     | none | **403**, the same refusal a tenant nobody granted you gets |
+         *
+         *     Naming `tenant` yourself keeps exactly the behaviour it always had, ambiguity or not — the
+         *     resolution is a fallback, never a preference. Only **active** grants are counted, so a
+         *     suspended grant beside an active one does not make a determinate request ambiguous.
+         *
+         *     Two things this does not mean. `customer` without `tenant` is half a selector — a customer
+         *     id names a context inside a tenant the request never gave — and is a **422**; send both or
+         *     neither. And omitting the member is the only way to ask for this: `tenant` must be a
+         *     **string** when it is present at all, so `""` or `null` is a **422** and never a request
+         *     for auto-selection. (`customer` is the exception, by design: an explicit `null` there is
+         *     the tenant-wide request it has always meant.)
          *
          *     ## Two acts stand behind a customer-scoped credential
          *
@@ -75,9 +118,14 @@ export interface paths {
          *     ```
          *
          *     **A scope outside that set is dropped, not refused.** You get a 200 carrying a token that
-         *     simply does not hold it. That covers a scope your grant does not carry, a scope no customer
-         *     credential may hold, **and a scope name this platform does not publish at all** — so a typo
-         *     costs you a capability rather than an error.
+         *     simply does not hold it. That covers a scope your grant does not carry and a scope no
+         *     customer credential may hold. Both are permission answers, and both are silent.
+         *
+         *     **A scope NAME this platform does not publish at all is the one exception: a 422 that lists
+         *     the offenders.** That is a typo, not a permission answer, and it is the one case you could
+         *     never diagnose by reading `scopes` back off a 200 — a misspelled scope and a withheld one
+         *     look identical there. The line is drawn at existence: a real scope you were not granted is
+         *     still dropped in silence.
          *
          *     So **read `scopes` back off the response** and treat it as the authoritative answer. A call
          *     made on the assumption that you got what you asked for fails later at the resource instead,
@@ -86,6 +134,11 @@ export interface paths {
          *     **`scopes` is optional and you almost always want it.** Leave it out and the intersection is
          *     empty: the request succeeds and hands you a token that carries no scopes and is refused by
          *     every resource you spend it on.
+         *
+         *     **You may ask in either of two spellings.** `scopes` is an array of names; `scope` is one
+         *     space-delimited string, the spelling RFC 6749 section 3.3 defines. Send whichever your
+         *     client library writes — a request carrying both asks for the union of the two, since
+         *     neither can widen a token past its grant.
          *
          *     ## Which scopes a customer-scoped token may hold
          *
@@ -611,6 +664,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/number-lookups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Look up a phone number
+         * @description Everything we can find out about one number: who carries it now, what name it presents, and
+         *     whether it can receive text messages.
+         *
+         *     **This call costs you money.** It is billed at your per-lookup rate, every time, for any
+         *     number — including one you do not own and never will. There is no free or cached variant, and
+         *     a repeated lookup of the same number is a second lookup.
+         *
+         *     **It needs a personal access token, not a client-credentials token.** This is the only
+         *     operation here with that requirement, and it follows from the line above: because a lookup
+         *     spends your balance, it is not something a third-party integration's credential may do on
+         *     your behalf. Mint a token for one of your own console users from the portal's Security page.
+         *     That user needs permission to look numbers up, which is held by exactly the roles that can
+         *     already buy a number — so if they can purchase a DID, they can run a lookup.
+         *
+         *     **A POST, not a GET, for that reason.** A GET is safe and idempotent by definition, so
+         *     proxies, prefetchers and retry logic are entitled to repeat one — and each repeat would be
+         *     another charge.
+         *
+         *     **Nothing is stored.** We return the answer and keep no copy of it, so there is no
+         *     `GET /v1/number-lookups/{id}` to come back to and no id to come back with. Keep what you need
+         *     from the response.
+         *
+         *     ## The two geographies are two different facts
+         *
+         *     `dialedNumber` describes the number you asked about. `components.lrn.data.rateCenter` and
+         *     `.state` describe its **LRN** — the routing number it currently ports to. **They frequently
+         *     disagree, and both are right**: `6502530000` is `MT VIEW` by dialed number and `MILLVALLEY`
+         *     by LRN. Do not merge them, and do not treat one as a correction of the other. Use the LRN's
+         *     when you care where the call actually lands, and the dialed number's when you care where the
+         *     number is nominally from.
+         *
+         *     `dialedNumber.rateCenter` and `.state` are `null` for a toll-free number. That is **absent,
+         *     not missing**: toll-free numbers are assigned individually rather than in geographic blocks,
+         *     so there is no rate center to report. Nothing failed.
+         *
+         *     ## Read `status` before you read `data`
+         *
+         *     Each of the three components reports its own outcome, and `data` is `null` for two of them:
+         *
+         *     | `status` | What it means | Charged |
+         *     |---|---|---|
+         *     | `answered` | The provider returned data. It is in `data`. | yes |
+         *     | `no_data` | The provider answered, and holds nothing for this number. | yes |
+         *     | `failed` | We could not get an answer. | see `charged` |
+         *
+         *     **`no_data` and `failed` are not the same fact.** "This number has no CNAM record" and "we
+         *     could not ask" look identical if you only check `data == null`, and only the first is
+         *     something to show a user as an answer.
+         *
+         *     `charged` tells you whether this lookup was billed. A lookup where **some** components
+         *     answered is billed in full; one where **every** component failed is not billed at all.
+         */
+        post: operations["lookUpNumber"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -764,20 +887,37 @@ export interface webhooks {
 }
 export interface components {
     schemas: {
+        /**
+         * @description Every member here is optional only under a stated condition. Send `client_id` and
+         *     `client_secret` unless they ride an `Authorization: Basic` header, and send `tenant` unless
+         *     your client holds exactly one active grant. The operation description carries both rules.
+         */
         IntegrationTokenRequest: {
             /**
              * Format: uuid
-             * @description The client id you were issued.
+             * @description The client id you were issued. Omit it only when it rides an `Authorization: Basic`
+             *     header instead; sending it in both places is a 422.
              */
-            client_id: string;
-            /** @description Its secret. It travels in the body over TLS, never in a URL. */
-            client_secret: string;
+            client_id?: string;
+            /**
+             * @description Its secret. In the body it travels over TLS and never in a URL; the alternative is the
+             *     `Authorization: Basic` header, never a query parameter either way.
+             */
+            client_secret?: string;
             /**
              * Format: uuid
              * @description The reseller you are acting for. Your client must hold an active grant for it, or the
              *     request is refused with a 403.
+             *
+             *     **Optional when your client holds exactly one active grant**, whose tenant — and
+             *     customer, if it names one — then become the token's. With more than one active grant
+             *     and no `tenant`, the request is a 422 naming the ambiguity.
+             *
+             *     Omitting the member is the only way to ask for that: unlike `customer`, this field must
+             *     be a **string** whenever it is present, so `""` or `null` is a 422 rather than a
+             *     request for automatic selection.
              */
-            tenant: string;
+            tenant?: string;
             /**
              * Format: uuid
              * @description One customer inside that tenant, when a grant names one. It SELECTS a context somebody
@@ -787,10 +927,21 @@ export interface components {
             customer?: string | null;
             /**
              * @description The scopes you are asking for. What you receive is the intersection with your grant and,
-             *     on a customer-scoped token, with the customer-scopeable set. Anything outside it is
+             *     on a customer-scoped token, with the customer-scopeable set. A scope outside that is
              *     dropped silently, so read `scopes` back off the response.
+             *
+             *     Silently means *a scope that exists*. A scope NAME this platform does not publish is a
+             *     422 listing the offenders — see the operation description.
              */
             scopes?: string[];
+            /**
+             * @description The same request written as one space-delimited string (RFC 6749 section 3.3), for
+             *     clients whose OAuth library writes that spelling. Send this or `scopes`; a request
+             *     carrying both asks for the union. Null and empty both mean "no scopes", which is a
+             *     valid — and useless — request.
+             * @example numbers:read numbers:route
+             */
+            scope?: string | null;
         };
         IntegrationTokenResponse: {
             /** @description The bearer token. Send it as `Authorization: Bearer <token>`. */
@@ -1582,6 +1733,11 @@ export interface components {
          *     event — and then dead-lettered. Ask
          *     `GET /v1/webhook-deliveries?filter[status]=dead` for what you missed.
          *
+         *     `event_id` is repeated in a `Ringivo-Event-Id` header, and `type` in a `Ringivo-Event-Type`
+         *     header, so a proxy or a queue in front of your handler can dedupe and route before anything
+         *     parses the body. They are a convenience, never the authority: the signature covers the body,
+         *     not the headers.
+         *
          *     Answer any 2XX to accept. Redirects are never followed. We wait ten seconds; if your handler
          *     needs longer, answer 202 and do the work afterwards.
          */
@@ -1604,6 +1760,120 @@ export interface components {
         };
         FaxReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["FaxReceivedEventData"];
+        };
+        NumberLookupRequest: {
+            /**
+             * @description The number to look up. 10 digits, or 11 beginning with `1`; punctuation and spaces are
+             *     ignored, so `(650) 253-0000` and `+16502530000` are the same request.
+             */
+            number: string;
+        };
+        /**
+         * @description What one component did. `no_data` and `failed` both carry `data: null` and mean different
+         *     things — see the operation description.
+         * @enum {string}
+         */
+        NumberLookupDipStatus: "answered" | "no_data" | "failed";
+        /**
+         * @description Where the number you asked about is nominally from, from our own copy of LERG. **Not the
+         *     LRN's** rate center, which is a different fact and lives under `components.lrn`.
+         */
+        DialedNumberGeography: {
+            /** @description Null for a toll-free number, which has no rate center. Absent, not missing. */
+            rateCenter: string | null;
+            /** @description Two-letter state or province code. Null for a toll-free number. */
+            state: string | null;
+        };
+        /** @description The porting facts — who the number routes to now, and who owns its block. */
+        LrnFacts: {
+            /** @description The location routing number, 11 digits. */
+            lrn: string;
+            /**
+             * @description Who the number is ported to **now** — this is the one porting cares about. A string,
+             *     never a number: values like `506J` exist.
+             */
+            spid: string | null;
+            /** @description Who owns the number block. Often differs from `spid`. A string, never a number. */
+            ocn: string | null;
+            lata: string | null;
+            /** @description The carrier's full name, as the source spells it. */
+            lec: string | null;
+            /**
+             * @description `CLEC`, `WIRELESS`, `ILEC`. This is what the **network** says. It is not what a losing
+             *     carrier's bill says, and it must not be used to correct a port order's number type.
+             */
+            lineType: string | null;
+            /** @description The **LRN's** rate center — not the dialed number's. The two often differ. */
+            rateCenter: string | null;
+            /** @description The **LRN's** state or province code. */
+            state: string | null;
+            /** @description A string, not a boolean — commonly the literal `INDETERMINATE`, which is not false. */
+            jurisdiction: string | null;
+            /** @description A string, not a boolean, for the same reason as `jurisdiction`. */
+            local: string | null;
+            /**
+             * Format: date-time
+             * @description When the number last ported. Null if it never has.
+             */
+            portedAt: string | null;
+        };
+        CallerNameFacts: {
+            /** @description The name the number presents, as the carrier spells it — uppercase, up to 15 characters. */
+            name: string;
+        };
+        /** @description Whether the number can carry text messages, and who carries them. */
+        MessagingFacts: {
+            /**
+             * @description Whether the number is enabled for messaging. **`false` means it cannot receive messages**
+             *     — it never means "we do not know", which arrives as `status: no_data` with this whole
+             *     object null.
+             */
+            enabled: boolean;
+            /** @description The messaging carrier's name. */
+            provider: string | null;
+            country: string | null;
+            countryCode: string | null;
+        };
+        NumberLookupLrnComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["LrnFacts"] | null;
+        };
+        NumberLookupCallerNameComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["CallerNameFacts"] | null;
+        };
+        NumberLookupMessagingComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["MessagingFacts"] | null;
+        };
+        /**
+         * @description The three paid components. Each reports its own outcome and they fail independently — a
+         *     lookup with two answers and one failure is normal, and is billed in full.
+         */
+        NumberLookupComponents: {
+            lrn: components["schemas"]["NumberLookupLrnComponent"];
+            callerName: components["schemas"]["NumberLookupCallerNameComponent"];
+            messaging: components["schemas"]["NumberLookupMessagingComponent"];
+        };
+        NumberLookup: {
+            /** @description The number that was looked up, normalized to E.164. */
+            number: string;
+            /**
+             * Format: date-time
+             * @description When the components ran — so you can tell "we asked and learned nothing" from "we never
+             *     asked".
+             */
+            lookedUpAt: string;
+            /**
+             * @description Whether this lookup was billed. True when any component answered; false only when every
+             *     one of them failed.
+             */
+            charged: boolean;
+            dialedNumber: components["schemas"]["DialedNumberGeography"];
+            components: components["schemas"]["NumberLookupComponents"];
+        };
+        NumberLookupResult: {
+            data: components["schemas"]["NumberLookup"];
         };
     };
     responses: {
@@ -1789,6 +2059,9 @@ export interface operations {
             /**
              * @description Your credentials are good and no active grant matches — either for this tenant, or for
              *     the customer you named. The two are not told apart, on purpose.
+             *
+             *     A request that named no `tenant` at all lands here too, word for word, when your client
+             *     holds no active grant to resolve. One endpoint, one no-grant answer.
              */
             403: {
                 headers: {
@@ -1814,6 +2087,15 @@ export interface operations {
              *     Each error's `source.pointer` names the member. A well-formed id that names nothing you
              *     were granted is the 403 above and not this — refusing it here would answer questions
              *     about another reseller's customers.
+             *
+             *     Four causes are worth naming, because none of them is a malformed member:
+             *
+             *     - credentials sent in the body **and** in an `Authorization: Basic` header;
+             *     - `customer` without `tenant`, which is half a selector;
+             *     - no `tenant` at all from a client holding **more than one** active grant — the message
+             *       names the ambiguity rather than picking one for you;
+             *     - a scope **name** this platform does not publish, listed in the message. A real scope
+             *       you were simply not granted is dropped in silence instead.
              */
             422: {
                 headers: {
@@ -3500,6 +3782,109 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    lookUpNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "number": "6502530000"
+                 *     }
+                 */
+                "application/json": components["schemas"]["NumberLookupRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description The lookup. **200 and not 201** — nothing was created, and there is nothing to fetch
+             *     again.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "number": "+16502530000",
+                     *         "lookedUpAt": "2026-08-19T18:04:11+00:00",
+                     *         "charged": true,
+                     *         "dialedNumber": {
+                     *           "rateCenter": "MT VIEW",
+                     *           "state": "CA"
+                     *         },
+                     *         "components": {
+                     *           "lrn": {
+                     *             "status": "answered",
+                     *             "data": {
+                     *               "lrn": "14159686199",
+                     *               "spid": "8824",
+                     *               "ocn": "8826",
+                     *               "lata": "722",
+                     *               "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
+                     *               "lineType": "WIRELESS",
+                     *               "rateCenter": "MILLVALLEY",
+                     *               "state": "CA",
+                     *               "jurisdiction": "INDETERMINATE",
+                     *               "local": "INDETERMINATE",
+                     *               "portedAt": "2014-12-23T15:47:47+00:00"
+                     *             }
+                     *           },
+                     *           "callerName": {
+                     *             "status": "answered",
+                     *             "data": {
+                     *               "name": "GOOGLEPLEX"
+                     *             }
+                     *           },
+                     *           "messaging": {
+                     *             "status": "no_data",
+                     *             "data": null
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["NumberLookupResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description Not a number we will look up — it is not a North American number, or its area
+             *     code/exchange does not exist. **Nothing was looked up and you were not charged**: this
+             *     check runs before any provider is asked.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Not a number we can look up",
+                     *           "detail": "No exchange 650-999 exists, so +16509999999 is not a real number. Nothing was looked up and nothing was charged.",
+                     *           "source": {
+                     *             "pointer": "/number"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
