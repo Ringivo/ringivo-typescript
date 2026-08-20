@@ -10,33 +10,6 @@
  */
 
 export interface paths {
-    "/oauth/token": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Exchange client credentials for a bearer token
-         * @description The OAuth 2.0 client-credentials grant (RFC 6749 §4.4). Send the client id and secret you
-         *     were issued, plus the space-separated scopes you want.
-         *
-         *     **A scope outside your client's ceiling is dropped, not refused.** Ask for
-         *     `fax:read fax:write` with only `fax:read` granted and you receive a 200 carrying a token
-         *     that holds `fax:read` alone. Read the scopes back from the token rather than assuming the
-         *     request was honoured in full. A scope this platform does not publish at all is a different
-         *     case: that is a `400 invalid_scope`.
-         */
-        post: operations["issueToken"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/integration/token": {
         parameters: {
             query?: never;
@@ -104,8 +77,7 @@ export interface paths {
          *     **A scope outside that set is dropped, not refused.** You get a 200 carrying a token that
          *     simply does not hold it. That covers a scope your grant does not carry, a scope no customer
          *     credential may hold, **and a scope name this platform does not publish at all** — so a typo
-         *     costs you a capability rather than an error. (`POST /oauth/token` differs on that last case:
-         *     there an unpublished name is a 400 `invalid_scope`.)
+         *     costs you a capability rather than an error.
          *
          *     So **read `scopes` back off the response** and treat it as the authoritative answer. A call
          *     made on the assumption that you got what you asked for fails later at the resource instead,
@@ -792,27 +764,6 @@ export interface webhooks {
 }
 export interface components {
     schemas: {
-        TokenRequest: {
-            /** @enum {string} */
-            grant_type: "client_credentials";
-            client_id: string;
-            client_secret: string;
-            /** @description Space-separated scope names. Anything outside your client's ceiling is dropped. */
-            scope?: string;
-        };
-        TokenResponse: {
-            /** @description The bearer token. Send it as `Authorization: Bearer <token>`. */
-            access_token: string;
-            /** @example Bearer */
-            token_type: string;
-            /** @description Seconds until the token expires. */
-            expires_in?: number;
-        };
-        OAuthError: {
-            /** @description The RFC 6749 error code — for example `invalid_scope` or `invalid_client`. */
-            error: string;
-            error_description?: string;
-        };
         IntegrationTokenRequest: {
             /**
              * Format: uuid
@@ -1768,78 +1719,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    issueToken: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                /**
-                 * @example {
-                 *       "grant_type": "client_credentials",
-                 *       "client_id": "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
-                 *       "client_secret": "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
-                 *       "scope": "fax:read fax:write"
-                 *     }
-                 */
-                "application/x-www-form-urlencoded": components["schemas"]["TokenRequest"];
-            };
-        };
-        responses: {
-            /** @description A bearer token. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "token_type": "Bearer",
-                     *       "expires_in": 31536000,
-                     *       "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9..."
-                     *     }
-                     */
-                    "application/json": components["schemas"]["TokenResponse"];
-                };
-            };
-            /**
-             * @description The request or the requested scope is not one this platform accepts — for example
-             *     `error: invalid_scope` for a scope name that is not published.
-             */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "error": "invalid_scope",
-                     *       "error_description": "The requested scope is invalid, unknown, or malformed"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["OAuthError"];
-                };
-            };
-            /** @description The client id or secret is wrong (`error: invalid_client`). */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    /**
-                     * @example {
-                     *       "error": "invalid_client",
-                     *       "error_description": "Client authentication failed"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["OAuthError"];
-                };
-            };
-        };
-    };
     issueIntegrationToken: {
         parameters: {
             query?: never;
