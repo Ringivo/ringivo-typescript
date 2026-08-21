@@ -97,9 +97,20 @@ describe("the published tarball", () => {
     // Both halves are gates. The runtime one runs here; the compile-time one
     // is the directive below, which `tsc --noEmit` reports as an UNUSED
     // suppression the day `baseUrl` stops being required.
+    //
+    // Every OTHER required option is supplied, so the directive is spent on
+    // `baseUrl` alone — a gate a second missing member could satisfy would go
+    // on passing after the one it names stopped being required.
+    const rest = {
+      clientId: "c",
+      clientSecret: "s",
+      tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+      scopes: ["fax:read"],
+    };
+
     expect(
       // @ts-expect-error baseUrl has no default, so omitting it must not typecheck
-      () => new Ringivo({ clientId: "c", clientSecret: "s", scopes: ["fax:read"] }),
+      () => new Ringivo(rest),
     ).toThrow("baseUrl is required");
   });
 });

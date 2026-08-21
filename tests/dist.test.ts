@@ -27,6 +27,7 @@ const require = createRequire(import.meta.url);
 
 const DIST_ESM = fileURLToPath(new URL("../dist/index.js", import.meta.url));
 const DIST_CJS = fileURLToPath(new URL("../dist/index.cjs", import.meta.url));
+const TENANT_ID = "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8";
 
 interface Vector {
   secret: string;
@@ -48,6 +49,7 @@ interface Surface {
     baseUrl: string;
     clientId: string;
     clientSecret: string;
+    tenant: string;
     scopes: readonly string[];
   }) => {
     baseUrl: string;
@@ -79,6 +81,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       baseUrl: "https://api.yourprovider.example/",
       clientId: "id",
       clientSecret: "secret",
+      tenant: TENANT_ID,
       scopes: ["fax:read"],
     });
 
@@ -94,6 +97,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       baseUrl: "https://api.yourprovider.example",
       clientId: "id",
       clientSecret: "secret",
+      tenant: TENANT_ID,
       scopes: ["fax:read"],
     });
 

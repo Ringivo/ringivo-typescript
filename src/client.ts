@@ -71,29 +71,32 @@ export interface RingivoOptions {
   clientSecret: string;
   /**
    * The scopes to ask for. **Required, and never empty:** what you get is the
-   * intersection with what your grant allows, so an empty ask mints a token
-   * that carries nothing and is refused by every endpoint you spend it on.
-   * There is no default to fall back to and there never will be — unlike the
-   * tenant, this is not something a server can decide for you.
+   * intersection with what your grant allows, so an empty ask reaches an
+   * empty set — and an empty set is refused, not issued. There is no default
+   * to fall back to and there never will be.
    *
-   * Anything outside your grant — including a scope name that does not exist
-   * — is dropped silently rather than refused, so read the scopes back off
+   * A scope outside your grant is dropped silently rather than refused, as
+   * long as something survives the intersection, so read the scopes back off
    * your provider's answer rather than assuming the request was honoured in
-   * full.
+   * full. Only two cases are loud: a scope NAME nobody publishes, and an
+   * intersection that comes out empty.
    */
   scopes: readonly string[];
   /**
    * The tenant this client acts for — the id your provider named in the
-   * grant behind your credential. **Set it:** almost every integrator has to
-   * today. Omit it only where your provider can resolve the grant without
-   * one.
+   * grant behind your credential. **Required:** name it on every client.
    *
    * It is named once, here, because the token CARRIES it: which rows you
    * reach is decided by the token, so acting for another tenant means
    * another client. The token itself is short-lived and this client re-mints
    * it for you — you never handle one.
+   *
+   * There is nothing left to infer. The mint used to resolve an absent
+   * tenant from the one grant a client held, which worked until the day a
+   * reseller granted that client a second tenant — and then broke an
+   * integration nobody had touched. An id you wrote down cannot rot that way.
    */
-  tenant?: string;
+  tenant: string;
   /**
    * One customer inside that tenant, when your grant names one. It SELECTS a
    * context your provider already granted and narrows nothing by itself:
@@ -130,10 +133,11 @@ export class Ringivo {
     }
     // REFUSED HERE, LOUDLY, RATHER THAN IN PRODUCTION. Asking for no scopes
     // is not "the default scopes": the server intersects what you ask for
-    // with what your grant allows, so an empty ask mints a token that holds
-    // nothing and is refused by every endpoint it is spent on — a 403 whose
-    // cause is nowhere near where it is read. There is no default to invent
-    // on the caller's behalf, so the only honest moment to say so is now.
+    // with what your grant allows, so an empty ask reaches an empty set — and
+    // the mint refuses an empty set with a 400 `invalid_scope` rather than
+    // handing back a token every resource would go on to reject. There is no
+    // default to invent on the caller's behalf, so the only honest moment to
+    // say so is now, one round trip earlier than the server would.
     //
     // BOTH HALVES ARE GATES, and this is the half that runs. `scopes` is
     // REQUIRED in `RingivoOptions`, which stops a TypeScript caller at
@@ -144,8 +148,28 @@ export class Ringivo {
     if (!options.scopes || options.scopes.length === 0) {
       throw new TypeError(
         "scopes is required: name the scopes your credential was granted, e.g. " +
-          'scopes: ["fax:read", "fax:write"]. A token minted with none carries none, and ' +
-          "every endpoint refuses it.",
+          'scopes: ["fax:read", "fax:write"]. An empty ask narrows to nothing, and the ' +
+          "token endpoint refuses it.",
+      );
+    }
+    // THE SAME PAIR OF GATES, for a rule that arrived later. `tenant` is
+    // REQUIRED in `RingivoOptions`, which stops a TypeScript caller at compile
+    // time (src/auth.test.ts holds the `@ts-expect-error` that fails the build
+    // the day it stops being required). This check is what a JavaScript caller
+    // meets, and it is also the only one of the two that can see an EMPTY
+    // string — which the mint reads as no tenant at all, per RFC 6749 section
+    // 3.2, and refuses as a missing one.
+    //
+    // Nothing is inferred on the caller's behalf, because there is no longer
+    // anything to infer: the mint's single-grant inference is gone, so a
+    // client with no tenant has no request that can succeed. Refusing here
+    // saves a caller the round trip and names the fix at the line that caused
+    // it, instead of a 400 read back out of a log.
+    if (!options.tenant) {
+      throw new TypeError(
+        "tenant is required: name the tenant your credential was granted for, e.g. " +
+          'tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8". The mint no longer resolves it ' +
+          "from your grant, and a token request without it is refused.",
       );
     }
 
