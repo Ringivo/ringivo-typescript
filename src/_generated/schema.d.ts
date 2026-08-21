@@ -87,12 +87,13 @@ export interface paths {
          *     requested ∩ granted ∩ (customer named ? customer-scopeable : everything)
          *     ```
          *
-         *     **A scope outside that set is dropped, not refused.** You get a 200 carrying a token that
-         *     simply does not hold it. That covers a scope your grant does not carry and a scope no
-         *     customer credential may hold.
+         *     **A published scope outside that set is dropped, not refused.** You get a 200 carrying a
+         *     token that simply does not hold it. That covers a scope your grant does not carry and a
+         *     scope no customer credential may hold.
          *
          *     A scope **NAME this platform does not publish at all** is the one exception, and it is
-         *     refused with `invalid_scope` — a typo is a mistake, not a permission answer.
+         *     refused with `invalid_scope` and a 400 — a typo is a mistake, not a permission answer. The
+         *     deprecated endpoint refuses that case too, with a 422 listing the offending names.
          *
          *     So **read the scopes back off the response** and treat them as the authoritative answer.
          *     They come back twice and mean the same thing: `scope`, space-delimited, is RFC 6749's own
@@ -168,9 +169,13 @@ export interface paths {
          *     Three things change when you move, and nothing else does: add
          *     `grant_type=client_credentials`, send the scopes as the space-delimited `scope` string
          *     instead of the `scopes` array, and parse refusals as
-         *     `{"error": ..., "error_description": ...}` rather than as JSON:API error documents. The
-         *     grants, the scopes you end up holding, the 15-minute life and the silent-drop rule are the
-         *     same on both doors.
+         *     `{"error": ..., "error_description": ...}` rather than as JSON:API error documents.
+         *
+         *     The grants, the scopes you end up holding and the 15-minute life are the same on both
+         *     doors. So is the **silent drop of a published scope outside your grant** — that rule does
+         *     not move. An unknown scope NAME is refused by both doors as well, and only the vocabulary
+         *     differs there: this endpoint answers a 422 listing the offending names, `/oauth/token`
+         *     answers a 400 with `invalid_scope`.
          *
          *     The token a machine client presents to the rest of this API. Send the client id and secret
          *     you were issued, name the **tenant** you are acting for, and you get back a token that
@@ -225,10 +230,14 @@ export interface paths {
          *     requested ∩ granted ∩ (customer named ? customer-scopeable : everything)
          *     ```
          *
-         *     **A scope outside that set is dropped, not refused.** You get a 200 carrying a token that
-         *     simply does not hold it. That covers a scope your grant does not carry, a scope no customer
-         *     credential may hold, **and a scope name this platform does not publish at all** — so a typo
-         *     costs you a capability rather than an error.
+         *     **A published scope outside that set is dropped, not refused.** You get a 200 carrying a
+         *     token that simply does not hold it. That covers a scope your grant does not carry and a
+         *     scope no customer credential may hold.
+         *
+         *     A scope **NAME this platform does not publish at all** is not dropped — it is refused with
+         *     a **422** whose error names every offending name, because a typo is a mistake and not a
+         *     permission answer. (`POST /oauth/token` refuses the same case with `invalid_scope` and a
+         *     400. Both doors refuse it; only the vocabulary differs.)
          *
          *     So **read `scopes` back off the response** and treat it as the authoritative answer. A call
          *     made on the assumption that you got what you asked for fails later at the resource instead,
@@ -925,10 +934,19 @@ export interface components {
             /**
              * Format: uuid
              * @description The client id you were issued.
+             *
+             *     Required here UNLESS you authenticate with an `Authorization: Basic` header instead.
+             *     One way or the other, never both at once — a request carrying both is refused rather
+             *     than resolved in your favour.
              */
-            client_id: string;
-            /** @description Its secret. It travels in the body over TLS, never in a URL. */
-            client_secret: string;
+            client_id?: string;
+            /**
+             * @description Its secret. It travels in the body over TLS, never in a URL.
+             *
+             *     Required here unless you send it in an `Authorization: Basic` header, on the same
+             *     one-or-the-other rule as `client_id`.
+             */
+            client_secret?: string;
             /**
              * Format: uuid
              * @description The reseller you are acting for. Your client must hold an active grant for it, or the

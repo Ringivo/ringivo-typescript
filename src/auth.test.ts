@@ -497,18 +497,36 @@ describe("refusals", () => {
     expect(error.errors[0]?.raw.hint).toBe("Check the `fax:reed` scope");
   });
 
-  it("hands back the 429 whole instead of reading it as a credential failure", async () => {
+  it("hands back the 429 HTML page instead of reading it as a credential failure", async () => {
     // The mint is throttled harder than the resources, and the limiter sits
-    // in FRONT of it — so this refusal is neither shape the fold knows and
-    // nothing is invented from it. What must hold is that the caller can tell
-    // it apart and back off: the status survives, and a rate limit is never
-    // mistaken for a bad credential.
-    const error = await refused({ message: "Too Many Attempts." }, 429);
+    // in FRONT of it — outside both contracts, so it answers an HTML page on
+    // any `Accept`, measured against the running platform. NOT JSON: this
+    // client must never assume the mint's body is parseable just because its
+    // success and its refusals are.
+    //
+    // What must hold is that the caller can tell a rate limit apart and back
+    // off: the status survives, the page is not mistaken for a bad
+    // credential, and no parse error is thrown from inside the error path.
+    server.use(
+      http.post(
+        TOKEN_URL,
+        () =>
+          new HttpResponse("<!DOCTYPE html><html><body>429 Too Many Requests</body></html>", {
+            status: 429,
+            headers: { "Content-Type": "text/html", "Retry-After": "60" },
+          }),
+      ),
+    );
+
+    const error = (await client()
+      .faxes.get(FAX_ID)
+      .catch((caught: unknown) => caught)) as ApiError;
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).not.toBeInstanceOf(AuthenticationError);
     expect(error.statusCode).toBe(429);
-    expect(error.message).toContain("Too Many Attempts.");
+    expect(error.code).toBeNull();
+    expect(error.message).toContain("429 Too Many Requests");
   });
 
   it("refuses a 200 that carried no access_token", async () => {

@@ -21,10 +21,12 @@ import { ApiError, AuthenticationError, throwForResponse } from "./errors.js";
 
 /** The typed error this response folds into, without the try/catch noise. */
 async function fold(body: unknown, status: number): Promise<ApiError> {
-  const response = new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
+  return foldRaw(JSON.stringify(body), status, "application/json");
+}
+
+/** The same, for a body that is not JSON at all and must not be assumed to be. */
+async function foldRaw(body: string, status: number, contentType: string): Promise<ApiError> {
+  const response = new Response(body, { status, headers: { "Content-Type": contentType } });
 
   return (await throwForResponse(response).catch((caught: unknown) => caught)) as ApiError;
 }
@@ -124,20 +126,37 @@ describe("the two shapes side by side", () => {
     expect(error.errors[0]?.source).toEqual({ parameter: "to" });
   });
 
-  it("gives a body it can read as neither shape back to the caller whole", async () => {
-    // The mint is rate-limited by a layer in front of it, and that layer's
-    // 429 is neither shape. The STATUS is the contract there; the body is
-    // not, so nothing is invented from it — but it is kept verbatim on
-    // `.body` and excerpted into the message, which is what a caller reading
-    // a log line needs.
-    const error = await fold({ message: "Too Many Attempts." }, 429);
+  it("gives a body that is not even JSON back to the caller whole", async () => {
+    // THE RATE LIMIT, AND IT ARRIVES AS AN HTML PAGE. The limiter sits in
+    // front of the mint and is not part of either contract, so its 429 is
+    // `text/html` whatever `Accept` was sent — measured against the running
+    // platform, not assumed. A parser that took "the mint answers JSON" as
+    // licence to call `JSON.parse` without a guard would throw a SyntaxError
+    // here and bury a plain rate limit under a crash in the error handler.
+    //
+    // So the STATUS is the contract and the body is not: nothing is invented
+    // from it, it survives verbatim on `.body`, and it is excerpted into the
+    // message for whoever reads the log line.
+    const page = "<!DOCTYPE html><html><body><h1>429 Too Many Requests</h1></body></html>";
+    const error = await foldRaw(page, 429, "text/html");
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).not.toBeInstanceOf(AuthenticationError);
     expect(error.statusCode).toBe(429);
     expect(error.code).toBeNull();
     expect(error.errors).toEqual([]);
-    expect(error.body).toBe('{"message":"Too Many Attempts."}');
-    expect(error.message).toContain("Too Many Attempts.");
+    expect(error.body).toBe(page);
+    expect(error.message).toContain("429 Too Many Requests");
+  });
+
+  it("gives back a JSON body it can read as neither shape", async () => {
+    // The other half of "neither shape": parseable, but carrying no `errors`
+    // array and no `error` member. Nothing is invented from that either.
+    const error = await fold({ message: "Something went wrong." }, 503);
+
+    expect(error.statusCode).toBe(503);
+    expect(error.code).toBeNull();
+    expect(error.errors).toEqual([]);
+    expect(error.message).toContain("Something went wrong.");
   });
 });
