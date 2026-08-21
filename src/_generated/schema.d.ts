@@ -10,7 +10,7 @@
  */
 
 export interface paths {
-    "/v1/integration/token": {
+    "/oauth/token": {
         parameters: {
             query?: never;
             header?: never;
@@ -21,15 +21,54 @@ export interface paths {
         put?: never;
         /**
          * Exchange client credentials for a tenant- or customer-scoped token
-         * @description The token a machine client presents to the rest of this API. Send the client id and secret
-         *     you were issued, name the **tenant** you are acting for, and you get back a token that
-         *     carries that tenant — and, when you name one, a **customer** inside it.
+         * @description The token a machine client presents to the rest of this API. Send
+         *     `grant_type=client_credentials` with the client id and secret you were issued, name the
+         *     **tenant** you are acting for, and you get back a token that carries that tenant — and,
+         *     when you name one, a **customer** inside it.
+         *
+         *     This is a standard OAuth 2.0 token endpoint (RFC 6749 section 4.4), so most OAuth client
+         *     libraries can call it unmodified. `tenant` and `customer` are the only two members the
+         *     standard does not define; send them beside the ones it does.
          *
          *     Which rows you reach is decided by the token, never by a header or a path you send later.
          *     That is why the tenant is named here and nowhere else: acting for another tenant means
          *     asking for another token, and one token is one context for its whole life.
          *
          *     The token lasts **15 minutes**. There is no refresh token — mint another when it expires.
+         *
+         *     ## What to send
+         *
+         *     The body may be `application/x-www-form-urlencoded` — what RFC 6749 section 4.4.2
+         *     specifies, and what an OAuth library writes — or `application/json`. Both are read the
+         *     same way.
+         *
+         *     | member | what it is |
+         *     |---|---|
+         *     | `grant_type` | always `client_credentials`. |
+         *     | `client_id`, `client_secret` | your credentials, unless they ride an `Authorization: Basic` header instead. |
+         *     | `tenant` | the reseller you are acting for. Optional when your client holds exactly one active grant. |
+         *     | `customer` | one customer inside that tenant, when a grant names one. |
+         *     | `scope` | the scopes you are asking for, as ONE space-delimited string. |
+         *
+         *     **`scope` is the only scope spelling this endpoint reads**, and this is the difference most
+         *     likely to bite on the way over from `POST /v1/integration/token`, which also accepted a
+         *     `scopes` array. Here that array is not read and not refused: the request is answered
+         *     **200** with a token holding no scopes at all, which every resource then refuses.
+         *
+         *     ## Two ways to send your credentials
+         *
+         *     Put `client_id` and `client_secret` in the body, **or** send them as an
+         *     `Authorization: Basic` header — base64 of `client_id:client_secret`, the spelling
+         *     RFC 6749 section 2.3.1 defines and every OAuth client library already writes. The two are
+         *     equal: the same secret check runs either way, and you are rate-limited as the same client
+         *     whichever you pick.
+         *
+         *     **Send one, never both**, and here that is advice rather than a rule the endpoint enforces.
+         *     RFC 6749 section 2.3 says a client must not use more than one authentication method, and a
+         *     request that does is answered rather than refused: the **body's** values are the ones
+         *     checked, and the header is ignored. So a stale secret in the header passes unnoticed, and a
+         *     stale one in the body fails a request whose header was perfectly good. (The deprecated
+         *     endpoint refuses that request with a **422**. The mint does not carry that refusal.)
          *
          *     ## Your client must already hold a grant
          *
@@ -40,6 +79,33 @@ export interface paths {
          *
          *     Grants are made out of band and never through this API. Ask the reseller whose platform you
          *     are integrating with for a client id, its secret, and the grant behind them.
+         *
+         *     ## `tenant` is optional when your client holds exactly one active grant
+         *
+         *     Leave `tenant` out and we resolve it from your client's own grants, because a client with a
+         *     single active grant has a single context it could possibly mean. That grant's **customer**
+         *     comes with it, so a client granted one customer gets its customer-scoped token from a
+         *     request that names neither.
+         *
+         *     | your client's ACTIVE grants | what you get |
+         *     |---|---|
+         *     | exactly one | a token for that grant's tenant, and its customer when the grant names one |
+         *     | more than one | **400** `invalid_request` naming the ambiguity — start sending `tenant` |
+         *     | none | **403**, the same refusal a tenant nobody granted you gets |
+         *
+         *     Naming `tenant` yourself is always determinate, ambiguity or not — the resolution is a
+         *     fallback, never a preference. Only **active** grants are counted, so a suspended grant
+         *     beside an active one does not make a determinate request ambiguous.
+         *
+         *     `customer` without `tenant` is half a selector — a customer id names a context inside a
+         *     tenant the request never gave — and is a **400** `invalid_request`; send both or neither.
+         *
+         *     **An empty `tenant` reads as an absent one.** `""` and `null` both ask for the automatic
+         *     selection above rather than being refused, so a client that means to name a tenant and
+         *     computes an empty string for it is handed a token for whatever single grant it holds. The
+         *     deprecated endpoint refuses both with a 422, which makes this the other difference worth
+         *     checking before you move. An empty `customer` means the tenant-wide token at either
+         *     endpoint, as it always has.
          *
          *     ## Two acts stand behind a customer-scoped credential
          *
@@ -75,17 +141,35 @@ export interface paths {
          *     ```
          *
          *     **A scope outside that set is dropped, not refused.** You get a 200 carrying a token that
-         *     simply does not hold it. That covers a scope your grant does not carry, a scope no customer
-         *     credential may hold, **and a scope name this platform does not publish at all** — so a typo
-         *     costs you a capability rather than an error.
+         *     simply does not hold it. That covers a scope your grant does not carry and a scope no
+         *     customer credential may hold. Both are permission answers, and both are silent.
          *
-         *     So **read `scopes` back off the response** and treat it as the authoritative answer. A call
+         *     Your client's own ceiling — the scope set stamped on the credential when it was created —
+         *     narrows the request before any of that, and drops just as silently. It is stamped from the
+         *     same list the grant is and then frozen, so a reseller who WIDENS your grant afterwards does
+         *     not widen the credential: a scope that shows up on your grant and never on your token means
+         *     you need a new credential, not a new grant. Narrowing reaches both.
+         *
+         *     **A scope NAME this platform does not publish at all is the one exception: a 400 whose
+         *     `error` is `invalid_scope` and whose `hint` names the offender.** That is a typo, not a
+         *     permission answer, and it is the one case you could never diagnose by reading `scope` back
+         *     off a 200 — a misspelled scope and a withheld one look identical there. The line is drawn
+         *     at existence: a real scope you were not granted is still dropped in silence. (The
+         *     deprecated endpoint answers 422 and lists every offender at once; the vocabulary changed,
+         *     the line did not.)
+         *
+         *     So **read `scope` back off the response** and treat it as the authoritative answer. A call
          *     made on the assumption that you got what you asked for fails later at the resource instead,
          *     with a 403 that looks unrelated to this one.
          *
-         *     **`scopes` is optional and you almost always want it.** Leave it out and the intersection is
+         *     **`scope` is optional and you almost always want it.** Leave it out and the intersection is
          *     empty: the request succeeds and hands you a token that carries no scopes and is refused by
          *     every resource you spend it on.
+         *
+         *     **The answer comes back in two spellings.** `scope` is the space-delimited string RFC 6749
+         *     section 5.1 defines; `scopes` is the same list as an array, kept so a caller moving off the
+         *     deprecated endpoint can read the effective set from the member it already reads. The two
+         *     always agree — read whichever suits you.
          *
          *     ## Which scopes a customer-scoped token may hold
          *
@@ -98,12 +182,15 @@ export interface paths {
          *     customer-scoped token and it is dropped like any other unflagged scope:
          *
          *     ```
-         *     POST /v1/integration/token
-         *     { "client_id": "…", "client_secret": "…", "tenant": "…", "customer": "…",
-         *       "scopes": ["numbers:read", "numbers:assign", "numbers:route"] }
+         *     POST /oauth/token
+         *     Content-Type: application/x-www-form-urlencoded
+         *
+         *     grant_type=client_credentials&client_id=…&client_secret=…
+         *     &tenant=…&customer=…&scope=numbers%3Aread+numbers%3Aassign+numbers%3Aroute
          *
          *     200 OK
          *     { "token_type": "Bearer", "expires_in": 900,
+         *       "scope": "numbers:read numbers:route",
          *       "scopes": ["numbers:read", "numbers:route"] }
          *     ```
          *
@@ -122,6 +209,93 @@ export interface paths {
          *
          *     Rotating a secret is not a revocation: it stops the old secret minting NEW tokens and leaves
          *     tokens already minted alive until they expire.
+         */
+        post: operations["issueToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/integration/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Exchange client credentials for a tenant- or customer-scoped token (deprecated)
+         * @deprecated
+         * @description **Deprecated on 2026-08-21. Mint at `POST /oauth/token` instead.**
+         *
+         *     This endpoint still works and nothing about it has changed. It issues the same tokens, with
+         *     the same scopes, the same 15-minute life and the same grant rules; the only difference is
+         *     that every response now carries a `Deprecation` header (RFC 9745 — `Deprecation: @` followed
+         *     by the unix-seconds spelling of 2026-08-21T00:00:00Z). There is no `Sunset` header, because
+         *     no retirement date is set yet. There is no deadline; move anyway.
+         *
+         *     ## What changes when you move
+         *
+         *     The mint is a standard OAuth 2.0 token endpoint, so most of the work is spelling. Six
+         *     differences are worth checking before you switch a client over, and the mint's own
+         *     description carries each in full:
+         *
+         *     1. **Send `grant_type=client_credentials`.** This endpoint has no `grant_type` member at
+         *        all; the mint requires one, and refuses the request without it.
+         *     2. **`scope`, one space-delimited string, replaces the `scopes` array.** The mint does not
+         *        read a `scopes` array and does not refuse one either — it answers 200 with a token
+         *        holding nothing.
+         *     3. **Refusals speak OAuth, not JSON:API.** `{"error": …, "error_description": …}` in
+         *        `application/json`, and the statuses move: the 422s that survive become **400**s
+         *        (`invalid_request` for a malformed or ambiguous selector, `invalid_scope` for a scope
+         *        name that does not exist), and this endpoint's 401 becomes `invalid_client`. The 403 for
+         *        a missing grant keeps both its status and its sentence.
+         *     4. **Credentials in the body AND the header are not refused there.** This endpoint answers
+         *        422; the mint checks the body's pair and ignores the header.
+         *     5. **An empty `tenant` is not refused there.** `""` and `null` are a 422 here and read as
+         *        "choose my single grant" at the mint.
+         *     6. **The mint also intersects your client's own scope ceiling, and this endpoint does not.**
+         *        That ceiling is the `scopes` column written onto the credential when it was created, and
+         *        it is frozen there: this endpoint computes `requested ∩ granted` and never reads it,
+         *        while the mint applies it before the grant. The move can therefore only make your
+         *        effective scope set **narrower, never wider** — and it costs you a scope exactly when
+         *        your grant was WIDENED after the credential was minted, because the widening reached the
+         *        grant and not the frozen ceiling. Read `scope` back off your first mint and compare it
+         *        with what this endpoint was returning; if something is missing, you need a new
+         *        credential rather than a new grant.
+         *
+         *     The `Authorization: Basic` spelling, the grant rules, the customer-scopeable set and the
+         *     revocation clock are unchanged — read them on the mint. The scope intersection is unchanged
+         *     *except* for the ceiling term in point 6.
+         *
+         *     ## What this endpoint does
+         *
+         *     The token a machine client presents to the rest of this API. Send the client id and secret
+         *     you were issued, name the **tenant** you are acting for, and you get back a token that
+         *     carries that tenant — and, when you name one, a **customer** inside it.
+         *
+         *     Which rows you reach is decided by the token, never by a header or a path you send later.
+         *     The token lasts **15 minutes** and there is no refresh token.
+         *
+         *     Credentials go in the JSON body **or** in an `Authorization: Basic` header — base64 of
+         *     `client_id:client_secret` (RFC 6749 section 2.3.1) — never both: a request carrying both is
+         *     refused with a **422**, because RFC 6749 section 2.3 says a client must not use more than
+         *     one authentication method.
+         *
+         *     `tenant` may be left out when your client holds exactly one active grant, whose tenant —
+         *     and customer, if it names one — become the token's. More than one active grant and no
+         *     `tenant` is a **422** naming the ambiguity; none at all is the **403** an ungranted tenant
+         *     gets. `customer` without `tenant` is half a selector and is a **422**, as is a `tenant` of
+         *     `""` or `null`, which is never a request for automatic selection.
+         *
+         *     Scopes are `requested ∩ granted ∩ (customer named ? customer-scopeable : everything)`, a
+         *     scope outside that set is **dropped, not refused**, and a scope NAME this platform does not
+         *     publish is a **422** listing the offenders. Ask in either spelling — `scopes` as an array,
+         *     or `scope` as one space-delimited string (RFC 6749 section 3.3) — and read `scopes` back
+         *     off the response, which is the authoritative answer.
          */
         post: operations["issueIntegrationToken"];
         delete?: never;
@@ -611,6 +785,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/number-lookups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Look up a phone number
+         * @description Everything we can find out about one number: who carries it now, what name it presents, and
+         *     whether it can receive text messages.
+         *
+         *     **This call costs you money.** It is billed at your per-lookup rate, every time, for any
+         *     number — including one you do not own and never will. There is no free or cached variant, and
+         *     a repeated lookup of the same number is a second lookup.
+         *
+         *     **It needs a personal access token, not a client-credentials token.** This is the only
+         *     operation here with that requirement, and it follows from the line above: because a lookup
+         *     spends your balance, it is not something a third-party integration's credential may do on
+         *     your behalf. Mint a token for one of your own console users from the portal's Security page.
+         *     That user needs permission to look numbers up, which is held by exactly the roles that can
+         *     already buy a number — so if they can purchase a DID, they can run a lookup.
+         *
+         *     **A POST, not a GET, for that reason.** A GET is safe and idempotent by definition, so
+         *     proxies, prefetchers and retry logic are entitled to repeat one — and each repeat would be
+         *     another charge.
+         *
+         *     **Nothing is stored.** We return the answer and keep no copy of it, so there is no
+         *     `GET /v1/number-lookups/{id}` to come back to and no id to come back with. Keep what you need
+         *     from the response.
+         *
+         *     ## The two geographies are two different facts
+         *
+         *     `dialedNumber` describes the number you asked about. `components.lrn.data.rateCenter` and
+         *     `.state` describe its **LRN** — the routing number it currently ports to. **They frequently
+         *     disagree, and both are right**: `6502530000` is `MT VIEW` by dialed number and `MILLVALLEY`
+         *     by LRN. Do not merge them, and do not treat one as a correction of the other. Use the LRN's
+         *     when you care where the call actually lands, and the dialed number's when you care where the
+         *     number is nominally from.
+         *
+         *     `dialedNumber.rateCenter` and `.state` are `null` for a toll-free number. That is **absent,
+         *     not missing**: toll-free numbers are assigned individually rather than in geographic blocks,
+         *     so there is no rate center to report. Nothing failed.
+         *
+         *     ## Read `status` before you read `data`
+         *
+         *     Each of the three components reports its own outcome, and `data` is `null` for two of them:
+         *
+         *     | `status` | What it means | Charged |
+         *     |---|---|---|
+         *     | `answered` | The provider returned data. It is in `data`. | yes |
+         *     | `no_data` | The provider answered, and holds nothing for this number. | yes |
+         *     | `failed` | We could not get an answer. | see `charged` |
+         *
+         *     **`no_data` and `failed` are not the same fact.** "This number has no CNAM record" and "we
+         *     could not ask" look identical if you only check `data == null`, and only the first is
+         *     something to show a user as an answer.
+         *
+         *     `charged` tells you whether this lookup was billed. A lookup where **some** components
+         *     answered is billed in full; one where **every** component failed is not billed at all.
+         */
+        post: operations["lookUpNumber"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -764,20 +1008,139 @@ export interface webhooks {
 }
 export interface components {
     schemas: {
-        IntegrationTokenRequest: {
+        /**
+         * @description The body may be sent as `application/x-www-form-urlencoded` (RFC 6749 section 4.4.2) or as
+         *     JSON; both are read the same way. Send `client_id` and `client_secret` unless they ride an
+         *     `Authorization: Basic` header, and send `tenant` unless your client holds exactly one
+         *     active grant.
+         */
+        OauthTokenRequest: {
+            /**
+             * @description Always `client_credentials` for an integration credential. Omitting it is a 400
+             *     `unsupported_grant_type` — this endpoint does not infer it.
+             * @enum {string}
+             */
+            grant_type: "client_credentials";
             /**
              * Format: uuid
-             * @description The client id you were issued.
+             * @description The client id you were issued. Omit it only when it rides an `Authorization: Basic`
+             *     header instead. If you send both, the body's value is the one checked.
              */
-            client_id: string;
-            /** @description Its secret. It travels in the body over TLS, never in a URL. */
-            client_secret: string;
+            client_id?: string;
+            /**
+             * @description Its secret. In the body it travels over TLS and never in a URL; the alternative is the
+             *     `Authorization: Basic` header, never a query parameter either way.
+             */
+            client_secret?: string;
             /**
              * Format: uuid
              * @description The reseller you are acting for. Your client must hold an active grant for it, or the
              *     request is refused with a 403.
+             *
+             *     **Optional when your client holds exactly one active grant**, whose tenant — and
+             *     customer, if it names one — then become the token's. With more than one active grant
+             *     and no `tenant`, the request is a 400 `invalid_request` naming the ambiguity.
+             *
+             *     An empty value reads as an absent one: `""` and `null` ask for that automatic selection
+             *     rather than being refused. A value that is present and not a uuid is a 400
+             *     `invalid_request`.
              */
-            tenant: string;
+            tenant?: string;
+            /**
+             * Format: uuid
+             * @description One customer inside that tenant, when a grant names one. It SELECTS a context somebody
+             *     already granted and narrows nothing by itself. Omit it — or send null — for the
+             *     tenant-wide token. Sending it without `tenant` is a 400 `invalid_request`.
+             */
+            customer?: string | null;
+            /**
+             * @description The scopes you are asking for, as ONE space-delimited string (RFC 6749 section 3.3).
+             *     What you receive is the intersection with your client's ceiling, your grant and, on a
+             *     customer-scoped token, the customer-scopeable set. A scope outside that is dropped
+             *     silently, so read `scope` back off the response.
+             *
+             *     Silently means *a scope that exists*. A scope NAME this platform does not publish is a
+             *     400 `invalid_scope` whose `hint` names it — see the operation description.
+             *
+             *     This is the only scope spelling the endpoint reads. A `scopes` array is ignored, not
+             *     refused, and leaves you holding a token with no scopes.
+             * @example numbers:read numbers:route
+             */
+            scope?: string;
+        };
+        OauthTokenResponse: {
+            /** @description The bearer token. Send it as `Authorization: Bearer <token>`. */
+            access_token: string;
+            /** @example Bearer */
+            token_type: string;
+            /** @description Seconds until the token expires — 900, a fresh 15 minutes. */
+            expires_in: number;
+            /**
+             * @description The scopes the token actually carries, space-delimited (RFC 6749 section 5.1). This is
+             *     the authoritative answer and it may be shorter than what you asked for.
+             * @example numbers:read numbers:route
+             */
+            scope: string;
+            /**
+             * @description The same list as an array — the spelling the deprecated `POST /v1/integration/token`
+             *     answers with, kept so a caller moving over reads the effective set from the member it
+             *     already reads. It always agrees with `scope`.
+             */
+            scopes: string[];
+        };
+        /**
+         * @description An OAuth 2.0 error object (RFC 6749 section 5.2), served as `application/json`. This is the
+         *     shape of every refusal at `POST /oauth/token` except the 429, which is the framework's own
+         *     rate-limit page. Every other operation on this API answers with a JSON:API error document
+         *     instead.
+         */
+        OauthError: {
+            /**
+             * @description The machine-readable reason, and the member to branch on. This endpoint answers
+             *     `invalid_request`, `invalid_scope` and `unsupported_grant_type` with a 400,
+             *     `invalid_client` with a 401, and `unauthorized_client` with a 403.
+             */
+            error: string;
+            /** @description A sentence for a human reading a log. Do not parse it. */
+            error_description: string;
+            /**
+             * @description Which input caused it, when the server can name one — an unpublished scope name, a
+             *     missing parameter. Present on some refusals and absent on others, so treat it as
+             *     optional: the tenant/customer refusals this platform adds carry no hint at all.
+             */
+            hint?: string;
+        };
+        /**
+         * @description Every member here is optional only under a stated condition. Send `client_id` and
+         *     `client_secret` unless they ride an `Authorization: Basic` header, and send `tenant` unless
+         *     your client holds exactly one active grant. The operation description carries both rules.
+         */
+        IntegrationTokenRequest: {
+            /**
+             * Format: uuid
+             * @description The client id you were issued. Omit it only when it rides an `Authorization: Basic`
+             *     header instead; sending it in both places is a 422.
+             */
+            client_id?: string;
+            /**
+             * @description Its secret. In the body it travels over TLS and never in a URL; the alternative is the
+             *     `Authorization: Basic` header, never a query parameter either way.
+             */
+            client_secret?: string;
+            /**
+             * Format: uuid
+             * @description The reseller you are acting for. Your client must hold an active grant for it, or the
+             *     request is refused with a 403.
+             *
+             *     **Optional when your client holds exactly one active grant**, whose tenant — and
+             *     customer, if it names one — then become the token's. With more than one active grant
+             *     and no `tenant`, the request is a 422 naming the ambiguity.
+             *
+             *     Omitting the member is the only way to ask for that: unlike `customer`, this field must
+             *     be a **string** whenever it is present, so `""` or `null` is a 422 rather than a
+             *     request for automatic selection.
+             */
+            tenant?: string;
             /**
              * Format: uuid
              * @description One customer inside that tenant, when a grant names one. It SELECTS a context somebody
@@ -787,10 +1150,21 @@ export interface components {
             customer?: string | null;
             /**
              * @description The scopes you are asking for. What you receive is the intersection with your grant and,
-             *     on a customer-scoped token, with the customer-scopeable set. Anything outside it is
+             *     on a customer-scoped token, with the customer-scopeable set. A scope outside that is
              *     dropped silently, so read `scopes` back off the response.
+             *
+             *     Silently means *a scope that exists*. A scope NAME this platform does not publish is a
+             *     422 listing the offenders — see the operation description.
              */
             scopes?: string[];
+            /**
+             * @description The same request written as one space-delimited string (RFC 6749 section 3.3), for
+             *     clients whose OAuth library writes that spelling. Send this or `scopes`; a request
+             *     carrying both asks for the union. Null and empty both mean "no scopes", which is a
+             *     valid — and useless — request.
+             * @example numbers:read numbers:route
+             */
+            scope?: string | null;
         };
         IntegrationTokenResponse: {
             /** @description The bearer token. Send it as `Authorization: Bearer <token>`. */
@@ -1582,6 +1956,11 @@ export interface components {
          *     event — and then dead-lettered. Ask
          *     `GET /v1/webhook-deliveries?filter[status]=dead` for what you missed.
          *
+         *     `event_id` is repeated in a `Ringivo-Event-Id` header, and `type` in a `Ringivo-Event-Type`
+         *     header, so a proxy or a queue in front of your handler can dedupe and route before anything
+         *     parses the body. They are a convenience, never the authority: the signature covers the body,
+         *     not the headers.
+         *
          *     Answer any 2XX to accept. Redirects are never followed. We wait ten seconds; if your handler
          *     needs longer, answer 202 and do the work afterwards.
          */
@@ -1604,6 +1983,120 @@ export interface components {
         };
         FaxReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["FaxReceivedEventData"];
+        };
+        NumberLookupRequest: {
+            /**
+             * @description The number to look up. 10 digits, or 11 beginning with `1`; punctuation and spaces are
+             *     ignored, so `(650) 253-0000` and `+16502530000` are the same request.
+             */
+            number: string;
+        };
+        /**
+         * @description What one component did. `no_data` and `failed` both carry `data: null` and mean different
+         *     things — see the operation description.
+         * @enum {string}
+         */
+        NumberLookupDipStatus: "answered" | "no_data" | "failed";
+        /**
+         * @description Where the number you asked about is nominally from, from our own copy of LERG. **Not the
+         *     LRN's** rate center, which is a different fact and lives under `components.lrn`.
+         */
+        DialedNumberGeography: {
+            /** @description Null for a toll-free number, which has no rate center. Absent, not missing. */
+            rateCenter: string | null;
+            /** @description Two-letter state or province code. Null for a toll-free number. */
+            state: string | null;
+        };
+        /** @description The porting facts — who the number routes to now, and who owns its block. */
+        LrnFacts: {
+            /** @description The location routing number, 11 digits. */
+            lrn: string;
+            /**
+             * @description Who the number is ported to **now** — this is the one porting cares about. A string,
+             *     never a number: values like `506J` exist.
+             */
+            spid: string | null;
+            /** @description Who owns the number block. Often differs from `spid`. A string, never a number. */
+            ocn: string | null;
+            lata: string | null;
+            /** @description The carrier's full name, as the source spells it. */
+            lec: string | null;
+            /**
+             * @description `CLEC`, `WIRELESS`, `ILEC`. This is what the **network** says. It is not what a losing
+             *     carrier's bill says, and it must not be used to correct a port order's number type.
+             */
+            lineType: string | null;
+            /** @description The **LRN's** rate center — not the dialed number's. The two often differ. */
+            rateCenter: string | null;
+            /** @description The **LRN's** state or province code. */
+            state: string | null;
+            /** @description A string, not a boolean — commonly the literal `INDETERMINATE`, which is not false. */
+            jurisdiction: string | null;
+            /** @description A string, not a boolean, for the same reason as `jurisdiction`. */
+            local: string | null;
+            /**
+             * Format: date-time
+             * @description When the number last ported. Null if it never has.
+             */
+            portedAt: string | null;
+        };
+        CallerNameFacts: {
+            /** @description The name the number presents, as the carrier spells it — uppercase, up to 15 characters. */
+            name: string;
+        };
+        /** @description Whether the number can carry text messages, and who carries them. */
+        MessagingFacts: {
+            /**
+             * @description Whether the number is enabled for messaging. **`false` means it cannot receive messages**
+             *     — it never means "we do not know", which arrives as `status: no_data` with this whole
+             *     object null.
+             */
+            enabled: boolean;
+            /** @description The messaging carrier's name. */
+            provider: string | null;
+            country: string | null;
+            countryCode: string | null;
+        };
+        NumberLookupLrnComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["LrnFacts"] | null;
+        };
+        NumberLookupCallerNameComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["CallerNameFacts"] | null;
+        };
+        NumberLookupMessagingComponent: {
+            status: components["schemas"]["NumberLookupDipStatus"];
+            data: components["schemas"]["MessagingFacts"] | null;
+        };
+        /**
+         * @description The three paid components. Each reports its own outcome and they fail independently — a
+         *     lookup with two answers and one failure is normal, and is billed in full.
+         */
+        NumberLookupComponents: {
+            lrn: components["schemas"]["NumberLookupLrnComponent"];
+            callerName: components["schemas"]["NumberLookupCallerNameComponent"];
+            messaging: components["schemas"]["NumberLookupMessagingComponent"];
+        };
+        NumberLookup: {
+            /** @description The number that was looked up, normalized to E.164. */
+            number: string;
+            /**
+             * Format: date-time
+             * @description When the components ran — so you can tell "we asked and learned nothing" from "we never
+             *     asked".
+             */
+            lookedUpAt: string;
+            /**
+             * @description Whether this lookup was billed. True when any component answered; false only when every
+             *     one of them failed.
+             */
+            charged: boolean;
+            dialedNumber: components["schemas"]["DialedNumberGeography"];
+            components: components["schemas"]["NumberLookupComponents"];
+        };
+        NumberLookupResult: {
+            data: components["schemas"]["NumberLookup"];
         };
     };
     responses: {
@@ -1714,11 +2207,168 @@ export interface components {
         Sort: string;
     };
     requestBodies: never;
-    headers: never;
+    headers: {
+        /**
+         * @description RFC 9745. `@` followed by the unix-seconds spelling of 2026-08-21T00:00:00Z, the date this
+         *     endpoint was deprecated. It states a fact about the endpoint rather than about one request,
+         *     so it is on every response the endpoint gives — successes and refusals alike.
+         * @example @1787270400
+         */
+        Deprecation: string;
+    };
     pathItems: never;
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    issueToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "grant_type": "client_credentials",
+                 *       "client_id": "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
+                 *       "client_secret": "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
+                 *       "tenant": "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+                 *       "scope": "numbers:read numbers:route"
+                 *     }
+                 */
+                "application/x-www-form-urlencoded": components["schemas"]["OauthTokenRequest"];
+                /**
+                 * @example {
+                 *       "grant_type": "client_credentials",
+                 *       "client_id": "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
+                 *       "client_secret": "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
+                 *       "tenant": "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+                 *       "scope": "numbers:read numbers:route"
+                 *     }
+                 */
+                "application/json": components["schemas"]["OauthTokenRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description A bearer token. `scope` and `scopes` are what it actually carries — compare either with
+             *     what you asked for before you spend it.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
+                     *       "token_type": "Bearer",
+                     *       "expires_in": 900,
+                     *       "scope": "numbers:read numbers:route",
+                     *       "scopes": [
+                     *         "numbers:read",
+                     *         "numbers:route"
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OauthTokenResponse"];
+                };
+            };
+            /**
+             * @description The request itself is wrong. `error` says which way, and it is the member to branch on:
+             *
+             *     - `invalid_request` — a `tenant` or `customer` that is not a uuid, a `customer` with no
+             *       `tenant` beside it, or no selector at all from a client holding **more than one**
+             *       active grant. A well-formed id that names nothing you were granted is the 403 below
+             *       and not this: refusing it here would answer questions about another reseller's
+             *       customers.
+             *     - `invalid_scope` — a scope NAME this platform does not publish. `hint` names the
+             *       offending one. A real scope you were simply not granted is dropped in silence instead.
+             *     - `unsupported_grant_type` — `grant_type` is missing, or is not one this endpoint
+             *       serves. Integrations send `client_credentials`.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_request",
+                     *       "error_description": "The tenant and customer selectors must be UUIDs, and customer requires a tenant."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OauthError"];
+                };
+            };
+            /**
+             * @description The client id or the secret is wrong (`error: invalid_client`). If you sent credentials
+             *     in the body *and* in an `Authorization: Basic` header, the body's are the pair that was
+             *     checked.
+             *
+             *     When you authenticated with an `Authorization` header, this response also carries
+             *     `WWW-Authenticate: Basic realm="OAuth"` (RFC 6749 §5.2). Credentials sent in the body get
+             *     no such header — it is the only response on this endpoint that ever carries one.
+             */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "invalid_client",
+                     *       "error_description": "Client authentication failed"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OauthError"];
+                };
+            };
+            /**
+             * @description Your credentials are good and no active grant matches — either for this tenant, or for
+             *     the customer you named. The two are not told apart, on purpose.
+             *
+             *     A request that named no `tenant` at all lands here too, word for word, when your client
+             *     holds no active grant to resolve. One endpoint, one no-grant answer.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "error": "unauthorized_client",
+                     *       "error_description": "No active integration grant for this tenant."
+                     *     }
+                     */
+                    "application/json": components["schemas"]["OauthError"];
+                };
+            };
+            /**
+             * @description Too many attempts. This endpoint is throttled harder than the rest of the API because
+             *     every attempt costs a password check: **60 a minute per IP address** and **20 a minute
+             *     per client id**, whichever you reach first. Wait the number of seconds in `Retry-After`,
+             *     and hold each token for its full 15 minutes rather than minting one per request.
+             *
+             *     **Branch on the status, not the body.** This is the one refusal here that is not an
+             *     OAuth error object: it is the framework's own rate-limit page and it arrives as HTML
+             *     whatever you put in `Accept`. `Retry-After` carries everything you need from it.
+             */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before trying again. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
     issueIntegrationToken: {
         parameters: {
             query?: never;
@@ -1749,6 +2399,7 @@ export interface operations {
              */
             200: {
                 headers: {
+                    Deprecation: components["headers"]["Deprecation"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -1769,6 +2420,7 @@ export interface operations {
             /** @description The client id or the secret is wrong. */
             401: {
                 headers: {
+                    Deprecation: components["headers"]["Deprecation"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -1789,9 +2441,13 @@ export interface operations {
             /**
              * @description Your credentials are good and no active grant matches — either for this tenant, or for
              *     the customer you named. The two are not told apart, on purpose.
+             *
+             *     A request that named no `tenant` at all lands here too, word for word, when your client
+             *     holds no active grant to resolve. One endpoint, one no-grant answer.
              */
             403: {
                 headers: {
+                    Deprecation: components["headers"]["Deprecation"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -1814,9 +2470,19 @@ export interface operations {
              *     Each error's `source.pointer` names the member. A well-formed id that names nothing you
              *     were granted is the 403 above and not this — refusing it here would answer questions
              *     about another reseller's customers.
+             *
+             *     Four causes are worth naming, because none of them is a malformed member:
+             *
+             *     - credentials sent in the body **and** in an `Authorization: Basic` header;
+             *     - `customer` without `tenant`, which is half a selector;
+             *     - no `tenant` at all from a client holding **more than one** active grant — the message
+             *       names the ambiguity rather than picking one for you;
+             *     - a scope **name** this platform does not publish, listed in the message. A real scope
+             *       you were simply not granted is dropped in silence instead.
              */
             422: {
                 headers: {
+                    Deprecation: components["headers"]["Deprecation"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -1842,9 +2508,12 @@ export interface operations {
              *     every attempt costs a password check: **10 a minute per IP address** and **20 a minute
              *     per client id**, whichever you reach first. Wait the number of seconds in `Retry-After`,
              *     and hold each token for its full 15 minutes rather than minting one per request.
+             *
+             *     The mint has its own budget, sized differently — moving over does not spend this one.
              */
             429: {
                 headers: {
+                    Deprecation: components["headers"]["Deprecation"];
                     /** @description Seconds to wait before trying again. */
                     "Retry-After"?: number;
                     [name: string]: unknown;
@@ -3500,6 +4169,109 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    lookUpNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "number": "6502530000"
+                 *     }
+                 */
+                "application/json": components["schemas"]["NumberLookupRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description The lookup. **200 and not 201** — nothing was created, and there is nothing to fetch
+             *     again.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "number": "+16502530000",
+                     *         "lookedUpAt": "2026-08-19T18:04:11+00:00",
+                     *         "charged": true,
+                     *         "dialedNumber": {
+                     *           "rateCenter": "MT VIEW",
+                     *           "state": "CA"
+                     *         },
+                     *         "components": {
+                     *           "lrn": {
+                     *             "status": "answered",
+                     *             "data": {
+                     *               "lrn": "14159686199",
+                     *               "spid": "8824",
+                     *               "ocn": "8826",
+                     *               "lata": "722",
+                     *               "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
+                     *               "lineType": "WIRELESS",
+                     *               "rateCenter": "MILLVALLEY",
+                     *               "state": "CA",
+                     *               "jurisdiction": "INDETERMINATE",
+                     *               "local": "INDETERMINATE",
+                     *               "portedAt": "2014-12-23T15:47:47+00:00"
+                     *             }
+                     *           },
+                     *           "callerName": {
+                     *             "status": "answered",
+                     *             "data": {
+                     *               "name": "GOOGLEPLEX"
+                     *             }
+                     *           },
+                     *           "messaging": {
+                     *             "status": "no_data",
+                     *             "data": null
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["NumberLookupResult"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description Not a number we will look up — it is not a North American number, or its area
+             *     code/exchange does not exist. **Nothing was looked up and you were not charged**: this
+             *     check runs before any provider is asked.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Not a number we can look up",
+                     *           "detail": "No exchange 650-999 exists, so +16509999999 is not a real number. Nothing was looked up and nothing was charged.",
+                     *           "source": {
+                     *             "pointer": "/number"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
