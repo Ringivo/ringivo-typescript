@@ -34,7 +34,9 @@ hearing about at construction rather than as a puzzling 403 in production.
 
 What you get back is your ask narrowed to what your grant allows, and a scope
 outside it is dropped silently rather than refused — so read the scopes back
-off your provider's answer.
+off your provider's answer. A scope **name** nobody publishes is the one
+exception: a typo is refused outright rather than costing you a capability
+quietly.
 
 ## Send a fax
 
@@ -195,6 +197,13 @@ try {
 the client had already replaced its token and retried once by then.
 Connection failures, timeouts and TLS errors are the platform's own
 exceptions and are deliberately not wrapped.
+
+A refusal from the **token exchange** is the same `ApiError`, and `code`
+carries OAuth's vocabulary rather than the API's: `invalid_client` for a
+wrong secret, `unauthorized_client` for a credential nobody granted this
+tenant, `invalid_request` for an ask the server cannot resolve — most often
+a tenant you did not name — and `invalid_scope` for a scope name that does
+not exist.
 
 ## What is in the box
 

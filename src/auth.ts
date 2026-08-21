@@ -1,19 +1,33 @@
 /**
- * The integration token, minted and kept good so a caller never sees it.
+ * The bearer token, minted and kept good so a caller never sees it.
  *
  * A caller hands over a client id, a secret and the context those act for
  * once, at construction. Everything after that — minting the token, caching
  * it, replacing it before it expires, and replacing it again when the server
  * says it is no longer good — happens here, on the way out of every request.
  *
+ * -- ONE MINT, AND IT IS THE STANDARD ONE -----------------------------------
+ * `POST /oauth/token`, an RFC 6749 client-credentials exchange. Two members
+ * follow from that and from nothing else here: `grant_type` is REQUIRED and
+ * is always `client_credentials`, and the scopes go out as `scope`, one
+ * space-delimited string. The array member an earlier release sent is not
+ * read at this endpoint, so a scope list posted under the old name asks for
+ * nothing and mints a token that every resource refuses.
+ *
  * -- WHY THE CONTEXT IS NAMED AT THE MINT AND NOWHERE ELSE ------------------
- * `POST /v1/integration/token` issues a token that CARRIES its tenant and,
- * when one is named, a customer inside it. Which rows a request reaches is
- * decided by the token, never by a header or a path sent later — so acting
- * for another tenant means another client, and one token is one context for
- * its whole life. A member the caller did not configure is left out of the
- * body altogether: `tenant` absent asks the server to decide from the single
- * grant it holds, which is not the same request as `tenant` sent empty.
+ * The token this returns CARRIES its tenant and, when one is named, a
+ * customer inside it. Which rows a request reaches is decided by the token,
+ * never by a header or a path sent later — so acting for another tenant
+ * means another client, and one token is one context for its whole life. A
+ * member the caller did not configure is left out of the body altogether:
+ * `tenant` absent asks the server to decide from the single grant it holds,
+ * which is not the same request as `tenant` sent empty.
+ *
+ * -- THE MINT REFUSES IN A DIFFERENT VOCABULARY FROM THE RESOURCES ----------
+ * This endpoint answers a failure as RFC 6749's flat
+ * `{"error": ..., "error_description": ...}`; every `/v1` resource answers a
+ * JSON:API error document. Both fold into the same typed error, and
+ * src/errors.ts is where that split is written down.
  *
  * -- WHY THIS IS A SEPARATE OBJECT AND NOT A WRAPPER METHOD -----------------
  * The token cache, the expiry margin and the single 401 retry belong to the
@@ -93,7 +107,7 @@ export class ClientCredentialsAuth {
   private pending: Promise<string> | null = null;
 
   constructor(options: ClientCredentialsAuthOptions) {
-    this.tokenUrl = `${options.baseUrl.replace(/\/+$/, "")}/v1/integration/token`;
+    this.tokenUrl = `${options.baseUrl.replace(/\/+$/, "")}/oauth/token`;
     this.clientId = options.clientId;
     this.clientSecret = options.clientSecret;
     this.tenant = options.tenant;
@@ -142,7 +156,12 @@ export class ClientCredentialsAuth {
     // Only what the caller actually configured. A member sent as `null` or
     // as an empty string is a value the server has to interpret; a member
     // left out is the absence the endpoint documents.
+    //
+    // `grant_type` is the one member with no caller behind it: the endpoint
+    // serves several grants and reads this to pick one, so it is a constant
+    // rather than an option.
     const asked: Record<string, unknown> = {
+      grant_type: "client_credentials",
       client_id: this.clientId,
       client_secret: this.clientSecret,
     };
@@ -153,7 +172,10 @@ export class ClientCredentialsAuth {
       asked.customer = this.customer;
     }
     if (this.scopes && this.scopes.length > 0) {
-      asked.scopes = [...this.scopes];
+      // ONE SPACE-DELIMITED STRING, which is RFC 6749's encoding and the only
+      // one this endpoint reads. A scope carrying a space of its own would be
+      // unrepresentable here, and no published scope does.
+      asked.scope = this.scopes.join(" ");
     }
 
     const response = await fetch(this.tokenUrl, {
