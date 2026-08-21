@@ -11,6 +11,23 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
+## Before you install 0.3.0
+
+**0.3.0 needs a provider whose platform mints at `POST /oauth/token`.** Ask
+your provider whether they have made that change; if they have not announced
+it, stay on 0.2.x.
+
+This matters more than a version bump usually does, because the older platform
+will not tell you no. That path already exists there, serving a different
+population: it ignores `tenant` and `customer`, and answers **200** with a
+token that carries no tenant at all. Nothing fails until you spend it, and then
+every call is refused with a 403 that says nothing about the mint that caused
+it. A version you cannot use looks exactly like a credential problem.
+
+0.2.x mints at the older endpoint, `POST /v1/integration/token`. That endpoint
+is deprecated as of **2026-08-21** and keeps serving through a migration
+window, so staying put is safe while you wait.
+
 **Webhook verification needs Node.** `verifyWebhook()` uses `node:crypto`,
 so it runs on a server. That is where it belongs: the signing secret is a
 server-side credential, and a `whsec_` sent to a browser is a `whsec_` that
@@ -32,9 +49,13 @@ token minted without scopes carries none, and is refused by every endpoint
 you spend it on. There is no default set, so an empty ask is a mistake worth
 hearing about at construction rather than as a puzzling 403 in production.
 
-What you get back is your ask narrowed to what your grant allows, and a scope
-outside it is dropped silently rather than refused — so read the scopes back
-off your provider's answer.
+What you get back is your ask narrowed to what your grant allows, and a
+**published** scope outside it is dropped silently rather than refused. So ask
+for exactly the scopes you were granted: a dropped one costs you nothing here
+and surfaces much later, as a 403 on a call that looks unrelated.
+
+A scope **name** nobody publishes is the exception, and it is refused outright
+rather than dropped — a typo is a mistake, not an answer about permissions.
 
 ## Send a fax
 
@@ -195,6 +216,13 @@ try {
 the client had already replaced its token and retried once by then.
 Connection failures, timeouts and TLS errors are the platform's own
 exceptions and are deliberately not wrapped.
+
+A refusal from the **token exchange** is the same `ApiError`, and `code`
+carries OAuth's vocabulary rather than the API's: `invalid_client` for a
+wrong secret, `unauthorized_client` for a credential nobody granted this
+tenant, `invalid_request` for an ask the server cannot resolve — most often
+a tenant you did not name — and `invalid_scope` for a scope name that does
+not exist.
 
 ## What is in the box
 

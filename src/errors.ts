@@ -6,12 +6,22 @@
  * error objects — so branching on a failure never means parsing a message
  * string. The message exists for a log line and a stack trace, not for code.
  *
- * The API answers errors as JSON:API error documents (`{"errors": [...]}`),
- * including on the token mint and on the four other endpoints whose SUCCESS
- * bodies are plain JSON. RFC 6749's flat
- * `{"error": ..., "error_description": ...}` — what the platform's older
- * OAuth token endpoint answers — is folded into `ApiError` here as well, so a
- * caller has one thing to catch wherever it turns up.
+ * -- TWO ANSWER SHAPES, AND WHERE THE LINE BETWEEN THEM RUNS ----------------
+ * The line runs between the MINT and the RESOURCES, and nowhere else:
+ *
+ *  - `POST /oauth/token` answers RFC 6749's flat
+ *    `{"error": ..., "error_description": ...}` as `application/json`. It is
+ *    a standard OAuth endpoint and speaks the standard's own vocabulary —
+ *    `invalid_client`, `unauthorized_client`, `invalid_request`,
+ *    `invalid_scope`. A member beyond those two is tolerated and kept: some
+ *    servers add a `hint`, and whatever arrives reaches the caller on `raw`.
+ *  - Everything under `/v1` answers a JSON:API error document
+ *    (`{"errors": [...]}`), including the four endpoints whose SUCCESS bodies
+ *    are plain JSON.
+ *
+ * Both fold into `ApiError` here, so a caller has one thing to catch and one
+ * member to branch on wherever the refusal came from: `code` carries the
+ * JSON:API error's `code` on one side and the OAuth `error` on the other.
  */
 
 /**
@@ -31,7 +41,12 @@ export class RingivoError extends Error {
 }
 
 /**
- * One JSON:API error object, as it arrived.
+ * One error the API stated, in the members a JSON:API error object carries.
+ *
+ * A refusal from the mint is folded into this same shape rather than a second
+ * one — `error` reaching `code`, `error_description` reaching `detail` — so a
+ * caller reads one thing wherever the refusal came from. `raw` is the object
+ * exactly as it arrived either way.
  *
  * `code` is the stable machine vocabulary to branch on — and it is genuinely
  * optional: where no published code names the case, the status is the
@@ -138,11 +153,15 @@ function errorsFromBody(body: string, statusCode: number): readonly ApiErrorDeta
     return errors.filter(isRecord).map(detailFromJson);
   }
 
-  // RFC 6749's flat shape. Nothing this client calls on its own answers it —
-  // the mint speaks JSON:API — but `Ringivo.request()` is a supported escape
-  // hatch onto any endpoint, the platform's own /oauth/token included, and a
-  // caller who reaches one still gets the same typed error as everywhere
-  // else. src/errors.test.ts is what keeps this branch honest.
+  // RFC 6749's flat shape — what the mint refuses with, and the branch every
+  // failed token request lands on.
+  //
+  // `error` becomes `code` and not only part of the message, because it is
+  // the machine vocabulary a caller branches on: `invalid_client` is a wrong
+  // credential, `unauthorized_client` is a credential nobody granted this
+  // context, `invalid_request` is an ask the server cannot resolve, and
+  // `invalid_scope` is a scope name that does not exist. `raw` keeps the
+  // whole document, so a member beyond these two still reaches the caller.
   const oauthError = document.error;
   if (typeof oauthError === "string") {
     const description = document.error_description;

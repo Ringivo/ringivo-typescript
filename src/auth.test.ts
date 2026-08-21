@@ -1,5 +1,5 @@
 /**
- * The integration-token layer, from the caller's side.
+ * The token layer, from the caller's side.
  *
  * Every test here drives the real request path (`client.faxes.get`) against
  * a mocked transport, because the token is not a thing a caller ever
@@ -15,6 +15,11 @@
  * the token is issued for, so a member sent empty or null is a DIFFERENT
  * request from one not sent at all — hence the assertions that a member the
  * caller never configured is absent from the body, not present and blank.
+ *
+ * THE MINT REFUSES IN OAuth's VOCABULARY, not the JSON:API one the rest of
+ * the API answers with. The refusal fixtures below are that shape on purpose:
+ * an SDK that parsed the mint as JSON:API would hand a caller an error with
+ * no `code` on it and no way to tell a wrong secret from a missing grant.
  */
 import { HttpResponse, http } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -25,7 +30,7 @@ import { ApiError, AuthenticationError, Ringivo, VERSION } from "./index.js";
 import type { RingivoOptions } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
-const TOKEN_URL = `${BASE_URL}/v1/integration/token`;
+const TOKEN_URL = `${BASE_URL}/oauth/token`;
 const TENANT_ID = "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8";
 const CUSTOMER_ID = "0198c4a1-5a6b-7c8d-9e0f-1a2b3c4d5e6f";
 const FAX_ID = "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f";
@@ -37,11 +42,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** The 200 the spec publishes: a token, its type, its life, its real scopes. */
+/**
+ * The 200 the spec publishes: a token, its type, its life, its real scopes.
+ *
+ * The effective scopes come back TWICE — `scope` space-joined, which is what
+ * RFC 6749 defines, and `scopes` as an array. They are the same set, and the
+ * array is the member the endpoint kept so a caller reading it did not have
+ * to change when the mint moved.
+ */
 function tokenBody(accessToken = "tok-1", expiresIn: number | null = 900): object {
   const body: Record<string, unknown> = {
     access_token: accessToken,
     token_type: "Bearer",
+    scope: "fax:read fax:write",
     scopes: ["fax:read", "fax:write"],
   };
   if (expiresIn !== null) {
@@ -50,11 +63,9 @@ function tokenBody(accessToken = "tok-1", expiresIn: number | null = 900): objec
   return body;
 }
 
-/** One JSON:API error document, the shape this endpoint refuses with. */
-function refusal(status: number, detail: string, source?: object): object {
-  return {
-    errors: [{ status: String(status), title: "Refused", detail, ...(source ? { source } : {}) }],
-  };
+/** One RFC 6749 error, the shape the mint refuses with. */
+function refusal(error: string, description: string): object {
+  return { error, error_description: description };
 }
 
 function faxDocument(): object {
@@ -114,30 +125,37 @@ function wire(
 }
 
 describe("the token request", () => {
-  it("posts the credentials and the tenant as JSON to the integration mint", async () => {
-    // One endpoint, one body, no grant_type and no form encoding: this is the
-    // mint whose tokens the /v1 surface accepts.
+  it("posts a client_credentials grant as JSON to the standard mint", async () => {
+    // One endpoint for every token this API issues, and the exchange is the
+    // standard one — so `grant_type` is required, and the whole body is
+    // asserted rather than a member at a time: an extra member left over from
+    // an older shape would ask the server a question nobody meant to ask.
     const { token } = wire();
 
     await client().faxes.get(FAX_ID);
 
-    expect(token.last.url.pathname).toBe("/v1/integration/token");
+    expect(token.last.url.pathname).toBe("/oauth/token");
     expect(token.last.request.headers.get("content-type")).toBe("application/json");
     expect(sent(token.last)).toEqual({
+      grant_type: "client_credentials",
       client_id: "cid",
       client_secret: "csecret",
       tenant: TENANT_ID,
-      scopes: ["fax:read"],
+      scope: "fax:read",
     });
   });
 
-  it("asks for the scopes it was given, as a list", async () => {
-    // A list, not the space-separated string the older OAuth endpoint took.
+  it("asks for the scopes it was given, space-delimited in one member", async () => {
+    // `scope`, one string — RFC 6749's encoding and the only one this
+    // endpoint reads. The `scopes` ARRAY an earlier release sent is not read
+    // here at all, so sending it would ask for nothing and mint a token every
+    // resource refuses. Its absence is asserted for that reason.
     const { token } = wire();
 
     await client({ scopes: ["fax:read", "fax:write"] }).faxes.get(FAX_ID);
 
-    expect(sent(token.last).scopes).toEqual(["fax:read", "fax:write"]);
+    expect(sent(token.last).scope).toBe("fax:read fax:write");
+    expect(sent(token.last)).not.toHaveProperty("scopes");
   });
 
   it("names a customer only when one was configured", async () => {
@@ -163,16 +181,18 @@ describe("the token request", () => {
     await client({ tenant: undefined }).faxes.get(FAX_ID);
 
     expect(sent(token.last)).toEqual({
+      grant_type: "client_credentials",
       client_id: "cid",
       client_secret: "csecret",
-      scopes: ["fax:read"],
+      scope: "fax:read",
     });
   });
 
   it("carries no bearer of its own", async () => {
-    // The mint is unauthenticated by definition (`security: []`); sending a
-    // stale bearer with it would be a request the server has to reject
-    // before it can help.
+    // The credentials go in the BODY and nowhere else. A stale bearer sent
+    // alongside them is a request the server has to reject before it can
+    // help, and an `Authorization: Basic` of the same credentials would be
+    // the second half of a pair this endpoint refuses to be given twice.
     const { token } = wire();
 
     await client().faxes.get(FAX_ID);
@@ -377,20 +397,28 @@ describe("the 401 retry", () => {
 });
 
 describe("refusals", () => {
-  it("raises AuthenticationError when the credential itself is refused", async () => {
-    server.use(
-      http.post(TOKEN_URL, () =>
-        HttpResponse.json(refusal(401, "Invalid client credentials."), { status: 401 }),
-      ),
-    );
+  /** Answer the mint with one refusal, then make the call that trips it. */
+  async function refused(
+    body: object,
+    status: number,
+    options: Parameters<typeof client>[0] = {},
+  ): Promise<ApiError> {
+    server.use(http.post(TOKEN_URL, () => HttpResponse.json(body, { status })));
 
-    const error = (await client()
+    return (await client(options)
       .faxes.get(FAX_ID)
-      .catch((caught: unknown) => caught)) as AuthenticationError;
+      .catch((caught: unknown) => caught)) as ApiError;
+  }
+
+  it("raises AuthenticationError when the credential itself is refused", async () => {
+    // `invalid_client` is the one refusal a new token could not fix, and the
+    // only one of these that is an AuthenticationError.
+    const error = await refused(refusal("invalid_client", "Client authentication failed"), 401);
 
     expect(error).toBeInstanceOf(AuthenticationError);
     expect(error.statusCode).toBe(401);
-    expect(error.message).toContain("Invalid client credentials.");
+    expect(error.code).toBe("invalid_client");
+    expect(error.message).toContain("Client authentication failed");
   });
 
   it("folds the 403 that means no grant matches", async () => {
@@ -398,11 +426,95 @@ describe("refusals", () => {
     // and the answer does not say which. It is not an AuthenticationError:
     // replacing the token would change nothing, because the credential is
     // not what was refused.
+    const error = await refused(
+      refusal("unauthorized_client", "No active integration grant for this tenant."),
+      403,
+    );
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).not.toBeInstanceOf(AuthenticationError);
+    expect(error.statusCode).toBe(403);
+    expect(error.code).toBe("unauthorized_client");
+    expect(error.errors[0]?.detail).toBe("No active integration grant for this tenant.");
+  });
+
+  it("folds the 400 that says the credential could mean more than one tenant", async () => {
+    // A client granted several tenants and a caller who named none. The
+    // server will not pick: a silently chosen context spends a token on the
+    // wrong rows and fails somewhere that looks unrelated to this call. The
+    // DESCRIPTION is the whole value of this answer — it names the fix — so
+    // it has to survive the fold.
+    const error = await refused(
+      refusal(
+        "invalid_request",
+        "This client holds more than one active integration grant. Name the tenant you are " +
+          "acting for, and the customer inside it if the grant names one.",
+      ),
+      400,
+      { tenant: undefined },
+    );
+
+    expect(error.statusCode).toBe(400);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).toContain("Name the tenant you are acting for");
+  });
+
+  it("folds the 400 that says a selector is malformed", async () => {
+    // Same code, different cause: a `tenant` or `customer` that is not a
+    // uuid. One vocabulary word covers both, which is why a caller who wants
+    // to know WHICH reads the description rather than branching on `code`.
+    const error = await refused(
+      refusal(
+        "invalid_request",
+        "The tenant and customer selectors must be UUIDs, and customer requires a tenant.",
+      ),
+      400,
+      { customer: "not-a-uuid" },
+    );
+
+    expect(error.statusCode).toBe(400);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).toContain("must be UUIDs");
+  });
+
+  it("folds the 400 that names a scope nobody publishes, hint and all", async () => {
+    // The loud half of the scope contract. A scope your grant does not carry
+    // is DROPPED and you still get a token; a scope NAME that does not exist
+    // is a typo and is refused. The `hint` beside the two required members is
+    // the mint's own, and it reaches the caller on `raw` rather than being
+    // dropped for not being modelled.
+    const error = await refused(
+      {
+        ...refusal("invalid_scope", "The requested scope is invalid, unknown, or malformed"),
+        hint: "Check the `fax:reed` scope",
+      },
+      400,
+      { scopes: ["fax:reed"] },
+    );
+
+    expect(error.statusCode).toBe(400);
+    expect(error.code).toBe("invalid_scope");
+    expect(error.errors[0]?.raw.hint).toBe("Check the `fax:reed` scope");
+  });
+
+  it("hands back the 429 HTML page instead of reading it as a credential failure", async () => {
+    // The mint is throttled harder than the resources, and the limiter sits
+    // in FRONT of it — outside both contracts, so it answers an HTML page on
+    // any `Accept`, measured against the running platform. NOT JSON: this
+    // client must never assume the mint's body is parseable just because its
+    // success and its refusals are.
+    //
+    // What must hold is that the caller can tell a rate limit apart and back
+    // off: the status survives, the page is not mistaken for a bad
+    // credential, and no parse error is thrown from inside the error path.
     server.use(
-      http.post(TOKEN_URL, () =>
-        HttpResponse.json(refusal(403, "No active integration grant for this tenant."), {
-          status: 403,
-        }),
+      http.post(
+        TOKEN_URL,
+        () =>
+          new HttpResponse("<!DOCTYPE html><html><body>429 Too Many Requests</body></html>", {
+            status: 429,
+            headers: { "Content-Type": "text/html", "Retry-After": "60" },
+          }),
       ),
     );
 
@@ -412,30 +524,9 @@ describe("refusals", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).not.toBeInstanceOf(AuthenticationError);
-    expect(error.statusCode).toBe(403);
-    expect(error.errors[0]?.detail).toBe("No active integration grant for this tenant.");
-  });
-
-  it("folds the 422 that names the malformed member", async () => {
-    // A selector that is not a uuid. `source.pointer` is the whole value of
-    // this answer — it says WHICH member to fix — so it has to survive the
-    // fold into the typed error.
-    server.use(
-      http.post(TOKEN_URL, () =>
-        HttpResponse.json(
-          refusal(422, "The customer field must be a valid UUID.", { pointer: "/customer" }),
-          { status: 422 },
-        ),
-      ),
-    );
-
-    const error = (await client({ customer: "not-a-uuid" })
-      .faxes.get(FAX_ID)
-      .catch((caught: unknown) => caught)) as ApiError;
-
-    expect(error.statusCode).toBe(422);
-    expect(error.errors[0]?.source).toEqual({ pointer: "/customer" });
-    expect(error.message).toContain("The customer field must be a valid UUID.");
+    expect(error.statusCode).toBe(429);
+    expect(error.code).toBeNull();
+    expect(error.message).toContain("429 Too Many Requests");
   });
 
   it("refuses a 200 that carried no access_token", async () => {
@@ -543,6 +634,6 @@ describe("the surface", () => {
     await client({ scopes: ["fax:read"] }).faxes.get(FAX_ID);
 
     expect(token.count).toBe(1);
-    expect(sent(token.last).scopes).toEqual(["fax:read"]);
+    expect(sent(token.last).scope).toBe("fax:read");
   });
 });

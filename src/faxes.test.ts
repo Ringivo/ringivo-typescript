@@ -22,7 +22,7 @@ import { ApiError, Ringivo, VERSION } from "./index.js";
 import type { FaxUpload } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
-const TOKEN_URL = `${BASE_URL}/v1/integration/token`;
+const TOKEN_URL = `${BASE_URL}/oauth/token`;
 const FAXES_URL = `${BASE_URL}/v1/faxes`;
 const FAX_ID = "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f";
 const FAX_URL = `${FAXES_URL}/${FAX_ID}`;
