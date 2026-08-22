@@ -165,6 +165,45 @@ describe("refusals", () => {
     }
   });
 
+  it("refuses a header that never arrived, rather than throwing a raw TypeError", () => {
+    // THE DOCUMENTED CATCH IS THE WHOLE POINT. verifyWebhook promises
+    // SignatureVerificationError for "a missing ... header", and a receiver
+    // written to that promise catches it and answers a bare 400. A raw
+    // TypeError is not that class, so it escapes the catch and becomes a 500
+    // — and the delivery the sender then retries is one this receiver never
+    // refused, it crashed on. The promise was in the docstring before the
+    // code kept it.
+    //
+    // NONE OF THESE IS EXOTIC — they are what the three common receivers
+    // hand over when the header is absent or doubled, and the docstring's own
+    // example (`request.headers[SIGNATURE_HEADER.toLowerCase()]`) is typed as
+    // two of them:
+    //
+    //   - `undefined` — `req.headers[name]` in Express, header not sent;
+    //   - `null` — what `Headers.get()` answers, in every fetch-based
+    //     framework;
+    //   - `string[]` — Express again, when the header arrived TWICE.
+    //
+    // All three reached `header.split(",")` and threw
+    // `TypeError: Cannot read properties of undefined (reading 'split')`.
+    //
+    // Cast rather than `@ts-expect-error`: the type is not what is under test
+    // here. It already refuses these, and this is the gate the JavaScript
+    // caller — and the TypeScript one whose header value is `any` or
+    // `string | undefined` — actually meets.
+    const missing: [string, unknown][] = [
+      ["the header did not arrive", undefined],
+      ["Headers.get() found none", null],
+      ["the header arrived twice", ["t=1,v1=ff"]],
+    ];
+
+    for (const [what, value] of missing) {
+      expect(() => verifyWebhook(BODY, value as string, SECRET, { now: NOW }), what).toThrow(
+        SignatureVerificationError,
+      );
+    }
+  });
+
   it("does not read a timestamp that is not ASCII digits", () => {
     // The server's parser is `ctype_digit`: ASCII digits, nothing else. A
     // port written with `Number(value)` would ALSO accept fullwidth digits,

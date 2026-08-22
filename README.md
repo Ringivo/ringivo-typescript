@@ -205,7 +205,10 @@ Two rules decide whether this works:
   `event_id`, because a retry carries the same one.
 
 `verifyWebhook()` returns nothing and throws `SignatureVerificationError` on
-any failure — a stale timestamp, the wrong secret, a malformed header.
+any failure — a stale timestamp, the wrong secret, a malformed header, or no
+header at all. That last one includes whatever your framework hands over when
+the header is absent (`undefined`, `null`) or arrived twice (a `string[]`), so
+the one `catch` above is enough to answer 400 and never 500.
 During a secret rotation the header carries two signatures and either secret
 verifies, so a rotation costs you no deliveries.
 
