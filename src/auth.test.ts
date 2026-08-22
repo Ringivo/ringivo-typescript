@@ -11,10 +11,13 @@
  * single time, so the tests that matter are the ones counting how many token
  * requests were made, and the one proving a 401 is retried exactly ONCE.
  *
- * The absences carry weight too. `tenant` and `customer` select the context
- * the token is issued for, so a member sent empty or null is a DIFFERENT
- * request from one not sent at all — hence the assertions that a member the
- * caller never configured is absent from the body, not present and blank.
+ * The absences carry weight too. `customer` selects the context the token is
+ * issued for, so a member sent empty or null is a DIFFERENT request from one
+ * not sent at all — hence the assertion that a member the caller never
+ * configured is absent from the body, not present and blank. `tenant` is the
+ * one that stopped being omittable: it is required now, so what is asserted
+ * about it is its PRESENCE on every mint, and the refusal a client without
+ * one meets at construction before any request is built.
  *
  * THE MINT REFUSES IN OAuth's VOCABULARY, not the JSON:API one the rest of
  * the API answers with. The refusal fixtures below are that shape on purpose:
@@ -78,8 +81,8 @@ function sent(call: Recorded): Record<string, unknown> {
 }
 
 /**
- * A client with a tenant and a scope, which is what an integrator has today.
- * Pass `{ tenant: undefined }` for the credential that names no tenant.
+ * A client with a tenant and a scope, which is what every integrator has:
+ * both are required, so there is no shape of client that lacks either.
  */
 function client(
   options: { scopes?: string[]; tenant?: string; customer?: string } = {},
@@ -148,8 +151,10 @@ describe("the token request", () => {
   it("asks for the scopes it was given, space-delimited in one member", async () => {
     // `scope`, one string — RFC 6749's encoding and the only one this
     // endpoint reads. The `scopes` ARRAY an earlier release sent is not read
-    // here at all, so sending it would ask for nothing and mint a token every
-    // resource refuses. Its absence is asserted for that reason.
+    // here at all, so sending only that one asks for nothing — which the mint
+    // refuses outright with a 400 `invalid_scope`, leaving a client that sent
+    // it unable to authenticate at all. Its absence is asserted for that
+    // reason.
     const { token } = wire();
 
     await client({ scopes: ["fax:read", "fax:write"] }).faxes.get(FAX_ID);
@@ -172,27 +177,34 @@ describe("the token request", () => {
     expect(sent(wide.token.last)).not.toHaveProperty("customer");
   });
 
-  it("leaves the tenant out when the credential names none", async () => {
-    // The same rule one member up: a client that configured no tenant sends
-    // no `tenant`, so the server decides from the single grant it holds
-    // rather than reading an empty string as one.
-    const { token } = wire();
+  it("names the tenant on every mint, tenant-wide and customer-scoped alike", async () => {
+    // THE OPPOSITE OF THE RULE ONE MEMBER UP, and the reason `tenant` is not
+    // in the absence test above. It is required: the mint used to read an
+    // absent one as "the single grant this client holds", and that inference
+    // is gone, so there is no request left that omits it. Both shapes the
+    // spec publishes as examples are checked — acting for a whole tenant, and
+    // acting for one customer inside it — because `customer` is the member
+    // that varies and `tenant` is the member that does not.
+    const wide = wire();
+    await client().faxes.get(FAX_ID);
+    expect(sent(wide.token.last).tenant).toBe(TENANT_ID);
 
-    await client({ tenant: undefined }).faxes.get(FAX_ID);
-
-    expect(sent(token.last)).toEqual({
-      grant_type: "client_credentials",
-      client_id: "cid",
-      client_secret: "csecret",
-      scope: "fax:read",
-    });
+    server.resetHandlers();
+    const narrowed = wire();
+    await client({ customer: CUSTOMER_ID }).faxes.get(FAX_ID);
+    expect(sent(narrowed.token.last).tenant).toBe(TENANT_ID);
+    expect(sent(narrowed.token.last).customer).toBe(CUSTOMER_ID);
   });
 
   it("carries no bearer of its own", async () => {
     // The credentials go in the BODY and nowhere else. A stale bearer sent
     // alongside them is a request the server has to reject before it can
     // help, and an `Authorization: Basic` of the same credentials would be
-    // the second half of a pair this endpoint refuses to be given twice.
+    // the second half of a pair this endpoint now REFUSES outright: a
+    // `client_secret` in the body beside a secret in the header is a 400
+    // `invalid_request` (RFC 6749 section 2.3), whether or not the two agree.
+    // Sending no `Authorization` at all is how this client stays on the right
+    // side of that rule, so the absence is the assertion.
     const { token } = wire();
 
     await client().faxes.get(FAX_ID);
@@ -421,42 +433,53 @@ describe("refusals", () => {
     expect(error.message).toContain("Client authentication failed");
   });
 
-  it("folds the 403 that means no grant matches", async () => {
+  it("folds the 400 that means no grant matches", async () => {
     // Good credentials, no grant — for this tenant or for the customer named,
     // and the answer does not say which. It is not an AuthenticationError:
     // replacing the token would change nothing, because the credential is
     // not what was refused.
+    //
+    // A 400 AND NOT A 403. RFC 6749 section 5.2 gives the token endpoint one
+    // status for every refusal but a bad credential, so the status carries no
+    // information here and `code` is the member to branch on. The status is
+    // pinned anyway, because a caller who branched on 403 has to be told it
+    // moved.
     const error = await refused(
       refusal("unauthorized_client", "No active integration grant for this tenant."),
-      403,
+      400,
     );
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).not.toBeInstanceOf(AuthenticationError);
-    expect(error.statusCode).toBe(403);
+    expect(error.statusCode).toBe(400);
     expect(error.code).toBe("unauthorized_client");
     expect(error.errors[0]?.detail).toBe("No active integration grant for this tenant.");
   });
 
-  it("folds the 400 that says the credential could mean more than one tenant", async () => {
-    // A client granted several tenants and a caller who named none. The
-    // server will not pick: a silently chosen context spends a token on the
-    // wrong rows and fails somewhere that looks unrelated to this call. The
-    // DESCRIPTION is the whole value of this answer — it names the fix — so
-    // it has to survive the fold.
+  it("folds the 400 that says the scopes asked for intersected to nothing", async () => {
+    // WHAT REPLACED THE AMBIGUOUS-TENANT REFUSAL, in the same slot and for the
+    // same reason: an ask the server will not resolve on the caller's behalf.
+    // A scope the grant does not carry is still dropped in silence — but only
+    // while SOMETHING survives. When nothing does, the mint refuses rather
+    // than handing back a token every resource would go on to reject.
+    //
+    // The same `invalid_scope` covers the unknown-NAME refusal below, and the
+    // two are told apart by `hint`: a typo carries one, a permission answer
+    // carries none. So this fixture has no `hint`, on purpose.
     const error = await refused(
       refusal(
-        "invalid_request",
-        "This client holds more than one active integration grant. Name the tenant you are " +
-          "acting for, and the customer inside it if the grant names one.",
+        "invalid_scope",
+        "None of the requested scopes are on this grant. Ask for at least one scope the " +
+          "grant carries.",
       ),
       400,
-      { tenant: undefined },
+      { scopes: ["webhooks:read"] },
     );
 
     expect(error.statusCode).toBe(400);
-    expect(error.code).toBe("invalid_request");
-    expect(error.message).toContain("Name the tenant you are acting for");
+    expect(error.code).toBe("invalid_scope");
+    expect(error.message).toContain("Ask for at least one scope the grant carries");
+    expect(error.errors[0]?.raw).not.toHaveProperty("hint");
   });
 
   it("folds the 400 that says a selector is malformed", async () => {
@@ -561,26 +584,41 @@ describe("the surface", () => {
         baseUrl: `${BASE_URL}/`,
         clientId: "c",
         clientSecret: "s",
+        tenant: TENANT_ID,
         scopes: ["fax:read"],
       }).baseUrl,
     ).toBe(BASE_URL);
 
     expect(
-      () => new Ringivo({ baseUrl: "", clientId: "c", clientSecret: "s", scopes: ["fax:read"] }),
+      () =>
+        new Ringivo({
+          baseUrl: "",
+          clientId: "c",
+          clientSecret: "s",
+          tenant: TENANT_ID,
+          scopes: ["fax:read"],
+        }),
     ).toThrow("baseUrl is required");
     expect(
       () =>
-        new Ringivo({ baseUrl: BASE_URL, clientId: "", clientSecret: "s", scopes: ["fax:read"] }),
+        new Ringivo({
+          baseUrl: BASE_URL,
+          clientId: "",
+          clientSecret: "s",
+          tenant: TENANT_ID,
+          scopes: ["fax:read"],
+        }),
     ).toThrow("clientId and clientSecret are required");
   });
 
   it("refuses to construct with no scopes, before anything reaches the wire", () => {
-    // A token minted with no scopes CARRIES none: the server intersects what
-    // you ask for with what your grant allows, so asking for nothing is not
-    // "the credential's default" — it is a token every endpoint refuses,
-    // discovered as a 403 nowhere near the line that caused it. The refusal
-    // is bought here instead, where the message can name the fix, and no
-    // default is invented on the caller's behalf.
+    // The server intersects what you ask for with what your grant allows, so
+    // asking for nothing is not "the credential's default" — it narrows to
+    // nothing, and the mint refuses an empty result with a 400
+    // `invalid_scope` rather than issuing a token no resource would accept.
+    // The refusal is bought here instead, one round trip earlier and where
+    // the message can name the fix, and no default is invented on the
+    // caller's behalf.
     //
     // This is the RUNTIME half of the gate, and it is the half a JavaScript
     // caller meets — hence the cast, which spells in TypeScript what a
@@ -591,19 +629,23 @@ describe("the surface", () => {
       baseUrl: BASE_URL,
       clientId: "c",
       clientSecret: "s",
+      tenant: TENANT_ID,
     } as unknown as RingivoOptions;
+    const empty = {
+      baseUrl: BASE_URL,
+      clientId: "c",
+      clientSecret: "s",
+      tenant: TENANT_ID,
+      scopes: [],
+    };
 
     // Omitted, and empty: two spellings of the same ask. Only the first is
     // stopped by the type — `[]` satisfies `readonly string[]` — which is
     // why this check stays even now that `scopes` is required.
     expect(() => new Ringivo(scopeless)).toThrow(TypeError);
     expect(() => new Ringivo(scopeless)).toThrow(/scopes is required/);
-    expect(
-      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: [] }),
-    ).toThrow(TypeError);
-    expect(
-      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: [] }),
-    ).toThrow(/scopes is required/);
+    expect(() => new Ringivo(empty)).toThrow(TypeError);
+    expect(() => new Ringivo(empty)).toThrow(/scopes is required/);
 
     // And NOTHING went out on either: the refusal happens at construction,
     // before there is a client to mint with.
@@ -613,17 +655,61 @@ describe("the surface", () => {
 
   it("does not typecheck without scopes", () => {
     // The COMPILE-TIME half of the same gate, and the one that stops a
-    // TypeScript caller before they ever run the code. `scopes` will never
-    // be server-defaulted the way a single-grant client's tenant can be, so
-    // the required type is the honest shape rather than a temporary one.
+    // TypeScript caller before they ever run the code. Nothing on the server
+    // side will ever fill `scopes` in — the intersection of an empty ask is
+    // empty, and an empty result is refused — so the required type is the
+    // honest shape rather than a temporary one.
+    //
+    // Every OTHER required option is supplied, so the directive is spent on
+    // `scopes` alone: a gate that could be satisfied by a second missing
+    // member would go on passing after the one it names stopped being
+    // required.
     //
     // The directive is the gate: `tsc --noEmit` reports an UNUSED
     // `@ts-expect-error` — and fails the build — the day `scopes` goes back
     // to optional and this line starts compiling.
     expect(
       // @ts-expect-error scopes is required, so omitting it must not typecheck
-      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s" }),
+      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", tenant: TENANT_ID }),
     ).toThrow(/scopes is required/);
+  });
+
+  it("refuses to construct with no tenant, before anything reaches the wire", () => {
+    // THE TWIN OF THE SCOPE GATE ABOVE, for the rule that arrived with this
+    // release. The mint used to resolve an absent tenant from the single
+    // grant a client held; it no longer does, and a token request naming none
+    // is refused with a 400 `invalid_request`. So a client without one has no
+    // request that can succeed, and the honest moment to say so is here.
+    //
+    // The RUNTIME half, which is the half a JavaScript caller meets — hence
+    // the cast. It is also the only half that sees an EMPTY string: `""`
+    // satisfies `string`, and the mint reads a valueless parameter as an
+    // absent one (RFC 6749 section 3.2), so both spellings are checked.
+    const { token, fax } = wire();
+    const base = { baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: ["fax:read"] };
+    const tenantless = base as unknown as RingivoOptions;
+    const blank = { ...base, tenant: "" };
+
+    expect(() => new Ringivo(tenantless)).toThrow(TypeError);
+    expect(() => new Ringivo(tenantless)).toThrow(/tenant is required/);
+    expect(() => new Ringivo(blank)).toThrow(TypeError);
+    expect(() => new Ringivo(blank)).toThrow(/tenant is required/);
+
+    // And NOTHING went out on any of them: the refusal happens at
+    // construction, before there is a client to mint with.
+    expect(token.count).toBe(0);
+    expect(fax.count).toBe(0);
+  });
+
+  it("does not typecheck without a tenant", () => {
+    // The COMPILE-TIME half of that gate. Same rule as the scope directive
+    // above: every other required option is supplied, so `tsc --noEmit`
+    // reports an UNUSED `@ts-expect-error` — and fails the build — the day
+    // `tenant` goes back to optional and this line starts compiling.
+    expect(
+      // @ts-expect-error tenant is required, so omitting it must not typecheck
+      () => new Ringivo({ baseUrl: BASE_URL, clientId: "c", clientSecret: "s", scopes: ["fax:read"] }),
+    ).toThrow(/tenant is required/);
   });
 
   it("constructs and mints with one scope", async () => {

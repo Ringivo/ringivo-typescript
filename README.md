@@ -11,22 +11,25 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
-## Before you install 0.3.0
+## Before you install 0.4.0
 
-**0.3.0 needs a provider whose platform mints at `POST /oauth/token`.** Ask
-your provider whether they have made that change; if they have not announced
-it, stay on 0.2.x.
+**0.2.x has no future.** It mints at `POST /v1/integration/token`, and that
+endpoint is **deleted** on the platform — not deprecated, not serving out a
+migration window. The day your provider ships that change, every 0.2.x call
+fails at the token exchange. There is no version left to wait on.
 
-This matters more than a version bump usually does, because the older platform
+**0.4.0 needs a provider whose platform mints at `POST /oauth/token`.** Ask
+your provider whether they have made that change.
+
+This matters more than a version bump usually does, because an older platform
 will not tell you no. That path already exists there, serving a different
 population: it ignores `tenant` and `customer`, and answers **200** with a
 token that carries no tenant at all. Nothing fails until you spend it, and then
 every call is refused with a 403 that says nothing about the mint that caused
 it. A version you cannot use looks exactly like a credential problem.
 
-0.2.x mints at the older endpoint, `POST /v1/integration/token`. That endpoint
-is deprecated as of **2026-08-21** and keeps serving through a migration
-window, so staying put is safe while you wait.
+**Name your `tenant`.** It was optional in 0.3.0 and is required now, in the
+type and at construction — see below for what changed and why.
 
 **Webhook verification needs Node.** `verifyWebhook()` uses `node:crypto`,
 so it runs on a server. That is where it belongs: the signing secret is a
@@ -44,18 +47,29 @@ The client exchanges all of that for a bearer token on the first call, and
 mints a fresh one before the short-lived token it holds expires — or as soon
 as the server refuses the one it has. You never handle a token.
 
-**Ask for the scopes you need**, or the client refuses to build one at all: a
-token minted without scopes carries none, and is refused by every endpoint
-you spend it on. There is no default set, so an empty ask is a mistake worth
-hearing about at construction rather than as a puzzling 403 in production.
+**Name your tenant. It is required**, and the client refuses to build without
+one. The mint used to work it out for you when your credential held exactly
+one grant — and that inference is gone. It worked right up to the day a
+reseller granted your credential a *second* tenant, and then an integration
+that had run for months began failing, in code nobody had touched, because of
+a change made on somebody else's screen. A tenant you wrote down cannot rot
+that way. Acting for another tenant means another client.
 
-What you get back is your ask narrowed to what your grant allows, and a
-**published** scope outside it is dropped silently rather than refused. So ask
-for exactly the scopes you were granted: a dropped one costs you nothing here
-and surfaces much later, as a 403 on a call that looks unrelated.
+**Ask for the scopes you need**, or the client refuses to build one at all.
+What you get is your ask narrowed to what your grant allows, so an empty ask
+narrows to nothing — and a token that authorises nothing is refused rather
+than issued. There is no default set, so an empty ask is a mistake worth
+hearing about at construction rather than one round trip later.
 
-A scope **name** nobody publishes is the exception, and it is refused outright
-rather than dropped — a typo is a mistake, not an answer about permissions.
+A **published** scope outside your grant is dropped silently rather than
+refused, as long as something survives. So ask for exactly the scopes you were
+granted: a dropped one costs you nothing here and surfaces much later, as a
+403 on a call that looks unrelated.
+
+Two cases are loud instead. A scope **name** nobody publishes is refused
+outright — a typo is a mistake, not an answer about permissions. And if every
+scope you asked for is dropped, so that nothing at all is left, the mint
+refuses rather than handing you a token no endpoint accepts.
 
 ## Send a fax
 
@@ -218,17 +232,21 @@ Connection failures, timeouts and TLS errors are the platform's own
 exceptions and are deliberately not wrapped.
 
 A refusal from the **token exchange** is the same `ApiError`, and `code`
-carries OAuth's vocabulary rather than the API's: `invalid_client` for a
-wrong secret, `unauthorized_client` for a credential nobody granted this
-tenant, `invalid_request` for an ask the server cannot resolve — most often
-a tenant you did not name — and `invalid_scope` for a scope name that does
-not exist.
+carries OAuth's vocabulary rather than the API's: `invalid_client` for a wrong
+secret, `unauthorized_client` for a credential nobody granted this tenant,
+`invalid_request` for a malformed ask, and `invalid_scope` for a scope name
+that does not exist or for scopes that narrowed to nothing.
+
+**Branch on `code`, never on the status.** Every one of those but
+`invalid_client` is a **400**, which is what RFC 6749 prescribes for a token
+endpoint. `unauthorized_client` was a 403 until 2026-08-21; if you branched on
+that status, move to `code`.
 
 ## What is in the box
 
 | | |
 |---|---|
-| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant?, customer?, timeoutMs? })` | The client. `scopes` may not be empty. |
+| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant, customer?, timeoutMs? })` | The client. `tenant` is required; `scopes` may not be empty. |
 | `client.faxes.send({ faxAccount, to, file \| urls, … })` | Send one fax. Resolves to the accepted `Fax`. |
 | `client.faxes.get(faxId, { include? })` | One fax, complete. |
 | `client.faxes.list({ …filters, after?, before?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |

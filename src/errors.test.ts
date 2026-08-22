@@ -53,8 +53,14 @@ describe("the RFC 6749 flat error shape", () => {
     // The four the mint can answer with. A fold that special-cased
     // `invalid_client` would pass the test above and fail every caller who
     // branched on one of the other three.
+    //
+    // Three of the four share a status: RFC 6749 section 5.2 gives the token
+    // endpoint 400 for every refusal but a bad credential, so `code` is the
+    // only member that separates them. `unauthorized_client` was a 403 until
+    // 2026-08-21 and is a 400 now, which changed nothing here — the fold
+    // reports whatever status arrived.
     const vocabulary = [
-      { code: "unauthorized_client", status: 403 },
+      { code: "unauthorized_client", status: 400 },
       { code: "invalid_request", status: 400 },
       { code: "invalid_scope", status: 400 },
       { code: "invalid_client", status: 401 },
@@ -74,18 +80,18 @@ describe("the RFC 6749 flat error shape", () => {
     // document, so an unmodelled member survives the fold.
     const error = await fold(
       {
-        error: "invalid_request",
-        error_description: "Name the tenant you are acting for.",
-        hint: "Check the `tenant` parameter",
+        error: "invalid_scope",
+        error_description: "The requested scope is invalid, unknown, or malformed",
+        hint: "Check the `fax:reed` scope",
       },
       400,
     );
 
-    expect(error.code).toBe("invalid_request");
+    expect(error.code).toBe("invalid_scope");
     expect(error.errors[0]?.raw).toEqual({
-      error: "invalid_request",
-      error_description: "Name the tenant you are acting for.",
-      hint: "Check the `tenant` parameter",
+      error: "invalid_scope",
+      error_description: "The requested scope is invalid, unknown, or malformed",
+      hint: "Check the `fax:reed` scope",
     });
   });
 

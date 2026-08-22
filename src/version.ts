@@ -11,4 +11,4 @@
  * not a convention, is what stops them drifting the first time a release is
  * cut in a hurry.
  */
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";

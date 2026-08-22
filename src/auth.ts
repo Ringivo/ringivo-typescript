@@ -12,16 +12,22 @@
  * is always `client_credentials`, and the scopes go out as `scope`, one
  * space-delimited string. The array member an earlier release sent is not
  * read at this endpoint, so a scope list posted under the old name asks for
- * nothing and mints a token that every resource refuses.
+ * nothing at all — and asking for nothing is refused with a 400
+ * `invalid_scope`, not answered with a token no resource would accept.
  *
  * -- WHY THE CONTEXT IS NAMED AT THE MINT AND NOWHERE ELSE ------------------
  * The token this returns CARRIES its tenant and, when one is named, a
  * customer inside it. Which rows a request reaches is decided by the token,
  * never by a header or a path sent later — so acting for another tenant
- * means another client, and one token is one context for its whole life. A
- * member the caller did not configure is left out of the body altogether:
- * `tenant` absent asks the server to decide from the single grant it holds,
- * which is not the same request as `tenant` sent empty.
+ * means another client, and one token is one context for its whole life.
+ *
+ * `tenant` is REQUIRED and goes out on every mint. The endpoint once read an
+ * absent one as "the single grant this client holds"; that inference is
+ * DELETED, and a mint that names no tenant is refused with a 400
+ * `invalid_request`. `customer` is the one selector a caller may still leave
+ * out, and its absence is a real absence: a member left out asks for the
+ * tenant-wide token the grant allows, while the same member sent empty or
+ * null is a value the server has to interpret.
  *
  * -- THE MINT REFUSES IN A DIFFERENT VOCABULARY FROM THE RESOURCES ----------
  * This endpoint answers a failure as RFC 6749's flat
@@ -86,7 +92,7 @@ export interface ClientCredentialsAuthOptions {
   baseUrl: string;
   clientId: string;
   clientSecret: string;
-  tenant?: string;
+  tenant: string;
   customer?: string;
   scopes?: readonly string[];
   timeoutMs: number;
@@ -97,7 +103,7 @@ export class ClientCredentialsAuth {
   private readonly tokenUrl: string;
   private readonly clientId: string;
   private readonly clientSecret: string;
-  private readonly tenant: string | undefined;
+  private readonly tenant: string;
   private readonly customer: string | undefined;
   private readonly scopes: readonly string[] | undefined;
   private readonly timeoutMs: number;
@@ -153,9 +159,14 @@ export class ClientCredentialsAuth {
   }
 
   private async mint(): Promise<string> {
-    // Only what the caller actually configured. A member sent as `null` or
-    // as an empty string is a value the server has to interpret; a member
-    // left out is the absence the endpoint documents.
+    // The credentials and the tenant always go out; `customer` only when the
+    // caller configured one. A member sent as `null` or as an empty string is
+    // a value the server has to interpret; a member left out is the absence
+    // the endpoint documents.
+    //
+    // `tenant` is unconditional because the endpoint requires it. There is no
+    // longer an absence to send: the server used to resolve one from a
+    // single-grant client, and a mint carrying no tenant is now simply a 400.
     //
     // `grant_type` is the one member with no caller behind it: the endpoint
     // serves several grants and reads this to pick one, so it is a constant
@@ -164,10 +175,8 @@ export class ClientCredentialsAuth {
       grant_type: "client_credentials",
       client_id: this.clientId,
       client_secret: this.clientSecret,
+      tenant: this.tenant,
     };
-    if (this.tenant !== undefined) {
-      asked.tenant = this.tenant;
-    }
     if (this.customer !== undefined) {
       asked.customer = this.customer;
     }
