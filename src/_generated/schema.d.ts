@@ -195,7 +195,17 @@ export interface paths {
          *     ## Which scopes a customer-scoped token may hold
          *
          *     Only scopes marked customer-scopeable survive that third intersection. Today they are
-         *     `numbers:read` and `numbers:route`.
+         *     `numbers:read`, `numbers:route` and `fax:read`.
+         *
+         *     `fax:read` is what a customer's own integrator authenticates with: a customer-scoped fax
+         *     token reaches that customer's fax accounts and their faxes and nothing else, because a
+         *     sibling customer's rows do not exist to it at all (a 404, never a 403).
+         *
+         *     **`fax:write` is not customer-scopeable.** Sending a fax, changing a fax account and handing
+         *     out access to one are a single scope today, and the last two are the reseller's to perform —
+         *     so the write tier is granted on tenant-wide credentials only. Ask for it on a customer-scoped
+         *     token and it is dropped like any other unflagged scope. A customer-scoped integrator that
+         *     needs to send should ask its reseller for a tenant-wide credential for now.
          *
          *     **`numbers:assign` is not one of them and cannot be.** Assignment decides which customer a
          *     number belongs to, so it is never self-served by that customer's own credential; a token
@@ -368,6 +378,65 @@ export interface paths {
          *     Follow `url` the same way — a plain `GET`, no `Authorization` header.
          */
         get: operations["getFaxThumbnail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/faxes/{fax}/media/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The fax's id. */
+                fax: components["parameters"]["FaxId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download a fax's document (the URL the media link names)
+         * @description **You do not build this URL — you follow it.** `GET /v1/faxes/{fax}/media` answers a `url`,
+         *     and this is where it points. Treat it as opaque: the signature covers the whole address, so
+         *     editing the path, the host or any query parameter invalidates it.
+         *
+         *     Send **no `Authorization` header**. The signature is the authorization here, which is why
+         *     this operation publishes no security scheme — the entitlement was checked when the link was
+         *     minted, by the request that held your token. The link stops working at the `expires_at` the
+         *     mint reported.
+         *
+         *     The bytes are streamed with the media type pinned to the document kind, and
+         *     `Content-Disposition: inline`. Range requests are not supported: a `Range` header is ignored
+         *     and the whole document is returned with a 200.
+         */
+        get: operations["downloadFaxMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/faxes/{fax}/thumbnail/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The fax's id. */
+                fax: components["parameters"]["FaxId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download a fax's first-page preview (the URL the thumbnail link names)
+         * @description The same contract as `GET /v1/faxes/{fax}/media/content`, one document kind over: the
+         *     first-page PNG. Follow the `url` from `GET /v1/faxes/{fax}/thumbnail`, send no
+         *     `Authorization` header, and treat the address as opaque. It carries no `format`.
+         */
+        get: operations["downloadFaxThumbnail"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2804,6 +2873,114 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+        };
+    };
+    downloadFaxMedia: {
+        parameters: {
+            query: {
+                /** @description `pdf` is what a person reads; `tiff` is what went on the wire. Defaults to `pdf`. */
+                format?: "pdf" | "tiff";
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                expires: number;
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                signature: string;
+            };
+            header?: never;
+            path: {
+                /** @description The fax's id. */
+                fax: components["parameters"]["FaxId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The document itself. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/pdf": string;
+                    "image/tiff": string;
+                };
+            };
+            /**
+             * @description The signature did not verify, or the link has expired (`Invalid signature.`). Mint a
+             *     fresh one — a link cannot be repaired or extended.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description There is no such document to serve (`code: not_found`). Every miss answers the same way
+             *     on purpose — an unknown fax, one that has not rendered yet, one whose media has been
+             *     purged, and one whose stored object has gone missing are deliberately
+             *     indistinguishable, because this route takes no credential.
+             *
+             *     **A link that minted successfully can still 404 here.** The mint reports the
+             *     `byte_size` and `sha256` recorded for the document, which is metadata; this endpoint
+             *     answers for the bytes. Retry the mint, and treat a repeat as "the document is not
+             *     available" rather than as a transport failure.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+        };
+    };
+    downloadFaxThumbnail: {
+        parameters: {
+            query: {
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                expires: number;
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                signature: string;
+            };
+            header?: never;
+            path: {
+                /** @description The fax's id. */
+                fax: components["parameters"]["FaxId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The preview image. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                };
+            };
+            /** @description The signature did not verify, or the link has expired. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description There is no preview to serve (`code: not_found`) — see the media route for why every miss looks alike. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
         };
     };
     cancelFax: {
