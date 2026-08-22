@@ -11,14 +11,14 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
-## Before you install 0.4.0
+## Before you install 0.4.x
 
 **0.2.x has no future.** It mints at `POST /v1/integration/token`, and that
 endpoint is **deleted** on the platform — not deprecated, not serving out a
 migration window. The day your provider ships that change, every 0.2.x call
 fails at the token exchange. There is no version left to wait on.
 
-**0.4.0 needs a provider whose platform mints at `POST /oauth/token`.** Ask
+**0.4.x needs a provider whose platform mints at `POST /oauth/token`.** Ask
 your provider whether they have made that change.
 
 This matters more than a version bump usually does, because an older platform
@@ -248,8 +248,8 @@ which deployment you are talking to. Do not read it as "my credential is not
 allowed to use this grant": that is `unauthorized_client`, which is one of the
 two causes wearing that code.
 
-**Branch on `code`, never on the status.** Every one of those but
-`invalid_client` is a **400**, which is what RFC 6749 prescribes for a token
+**Branch on `code`, never on the status.** Four of those five are a **400** —
+every one but `invalid_client` — which is what RFC 6749 prescribes for a token
 endpoint. `unauthorized_client` was a 403 until 2026-08-21; if you branched on
 that status, move to `code`.
 
