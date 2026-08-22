@@ -60,19 +60,25 @@ describe("the RFC 6749 flat error shape", () => {
   });
 
   it("carries the whole mint vocabulary onto code, not just the one it was written for", async () => {
-    // The four the mint can answer with. A fold that special-cased
+    // The five the mint can answer with. A fold that special-cased
     // `invalid_client` would pass the test above and fail every caller who
-    // branched on one of the other three.
+    // branched on one of the other four.
     //
-    // Three of the four share a status: RFC 6749 section 5.2 gives the token
+    // Four of the five share a status: RFC 6749 section 5.2 gives the token
     // endpoint 400 for every refusal but a bad credential, so `code` is the
     // only member that separates them. `unauthorized_client` was a 403 until
     // 2026-08-21 and is a 400 now, which changed nothing here — the fold
     // reports whatever status arrived.
+    //
+    // `unsupported_grant_type` was missing from this list until 0.4.1, and
+    // the omission is why the list is worth writing down: the spec and the
+    // server have published five all along, and a table that names four
+    // reads as the complete set to whoever copies it into a switch.
     const vocabulary = [
       { code: "unauthorized_client", status: 400 },
       { code: "invalid_request", status: 400 },
       { code: "invalid_scope", status: 400 },
+      { code: "unsupported_grant_type", status: 400 },
       { code: "invalid_client", status: 401 },
     ];
 

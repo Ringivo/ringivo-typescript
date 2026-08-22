@@ -14,8 +14,9 @@
  *    `{"error": ..., "error_description": ...}` as `application/json`. It is
  *    a standard OAuth endpoint and speaks the standard's own vocabulary —
  *    `invalid_client`, `unauthorized_client`, `invalid_request`,
- *    `invalid_scope`. A member beyond those two is tolerated and kept: some
- *    servers add a `hint`, and whatever arrives reaches the caller on `raw`.
+ *    `invalid_scope`, `unsupported_grant_type`. A member beyond the two the
+ *    standard requires is tolerated and kept: some servers add a `hint`, and
+ *    whatever arrives reaches the caller on `raw`.
  *  - Everything under `/v1` answers a JSON:API error document
  *    (`{"errors": [...]}`), including the four endpoints whose SUCCESS bodies
  *    are plain JSON.
@@ -185,9 +186,11 @@ function errorsFromBody(body: string, statusCode: number): readonly ApiErrorDeta
   // `error` becomes `code` and not only part of the message, because it is
   // the machine vocabulary a caller branches on: `invalid_client` is a wrong
   // credential, `unauthorized_client` is a credential nobody granted this
-  // context, `invalid_request` is an ask the server cannot resolve, and
-  // `invalid_scope` is a scope name that does not exist. `raw` keeps the
-  // whole document, so a member beyond these two still reaches the caller.
+  // context, `invalid_request` is an ask the server cannot resolve,
+  // `invalid_scope` is a scope name that does not exist, and
+  // `unsupported_grant_type` is a `grant_type` missing or not served here.
+  // `raw` keeps the whole document, so a member beyond the standard's two
+  // still reaches the caller.
   const oauthError = document.error;
   if (typeof oauthError === "string") {
     const description = document.error_description;

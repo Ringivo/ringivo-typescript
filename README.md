@@ -237,8 +237,16 @@ exceptions and are deliberately not wrapped.
 A refusal from the **token exchange** is the same `ApiError`, and `code`
 carries OAuth's vocabulary rather than the API's: `invalid_client` for a wrong
 secret, `unauthorized_client` for a credential nobody granted this tenant,
-`invalid_request` for a malformed ask, and `invalid_scope` for a scope name
-that does not exist or for scopes that narrowed to nothing.
+`invalid_request` for a malformed ask, `invalid_scope` for a scope name
+that does not exist or for scopes that narrowed to nothing, and
+`unsupported_grant_type` for a `grant_type` this mint does not serve.
+
+That last one should never reach you from this client, which sends
+`grant_type: "client_credentials"` as a constant — so if it does, the mint
+your `baseUrl` points at does not serve that grant, and the thing to check is
+which deployment you are talking to. Do not read it as "my credential is not
+allowed to use this grant": that is `unauthorized_client`, which is one of the
+two causes wearing that code.
 
 **Branch on `code`, never on the status.** Every one of those but
 `invalid_client` is a **400**, which is what RFC 6749 prescribes for a token

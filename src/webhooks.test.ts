@@ -3,9 +3,10 @@
  *
  * THE REFUSALS ARE THE TESTS. Every accept case here passes against a
  * `verifyWebhook()` that returns undefined unconditionally, so the ones that
- * carry weight are the four negatives — a tampered body, a stale timestamp,
- * the wrong secret, and a malformed header — plus the cross-implementation
- * vector, which no implementation in this repository produced.
+ * carry weight are the five negatives — a tampered body, a stale timestamp,
+ * the wrong secret, a malformed header, and no header at all — plus the
+ * cross-implementation vector, which no implementation in this repository
+ * produced.
  *
  * The vector is the point of the exercise. A port that agreed only with its
  * own tests would pass while signing something subtly different — the
