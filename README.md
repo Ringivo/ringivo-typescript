@@ -245,6 +245,29 @@ that does not exist or for scopes that narrowed to nothing.
 endpoint. `unauthorized_client` was a 403 until 2026-08-21; if you branched on
 that status, move to `code`.
 
+### Being rate-limited
+
+A **429** carries `error.retryAfter` — the seconds the server asked you to
+wait, or `undefined` if it did not say:
+
+```ts
+if (error instanceof ApiError && error.statusCode === 429) {
+  const wait = error.retryAfter ?? 30; // your own backoff when it said nothing
+  await new Promise((resume) => setTimeout(resume, wait * 1000));
+}
+```
+
+Read it rather than the body. The rate limiter sits in front of the mint and
+answers an **HTML page**, so `code` is null and `errors` is empty there — the
+status and this number are the whole machine-readable answer. Both forms the
+standard allows are handled for you, a count of seconds and an absolute date,
+and you get seconds either way.
+
+**This client does not retry for you.** It replaces an expired token and
+retries once on a 401, and that is the only retry it performs — a 429 is
+handed to you to back off from, because how long a fax send may sit is your
+decision and not a library's.
+
 ## What is in the box
 
 | | |

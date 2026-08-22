@@ -2,9 +2,10 @@
  * What this client throws, and what each error carries.
  *
  * Every failure a caller can act on is a typed error with the machine-
- * readable part of the answer attached — the HTTP status and the API's own
- * error objects — so branching on a failure never means parsing a message
- * string. The message exists for a log line and a stack trace, not for code.
+ * readable part of the answer attached — the HTTP status, the API's own error
+ * objects, and the seconds it asked you to wait — so branching on a failure
+ * never means parsing a message string. The message exists for a log line and
+ * a stack trace, not for code.
  *
  * -- TWO ANSWER SHAPES, AND WHERE THE LINE BETWEEN THEM RUNS ----------------
  * The line runs between the MINT and the RESOURCES, and nowhere else:
@@ -70,15 +71,40 @@ export class ApiError extends RingivoError {
   readonly errors: readonly ApiErrorDetail[];
   /** The response body exactly as it arrived, never a re-encoding of it. */
   readonly body: string;
+  /**
+   * How many seconds the server asked you to wait, when it asked.
+   *
+   * This is `Retry-After` (RFC 9110 section 10.2.3), read off the response
+   * and given to you as SECONDS whichever of the header's two legal forms
+   * arrived — a count, or an absolute date this converts for you. A caller
+   * sleeping on it wants one type, not a union.
+   *
+   * THE CASE IT EXISTS FOR IS THE **429**, where the body is no help: the
+   * rate limiter sits in front of the mint and answers an HTML page, so the
+   * status and this member are the whole machine-readable answer. It is not
+   * 429-only, though — a `503` during a maintenance window carries one too,
+   * and it is surfaced wherever it arrives.
+   *
+   * `undefined` means THE SERVER SAID NOTHING (or said something malformed),
+   * which is your cue to use your own backoff. It is never a number invented
+   * here, because a caller would read that as the server's instruction.
+   */
+  readonly retryAfter: number | undefined;
 
   constructor(
     message: string,
-    options: { statusCode: number; errors?: readonly ApiErrorDetail[]; body?: string },
+    options: {
+      statusCode: number;
+      errors?: readonly ApiErrorDetail[];
+      body?: string;
+      retryAfter?: number;
+    },
   ) {
     super(message);
     this.statusCode = options.statusCode;
     this.errors = options.errors ?? [];
     this.body = options.body ?? "";
+    this.retryAfter = options.retryAfter;
   }
 
   /** The first error's machine code, when the answer carried one. */
@@ -181,6 +207,47 @@ function errorsFromBody(body: string, statusCode: number): readonly ApiErrorDeta
   return [];
 }
 
+/**
+ * The seconds a `Retry-After` asks for, or undefined if it did not say one.
+ *
+ * RFC 9110 section 10.2.3 gives the header two forms — `delay-seconds` and an
+ * absolute `HTTP-date` — and the server picks, not the caller. Both are read,
+ * and both come back as seconds.
+ *
+ * THE DIGITS ARE READ FIRST AND THE DATE BRANCH IS GUARDED, which is not
+ * belt-and-braces: `Date.parse` is far looser than the grammar and turns
+ * malformed values into real dates rather than NaN. `"60"` parses as 1960,
+ * `"-5"` as 2001-05-01, `"1.5"` as 2001-01-05 — all in the past, so a naive
+ * `Number(v) || Date.parse(v)` would answer **0** for a malformed header, and
+ * `0` reads as "the server told me to retry immediately". It never did. So
+ * `delay-seconds` must be digits and nothing else, and an HTTP-date must
+ * begin with the weekday name that all three of the standard's formats do.
+ */
+function retryAfterSeconds(value: string | null): number | undefined {
+  if (value === null) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  if (/^[0-9]+$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+
+  if (!/^[A-Za-z]/.test(trimmed)) {
+    return undefined;
+  }
+
+  const when = Date.parse(trimmed);
+  if (Number.isNaN(when)) {
+    return undefined;
+  }
+
+  // Never negative. A date already past means "now", which is a wait a caller
+  // can act on; a negative number is one they would have to guard themselves.
+  return Math.max(0, Math.round((when - Date.now()) / 1000));
+}
+
 function message(statusCode: number, errors: readonly ApiErrorDetail[], body: string): string {
   const prefix = `HTTP ${statusCode}`;
 
@@ -219,5 +286,6 @@ export async function throwForResponse(response: Response): Promise<void> {
     statusCode: response.status,
     errors,
     body,
+    retryAfter: retryAfterSeconds(response.headers.get("retry-after")),
   });
 }

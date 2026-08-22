@@ -550,6 +550,12 @@ describe("refusals", () => {
     expect(error.statusCode).toBe(429);
     expect(error.code).toBeNull();
     expect(error.message).toContain("429 Too Many Requests");
+    // The fixture has sent this header since the test was written and nothing
+    // read it, so "back off" was advice the caller could not act on without
+    // unpicking a Response they are never handed. The page stays unparseable
+    // and the STATUS stays the contract — the seconds come off the header,
+    // which is a contract of its own and survives the body being HTML.
+    expect(error.retryAfter).toBe(60);
   });
 
   it("refuses a 200 that carried no access_token", async () => {
