@@ -11,14 +11,14 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
-## Before you install 0.4.0
+## Before you install 0.4.x
 
 **0.2.x has no future.** It mints at `POST /v1/integration/token`, and that
 endpoint is **deleted** on the platform — not deprecated, not serving out a
 migration window. The day your provider ships that change, every 0.2.x call
 fails at the token exchange. There is no version left to wait on.
 
-**0.4.0 needs a provider whose platform mints at `POST /oauth/token`.** Ask
+**0.4.x needs a provider whose platform mints at `POST /oauth/token`.** Ask
 your provider whether they have made that change.
 
 This matters more than a version bump usually does, because an older platform
@@ -205,7 +205,10 @@ Two rules decide whether this works:
   `event_id`, because a retry carries the same one.
 
 `verifyWebhook()` returns nothing and throws `SignatureVerificationError` on
-any failure — a stale timestamp, the wrong secret, a malformed header.
+any failure — a stale timestamp, the wrong secret, a malformed header, or no
+header at all. That last one includes whatever your framework hands over when
+the header is absent (`undefined`, `null`) or arrived twice (a `string[]`), so
+the one `catch` above is enough to answer 400 and never 500.
 During a secret rotation the header carries two signatures and either secret
 verifies, so a rotation costs you no deliveries.
 
@@ -234,13 +237,44 @@ exceptions and are deliberately not wrapped.
 A refusal from the **token exchange** is the same `ApiError`, and `code`
 carries OAuth's vocabulary rather than the API's: `invalid_client` for a wrong
 secret, `unauthorized_client` for a credential nobody granted this tenant,
-`invalid_request` for a malformed ask, and `invalid_scope` for a scope name
-that does not exist or for scopes that narrowed to nothing.
+`invalid_request` for a malformed ask, `invalid_scope` for a scope name
+that does not exist or for scopes that narrowed to nothing, and
+`unsupported_grant_type` for a `grant_type` this mint does not serve.
 
-**Branch on `code`, never on the status.** Every one of those but
-`invalid_client` is a **400**, which is what RFC 6749 prescribes for a token
+That last one should never reach you from this client, which sends
+`grant_type: "client_credentials"` as a constant — so if it does, the mint
+your `baseUrl` points at does not serve that grant, and the thing to check is
+which deployment you are talking to. Do not read it as "my credential is not
+allowed to use this grant": that is `unauthorized_client`, which is one of the
+two causes wearing that code.
+
+**Branch on `code`, never on the status.** Four of those five are a **400** —
+every one but `invalid_client` — which is what RFC 6749 prescribes for a token
 endpoint. `unauthorized_client` was a 403 until 2026-08-21; if you branched on
 that status, move to `code`.
+
+### Being rate-limited
+
+A **429** carries `error.retryAfter` — the seconds the server asked you to
+wait, or `undefined` if it did not say:
+
+```ts
+if (error instanceof ApiError && error.statusCode === 429) {
+  const wait = error.retryAfter ?? 30; // your own backoff when it said nothing
+  await new Promise((resume) => setTimeout(resume, wait * 1000));
+}
+```
+
+Read it rather than the body. The rate limiter sits in front of the mint and
+answers an **HTML page**, so `code` is null and `errors` is empty there — the
+status and this number are the whole machine-readable answer. Both forms the
+standard allows are handled for you, a count of seconds and an absolute date,
+and you get seconds either way.
+
+**This client does not retry for you.** It replaces an expired token and
+retries once on a 401, and that is the only retry it performs — a 429 is
+handed to you to back off from, because how long a fax send may sit is your
+decision and not a library's.
 
 ## What is in the box
 

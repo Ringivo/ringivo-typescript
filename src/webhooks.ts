@@ -85,7 +85,11 @@ export interface VerifyWebhookOptions {
  * @param payload - The RAW request body: the bytes as they arrived, or the
  *   string a framework decoded them into. A string is read as UTF-8.
  * @param header - The whole `Ringivo-Signature` header value,
- *   `t=<unix>,v1=<hex>[,v1=<hex>]`.
+ *   `t=<unix>,v1=<hex>[,v1=<hex>]`. Hand it over exactly as your framework
+ *   gave it to you: a value that is not a string — `undefined` or a
+ *   `string[]` from `req.headers[name]`, `null` from `Headers.get()` — is
+ *   REFUSED with the error below, never a TypeError, so the one catch
+ *   documented here is enough for a delivery with no header at all.
  * @param secret - Your endpoint's `whsec_` signing secret.
  * @param options - {@link VerifyWebhookOptions}.
  *
@@ -113,6 +117,26 @@ export function verifyWebhook(
   secret: string,
   options: VerifyWebhookOptions = {},
 ): void {
+  // A MISSING HEADER IS A REFUSAL, NOT A CRASH — and this is the half of the
+  // gate that runs. The `header: string` type stops a TypeScript caller who
+  // has a string to lose; this is what everyone else meets, and "everyone
+  // else" is not a rare case: `req.headers[name]` is `undefined` when the
+  // header did not arrive and a `string[]` when it arrived twice, and
+  // `Headers.get()` answers `null`. The example above is written on the first
+  // of those.
+  //
+  // Without this, all three reached `header.split(",")` and threw a raw
+  // TypeError. A receiver following the documented catch-and-400 pattern does
+  // not catch a TypeError, so an absent header — the commonest misconfiguration
+  // there is, and one an attacker can produce at will — answered 500 instead
+  // of 400, and the sender retried a delivery nobody had refused.
+  if (typeof header !== "string") {
+    throw new SignatureVerificationError(
+      `the ${SIGNATURE_HEADER} header is missing: expected a string, received ` +
+        `${header === null ? "null" : typeof header}`,
+    );
+  }
+
   const tolerance = options.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS;
   const body = typeof payload === "string" ? Buffer.from(payload, "utf8") : Buffer.from(payload);
   const { timestamp, candidates } = parse(header);
