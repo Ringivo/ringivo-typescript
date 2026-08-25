@@ -314,7 +314,18 @@ paths:
         ## Which scopes a customer-scoped token may hold
 
         Only scopes marked customer-scopeable survive that third intersection. Today they are
-        `numbers:read` and `numbers:route`.
+        `numbers:read`, `numbers:route`, `fax:read` and `fax:write`.
+
+        The fax pair is what a customer's own integrator authenticates with: a customer-scoped fax
+        token reads and sends within that customer's fax accounts and reaches nothing else, because a
+        sibling customer's rows do not exist to it at all (a 404, never a 403).
+
+        **`fax-accounts:write` is not customer-scopeable, and that is the line.** Sending a fax is
+        something a customer does for itself; deciding what fax accounts it has, and who may open its
+        inbox, is its reseller's act. So the account-management scope is granted on tenant-wide
+        credentials only — ask for it on a customer-scoped token and it is dropped like any other
+        unflagged scope. A customer-scoped integrator sends with `fax:write` and asks its reseller to
+        create the accounts.
 
         **`numbers:assign` is not one of them and cannot be.** Assignment decides which customer a
         number belongs to, so it is never self-served by that customer's own credential; a token
@@ -1083,6 +1094,120 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/faxes/{fax}/media/content:
+    parameters:
+      - $ref: '#/components/parameters/FaxId'
+    get:
+      tags: [Faxes]
+      operationId: downloadFaxMedia
+      summary: Download a fax's document (the URL the media link names)
+      description: |
+        **You do not build this URL — you follow it.** `GET /v1/faxes/{fax}/media` answers a `url`,
+        and this is where it points. Treat it as opaque: the signature covers the whole address, so
+        editing the path, the host or any query parameter invalidates it.
+
+        Send **no `Authorization` header**. The signature is the authorization here, which is why
+        this operation publishes no security scheme — the entitlement was checked when the link was
+        minted, by the request that held your token. The link stops working at the `expires_at` the
+        mint reported.
+
+        The bytes are streamed with the media type pinned to the document kind, and
+        `Content-Disposition: inline`. Range requests are not supported: a `Range` header is ignored
+        and the whole document is returned with a 200.
+      security: []
+      parameters:
+        - name: format
+          in: query
+          required: false
+          description: '`pdf` is what a person reads; `tiff` is what went on the wire. Defaults to `pdf`.'
+          schema:
+            type: string
+            enum: [pdf, tiff]
+            default: pdf
+        - name: expires
+          in: query
+          required: true
+          description: Part of the signature, minted for you. Do not edit it.
+          schema: { type: integer, format: int64 }
+        - name: signature
+          in: query
+          required: true
+          description: Part of the signature, minted for you. Do not edit it.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The document itself.
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+            image/tiff:
+              schema: { type: string, format: binary }
+        '403':
+          description: |
+            The signature did not verify, or the link has expired (`Invalid signature.`). Mint a
+            fresh one — a link cannot be repaired or extended.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '404':
+          description: |
+            There is no such document to serve (`code: not_found`). Every miss answers the same way
+            on purpose — an unknown fax, one that has not rendered yet, one whose media has been
+            purged, and one whose stored object has gone missing are deliberately
+            indistinguishable, because this route takes no credential.
+
+            **A link that minted successfully can still 404 here.** The mint reports the
+            `byte_size` and `sha256` recorded for the document, which is metadata; this endpoint
+            answers for the bytes. Retry the mint, and treat a repeat as "the document is not
+            available" rather than as a transport failure.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+
+  /v1/faxes/{fax}/thumbnail/content:
+    parameters:
+      - $ref: '#/components/parameters/FaxId'
+    get:
+      tags: [Faxes]
+      operationId: downloadFaxThumbnail
+      summary: Download a fax's first-page preview (the URL the thumbnail link names)
+      description: |
+        The same contract as `GET /v1/faxes/{fax}/media/content`, one document kind over: the
+        first-page PNG. Follow the `url` from `GET /v1/faxes/{fax}/thumbnail`, send no
+        `Authorization` header, and treat the address as opaque. It carries no `format`.
+      security: []
+      parameters:
+        - name: expires
+          in: query
+          required: true
+          description: Part of the signature, minted for you. Do not edit it.
+          schema: { type: integer, format: int64 }
+        - name: signature
+          in: query
+          required: true
+          description: Part of the signature, minted for you. Do not edit it.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The preview image.
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        '403':
+          description: The signature did not verify, or the link has expired.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '404':
+          description: 'There is no preview to serve (`code: not_found`) — see the media route for why every miss looks alike.'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+
   /v1/faxes/{fax}/cancel:
     parameters:
       - $ref: '#/components/parameters/FaxId'
@@ -1198,7 +1323,7 @@ paths:
 
         Numbers are not attached here: point a DID at the account through the routing API.
       security:
-        - bearerAuth: [fax:write]
+        - bearerAuth: [fax-accounts:write]
       requestBody:
         required: true
         content:
@@ -1298,7 +1423,7 @@ paths:
         was sent or received for — and naming a different one is a 422 rather than a silent drop. A
         sparse PATCH of one attribute leaves every other field alone.
       security:
-        - bearerAuth: [fax:write]
+        - bearerAuth: [fax-accounts:write]
       requestBody:
         required: true
         content:
@@ -1335,7 +1460,7 @@ paths:
       summary: Retire a fax account
       description: The account stops being listed; its record survives.
       security:
-        - bearerAuth: [fax:write]
+        - bearerAuth: [fax-accounts:write]
       responses:
         '204':
           description: Retired.
@@ -1455,7 +1580,7 @@ paths:
         permission-gated, while reading its content is grant-gated, so somebody has to be able to
         add the first member.
       security:
-        - bearerAuth: [fax:write]
+        - bearerAuth: [fax-accounts:write]
       requestBody:
         required: true
         content:
@@ -1537,7 +1662,7 @@ paths:
       operationId: deleteFaxAccountUser
       summary: Withdraw a grant
       security:
-        - bearerAuth: [fax:write]
+        - bearerAuth: [fax-accounts:write]
       responses:
         '204':
           description: Withdrawn.
@@ -1862,12 +1987,21 @@ paths:
       operationId: listWebhookDeliveries
       summary: List webhook deliveries
       description: |
-        Read-only evidence about your endpoints — what we owed each one, and what became of it.
+        Read-only evidence of what went WRONG — not a delivery history.
 
-        **`filter[status]=dead` is the query this collection exists for.** Delivery is at-least-once
-        with a dead-letter, so "we tried and gave up" is a state that is reached without your server
-        ever hearing about it; this is where you learn what you missed after an outage. An unknown
-        status value is refused with a 400 rather than ignored.
+        A delivery that reaches your endpoint leaves nothing here. Only failures are recorded: a row
+        appears when an attempt fails, moves along the retry ladder, and is removed the moment a
+        later attempt succeeds. So this collection answers one question — what do we still owe you,
+        and what did we give up on?
+
+        **`filter[status]=dead` is the query it exists for.** Delivery is at-least-once with a
+        dead-letter, so "we tried and gave up" is a state that is reached without your server ever
+        hearing about it; this is where you learn what you missed after an outage. `pending` is
+        everything still on the ladder. Any other status value — `delivered` included, which this
+        collection used to publish — is refused with a 400 rather than ignored.
+
+        For proof that a specific event arrived, use your own receipt: every POST carries
+        `Ringivo-Event-Id`, and the resource itself can be refetched.
 
         The body we POSTed is never published here — only its `payloadSha256` digest, so an
         integrator who kept what they received can prove it is what we sent.
@@ -2960,7 +3094,11 @@ components:
       description: |
         Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
         what an outage costs you.
-      enum: [pending, delivered, dead]
+
+        **There is no `delivered`.** A delivery that lands leaves no record here at all, so this
+        collection holds only what you cannot reconstruct: what we still owe you, and what we gave
+        up on. Sending `filter[status]=delivered` is refused with a 400.
+      enum: [pending, dead]
     Tags:
       type: [object, 'null']
       description: |
@@ -3669,7 +3807,14 @@ components:
           type: [string, 'null']
           description: Why we could not reach you, when that is the reason.
         nextAttemptAt: { type: [string, 'null'], format: date-time }
-        deliveredAt: { type: [string, 'null'], format: date-time }
+        deliveredAt:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            Always `null`. A delivery that lands leaves no row at all, so nothing sets this any
+            more, and the rows that carried a value were removed when the old delivery engine was.
+            The field is kept so a client generated against an older spec still parses. Do not treat
+            a non-null `deliveredAt` as a status — `status` is `pending` or `dead` and nothing else.
         deadAt: { type: [string, 'null'], format: date-time }
         createdAt: { type: [string, 'null'], format: date-time }
         updatedAt: { type: [string, 'null'], format: date-time }
@@ -3797,10 +3942,14 @@ components:
         ## Delivery is at-least-once
 
         Dedupe on `event_id`: a retried delivery of the same event carries the same id, and two
-        genuine transitions never share one. A failed delivery is retried after **10s, 1m, 5m, 30m,
-        2h and 6h** — seven POSTs in all, the last about eight and three-quarter hours after the
-        event — and then dead-lettered. Ask
+        genuine transitions never share one. A failed delivery is retried after **at least 10s, 1m,
+        5m, 30m, 2h and 6h** — seven POSTs in all, the last about eight and three-quarter hours after
+        the event — and then dead-lettered. Ask
         `GET /v1/webhook-deliveries?filter[status]=dead` for what you missed.
+
+        **Those intervals are minimum waits, not a schedule.** A retry goes out on the first sweep at
+        or after its due time, so each number is the earliest that attempt can arrive and never a
+        clock to synchronise against.
 
         `event_id` is repeated in a `Ringivo-Event-Id` header, and `type` in a `Ringivo-Event-Type`
         header, so a proxy or a queue in front of your handler can dedupe and route before anything
@@ -3809,6 +3958,13 @@ components:
 
         Answer any 2XX to accept. Redirects are never followed. We wait ten seconds; if your handler
         needs longer, answer 202 and do the work afterwards.
+
+        ## Order is not guaranteed
+
+        Events may arrive out of order, and nothing anywhere promises otherwise. A retry puts one
+        event back on a ladder while later ones keep going, so a `fax.sending` that failed once can
+        land after the `fax.delivered` that followed it. Dedupe on `event_id`, order by
+        `occurred_at`, or refetch the resource and trust what it answers.
       required: [event_id, type, occurred_at]
       properties:
         event_id:
