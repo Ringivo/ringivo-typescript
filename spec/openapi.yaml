@@ -231,18 +231,21 @@ paths:
         not sending the parameter, and the refusal above is what you get. An empty `customer` still
         means the tenant-wide token, as it always has.
 
-        ## Two acts stand behind a customer-scoped credential
+        ## One act stands behind a customer-scoped credential
 
-        A credential that acts for **one customer** of a reseller exists only after two separate
-        acts by two different parties:
+        A credential that acts for **one customer** of a reseller is created by that customer, in
+        one act, from its own console page. Creating it writes the grant this endpoint resolves.
 
-        1. the **reseller** turns API access on for that one customer and picks the scopes it may
-           ever hold — its ceiling. This is the act that writes the grant.
-        2. the **customer** then has its own credential created inside that ceiling.
+        That act does not happen through this API, and it is the whole answer to *why can my client
+        mint a token for customer A but not for customer B?* — a grant exists for A and not for B.
 
-        Neither act happens through this API, and together they are the whole answer to *why can my
-        client mint a token for customer A but not for customer B?* — a grant exists for A and not
-        for B.
+        The customer, its reseller, or Telimatic support can **revoke** a credential, and from here
+        every one of those reads the same: a **401** whose `error` is `invalid_client`, for a client
+        that worked yesterday. A revoke flags the client itself, so authentication is what fails —
+        this is the SAME answer a wrong secret gets, and deliberately so: the endpoint does not tell a
+        caller whether the id it is holding still exists. It is not the `400` `unauthorized_client`
+        that a client with no grant for the tenant or customer it named receives; that one
+        authenticates fine and is refused a CONTEXT.
 
         ## `customer` selects a context; by itself it narrows nothing
 
@@ -255,8 +258,8 @@ paths:
 
         That refusal reads the same for a tenant nobody granted you and for a customer nobody
         granted you — same status, same `error`, same sentence, byte for byte. This is deliberate: a
-        different message would let a caller discover which of a reseller's customers a client has
-        been enabled for.
+        different message would let a caller discover which of a reseller's customers a client holds
+        a grant for.
 
         ## Your scopes are an intersection, and a dropped scope is silent
 
@@ -280,10 +283,12 @@ paths:
         refusal.
 
         Your client's own ceiling — the scope set stamped on the credential when it was created —
-        narrows the request before any of that, and drops just as silently. It is stamped from the
-        same list the grant is and then frozen, so a reseller who WIDENS your grant afterwards does
-        not widen the credential: a scope that shows up on your grant and never on your token means
-        you need a new credential, not a new grant. Narrowing reaches both.
+        narrows the request before any of that, and drops just as silently. The two are written
+        together whenever the credential's owner edits it, so they normally agree; where they can
+        drift is an **installed integration**, whose grant the reseller writes and whose client
+        ceiling somebody else stamped. There, a scope that shows up on your grant and never on your
+        token means the credential itself does not carry it. Read `scope` back off the response
+        either way.
 
         **A scope NAME this platform does not publish at all is the one exception: a 400 whose
         `error` is `invalid_scope` and whose `hint` names the offender.** That is a typo, not a
