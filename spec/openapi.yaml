@@ -132,6 +132,15 @@ tags:
       per-lookup rate whether or not you have ever owned the number — so it is reachable only with a
       **personal access token**, never with a client-credentials token. A third party's credential
       cannot spend your balance.
+  - name: ZTP devices
+    description: |
+      The phone MAC addresses you have registered with a vendor's zero-touch redirect service, so a
+      drop-shipped handset finds your provisioning URL the first time it boots.
+
+      **`active` means the redirect is set, not that the phone works.** A phone boots configured in
+      two steps: the redirect service has to send it to the provisioning URL, and the phone system
+      has to hold a device record for that MAC. This collection is the first step alone. If a device
+      here is `active` and the handset still will not provision, the answer is the second step.
 
 paths:
   /oauth/token:
@@ -319,7 +328,8 @@ paths:
         ## Which scopes a customer-scoped token may hold
 
         Only scopes marked customer-scopeable survive that third intersection. Today they are
-        `numbers:read`, `numbers:route`, `fax:read` and `fax:write`.
+        `numbers:read`, `numbers:route`, `fax:read`, `fax:write`, `ztp-devices:read` and
+        `ztp-devices:write`.
 
         The fax pair is what a customer's own integrator authenticates with: a customer-scoped fax
         token reads and sends within that customer's fax accounts and reaches nothing else, because a
@@ -2267,6 +2277,321 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/ztp-devices:
+    get:
+      tags: [ZTP devices]
+      operationId: listZtpDevices
+      summary: List registered phone MAC addresses
+      description: |
+        Every MAC you have registered, newest first. `state` is where the vendor registration stands,
+        and `lastConnectedAt` is when that phone last checked in with the redirect service — refreshed
+        hourly, so `observedAt` tells you how old the reading is.
+
+        `filter[mac]` takes any of the three spellings a MAC is written in — `001565f0517a`,
+        `00:15:65:f0:51:7a`, `00-15-65-f0-51-7a` — so you can filter on the value printed on the back
+        of the phone without re-spelling it.
+      security:
+        - bearerAuth: [ztp-devices:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[mac]
+          in: query
+          required: false
+          description: One MAC address, in any of the three accepted spellings.
+          schema: { type: string }
+          example: '00:15:65:f0:51:7a'
+        - name: filter[customer]
+          in: query
+          required: false
+          description: Only the devices assigned to this customer.
+          schema: { type: string, format: uuid }
+        - name: filter[state]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/ProvisioningState'
+        - name: filter[id]
+          in: query
+          required: false
+          description: One or more device ids.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The registered devices.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ZtpDeviceCollectionDocument'
+              example:
+                data:
+                  - type: ztp-devices
+                    id: 0198c4a1-6f70-7081-b283-4d5e6f708192
+                    attributes:
+                      mac: 001565f0517a
+                      vendor: yealink
+                      label: Front desk
+                      state: active
+                      stateDetail: null
+                      stateChangedAt: '2026-08-26T09:14:02.000000Z'
+                      registeredAt: '2026-08-26T09:13:58.000000Z'
+                      lastConnectedAt: '2026-08-26T11:02:40.000000Z'
+                      lastIp: 203.0.113.24
+                      observedAt: '2026-08-26T11:30:00.000000Z'
+                      createdAt: '2026-08-26T09:13:55.000000Z'
+                      updatedAt: '2026-08-26T11:30:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [ZTP devices]
+      operationId: registerZtpDevice
+      summary: Register a phone MAC address
+      description: |
+        One MAC per call. Send it in any of the three accepted spellings — `001565f0517a`,
+        `00:15:65:f0:51:7a` or `00-15-65-f0-51-7a`, upper or lower case — and it is stored and
+        returned as 12 lowercase hexadecimal characters.
+
+        The device is created in `pending` and the vendor call is queued, so `state` is what tells you
+        whether the redirect is in place. Poll the device, or read the collection, until it reaches
+        `active` or `failed`; a `failed` device carries the reason in `stateDetail` and can be retried
+        once you have acted on it.
+
+        **A MAC belongs to exactly one company.** If it is already registered by somebody else, the
+        call is refused with a 422 and the message *This MAC is already registered — contact support.*
+        — we will not tell you who holds it, and we will not move it. Re-registering a MAC you already
+        have is an ordinary duplicate, and its refusal names the device you already own.
+
+        `customer` is optional. Omit it and the device goes into your unassigned pool; a
+        **customer-scoped** credential that omits it gets its own customer, because a device it could
+        not see afterwards would be of no use to it.
+      security:
+        - bearerAuth: [ztp-devices:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/ZtpDeviceCreateRequest'
+            example:
+              data:
+                type: ztp-devices
+                attributes:
+                  mac: '00:15:65:f0:51:7a'
+                  label: Front desk
+                relationships:
+                  customer:
+                    data:
+                      type: customers
+                      id: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
+      responses:
+        '201':
+          description: The registered device, `pending` while the vendor call is queued.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ZtpDeviceDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            The `customer` relationship names a customer that does not exist for you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '404'
+                    title: Not Found
+                    detail: The related resource does not exist.
+                    source:
+                      pointer: /data/relationships/customer
+        '422':
+          description: |
+            The MAC was not one we can accept — it is not a MAC address, it is already registered by
+            another company, or it is already in your own inventory. `source.pointer` names the
+            member.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    title: Registration refused
+                    detail: This MAC is already registered — contact support.
+                    source:
+                      pointer: /data/attributes/mac
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/ztp-devices/{ztpDevice}:
+    parameters:
+      - $ref: '#/components/parameters/ZtpDeviceId'
+    get:
+      tags: [ZTP devices]
+      operationId: getZtpDevice
+      summary: Read one registered device
+      security:
+        - bearerAuth: [ztp-devices:read]
+      responses:
+        '200':
+          description: The device.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ZtpDeviceDocumentResponse'
+              example:
+                data:
+                  type: ztp-devices
+                  id: 0198c4a1-6f70-7081-b283-4d5e6f708192
+                  attributes:
+                    mac: 001565f0517a
+                    vendor: yealink
+                    label: Front desk
+                    state: failed
+                    stateDetail: >-
+                      This MAC is registered to another company's Yealink account — contact Yealink
+                      support to have it released, then retry.
+                    stateChangedAt: '2026-08-26T09:14:02.000000Z'
+                    registeredAt: null
+                    lastConnectedAt: null
+                    lastIp: null
+                    observedAt: null
+                    createdAt: '2026-08-26T09:13:55.000000Z'
+                    updatedAt: '2026-08-26T09:14:02.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [ZTP devices]
+      operationId: updateZtpDevice
+      summary: Re-label a device, or move it between your customers
+      description: |
+        Two fields are editable and nothing else: `label`, your own caption, and the `customer` the
+        device is assigned to. Send `customer: {data: null}` to put it back in your unassigned pool.
+        Assignment is bookkeeping on our side — the vendor never learns of it, and the phone is not
+        touched.
+
+        **The MAC cannot be changed.** A different MAC is a different phone: register that one and
+        remove this registration. Sending a different `mac` is a 422; sending the same one in another
+        spelling is not a change and is accepted.
+
+        A **customer-scoped** credential cannot use this endpoint at all. Assignment decides whose a
+        phone is, so it is never self-served by the customer it would move a device to.
+      security:
+        - bearerAuth: [ztp-devices:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/ZtpDeviceUpdateRequest'
+            example:
+              data:
+                type: ztp-devices
+                id: 0198c4a1-6f70-7081-b283-4d5e6f708192
+                attributes:
+                  label: Suite 300
+      responses:
+        '200':
+          description: The updated device.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ZtpDeviceDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [ZTP devices]
+      operationId: deleteZtpDevice
+      summary: Deregister a device
+      description: |
+        The device leaves your inventory immediately, and its removal from the vendor's redirect
+        service is queued behind it. There is no precondition: a device stuck in `failed` is exactly
+        the one you most need to be able to remove.
+      security:
+        - bearerAuth: [ztp-devices:write]
+      responses:
+        '204':
+          description: Deregistered.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/ztp-devices/{ztpDevice}/retry:
+    parameters:
+      - $ref: '#/components/parameters/ZtpDeviceId'
+    post:
+      tags: [ZTP devices]
+      operationId: retryZtpDevice
+      summary: Try a refused registration again
+      description: |
+        Only a `failed` device can be retried, and only once you have acted on the reason in its
+        `stateDetail` — a MAC held by another company at the vendor is released by that vendor's
+        support desk and by nobody else, so retrying before then simply fails again.
+
+        The device goes back to `pending` and the vendor call is queued, which is why this answers
+        **202** rather than 200: the retry is accepted, not finished. Read `state` back to see where
+        it got to.
+
+        Any other state is a **409**: a device that is still settling has a run in flight, and one
+        that is `active` has nothing to re-drive.
+      security:
+        - bearerAuth: [ztp-devices:write]
+      responses:
+        '202':
+          description: Queued.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The device has not failed, so there is nothing to retry.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: Nothing to retry
+                    detail: This registration is active, not failed, so there is nothing to retry.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
 # -------------------------------------------------------------------------------------------------
 # Outbound webhooks — what WE send to YOUR server.
 # -------------------------------------------------------------------------------------------------
@@ -2643,6 +2968,12 @@ components:
       in: path
       required: true
       description: The webhook endpoint's id.
+      schema: { type: string, format: uuid }
+    ZtpDeviceId:
+      name: ztpDevice
+      in: path
+      required: true
+      description: The registered device's id.
       schema: { type: string, format: uuid }
     PageSize:
       name: page[size]
@@ -4187,3 +4518,149 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/NumberLookup'
+    # -- ztp-devices -------------------------------------------------------------------------------
+    ProvisioningState:
+      type: string
+      enum: [pending, provisioning, active, failed]
+      description: |
+        Where a queued write against somebody else's system stands. `pending` — we have recorded what
+        you asked for and have not called yet; `provisioning` — a call is in flight; `active` — the
+        far end matches; `failed` — we gave up, and the row says why.
+    ZtpVendor:
+      type: string
+      enum: [yealink]
+      description: Which vendor's zero-touch redirect service the MAC is registered with.
+    ZtpDeviceAttributes:
+      type: object
+      properties:
+        mac:
+          type: string
+          description: |
+            12 lowercase hexadecimal characters — always, on the way out. On the way in, any of
+            `001565f0517a`, `00:15:65:f0:51:7a` or `00-15-65-f0-51-7a`, upper or lower case.
+          example: 001565f0517a
+        vendor:
+          $ref: '#/components/schemas/ZtpVendor'
+        label:
+          type: [string, 'null']
+          maxLength: 64
+          description: Your own caption for the phone. It is never sent to the vendor.
+        state:
+          $ref: '#/components/schemas/ProvisioningState'
+        stateDetail:
+          type: [string, 'null']
+          description: |
+            While provisioning, the step we reached; after a failure, the reason — the vendor's own
+            sentence where there is one, because it is what names the fix.
+        stateChangedAt: { type: [string, 'null'], format: date-time }
+        registeredAt:
+          type: [string, 'null']
+          format: date-time
+          description: When the vendor's redirect service first accepted this MAC.
+        lastConnectedAt:
+          type: [string, 'null']
+          format: date-time
+          description: When the phone last checked in with the redirect service.
+        lastIp:
+          type: [string, 'null']
+          description: The address the phone last checked in from.
+        observedAt:
+          type: [string, 'null']
+          format: date-time
+          description: |
+            When the four fields above were last read from the vendor. They refresh hourly, so this
+            is how stale a `lastConnectedAt` may be.
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    ZtpDeviceRelationships:
+      type: object
+      properties:
+        customer:
+          $ref: '#/components/schemas/RelationshipToOne'
+    ZtpDeviceResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [ztp-devices] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/ZtpDeviceAttributes'
+        relationships:
+          $ref: '#/components/schemas/ZtpDeviceRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    ZtpDeviceDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/ZtpDeviceResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    ZtpDeviceCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ZtpDeviceResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    ZtpDeviceCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes]
+          properties:
+            type: { type: string, enum: [ztp-devices] }
+            attributes:
+              type: object
+              required: [mac]
+              properties:
+                mac: { type: string }
+                label: { type: [string, 'null'], maxLength: 64 }
+            relationships:
+              type: object
+              properties:
+                customer:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      oneOf:
+                        - $ref: '#/components/schemas/ResourceIdentifier'
+                        - type: 'null'
+    ZtpDeviceUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string, enum: [ztp-devices] }
+            id: { type: string, format: uuid }
+            attributes:
+              type: object
+              properties:
+                label: { type: [string, 'null'], maxLength: 64 }
+            relationships:
+              type: object
+              properties:
+                customer:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      oneOf:
+                        - $ref: '#/components/schemas/ResourceIdentifier'
+                        - type: 'null'

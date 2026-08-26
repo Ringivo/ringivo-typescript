@@ -200,7 +200,8 @@ export interface paths {
          *     ## Which scopes a customer-scoped token may hold
          *
          *     Only scopes marked customer-scopeable survive that third intersection. Today they are
-         *     `numbers:read`, `numbers:route`, `fax:read` and `fax:write`.
+         *     `numbers:read`, `numbers:route`, `fax:read`, `fax:write`, `ztp-devices:read` and
+         *     `ztp-devices:write`.
          *
          *     The fax pair is what a customer's own integrator authenticates with: a customer-scoped fax
          *     token reads and sends within that customer's fax accounts and reaches nothing else, because a
@@ -867,6 +868,124 @@ export interface paths {
          *     answered is billed in full; one where **every** component failed is not billed at all.
          */
         post: operations["lookUpNumber"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ztp-devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List registered phone MAC addresses
+         * @description Every MAC you have registered, newest first. `state` is where the vendor registration stands,
+         *     and `lastConnectedAt` is when that phone last checked in with the redirect service — refreshed
+         *     hourly, so `observedAt` tells you how old the reading is.
+         *
+         *     `filter[mac]` takes any of the three spellings a MAC is written in — `001565f0517a`,
+         *     `00:15:65:f0:51:7a`, `00-15-65-f0-51-7a` — so you can filter on the value printed on the back
+         *     of the phone without re-spelling it.
+         */
+        get: operations["listZtpDevices"];
+        put?: never;
+        /**
+         * Register a phone MAC address
+         * @description One MAC per call. Send it in any of the three accepted spellings — `001565f0517a`,
+         *     `00:15:65:f0:51:7a` or `00-15-65-f0-51-7a`, upper or lower case — and it is stored and
+         *     returned as 12 lowercase hexadecimal characters.
+         *
+         *     The device is created in `pending` and the vendor call is queued, so `state` is what tells you
+         *     whether the redirect is in place. Poll the device, or read the collection, until it reaches
+         *     `active` or `failed`; a `failed` device carries the reason in `stateDetail` and can be retried
+         *     once you have acted on it.
+         *
+         *     **A MAC belongs to exactly one company.** If it is already registered by somebody else, the
+         *     call is refused with a 422 and the message *This MAC is already registered — contact support.*
+         *     — we will not tell you who holds it, and we will not move it. Re-registering a MAC you already
+         *     have is an ordinary duplicate, and its refusal names the device you already own.
+         *
+         *     `customer` is optional. Omit it and the device goes into your unassigned pool; a
+         *     **customer-scoped** credential that omits it gets its own customer, because a device it could
+         *     not see afterwards would be of no use to it.
+         */
+        post: operations["registerZtpDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ztp-devices/{ztpDevice}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registered device's id. */
+                ztpDevice: components["parameters"]["ZtpDeviceId"];
+            };
+            cookie?: never;
+        };
+        /** Read one registered device */
+        get: operations["getZtpDevice"];
+        put?: never;
+        post?: never;
+        /**
+         * Deregister a device
+         * @description The device leaves your inventory immediately, and its removal from the vendor's redirect
+         *     service is queued behind it. There is no precondition: a device stuck in `failed` is exactly
+         *     the one you most need to be able to remove.
+         */
+        delete: operations["deleteZtpDevice"];
+        options?: never;
+        head?: never;
+        /**
+         * Re-label a device, or move it between your customers
+         * @description Two fields are editable and nothing else: `label`, your own caption, and the `customer` the
+         *     device is assigned to. Send `customer: {data: null}` to put it back in your unassigned pool.
+         *     Assignment is bookkeeping on our side — the vendor never learns of it, and the phone is not
+         *     touched.
+         *
+         *     **The MAC cannot be changed.** A different MAC is a different phone: register that one and
+         *     remove this registration. Sending a different `mac` is a 422; sending the same one in another
+         *     spelling is not a change and is accepted.
+         *
+         *     A **customer-scoped** credential cannot use this endpoint at all. Assignment decides whose a
+         *     phone is, so it is never self-served by the customer it would move a device to.
+         */
+        patch: operations["updateZtpDevice"];
+        trace?: never;
+    };
+    "/v1/ztp-devices/{ztpDevice}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registered device's id. */
+                ztpDevice: components["parameters"]["ZtpDeviceId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try a refused registration again
+         * @description Only a `failed` device can be retried, and only once you have acted on the reason in its
+         *     `stateDetail` — a MAC held by another company at the vendor is released by that vendor's
+         *     support desk and by nobody else, so retrying before then simply fails again.
+         *
+         *     The device goes back to `pending` and the vendor call is queued, which is why this answers
+         *     **202** rather than 200: the retry is accepted, not finished. Read `state` back to see where
+         *     it got to.
+         *
+         *     Any other state is a **409**: a device that is still settling has a run in flight, and one
+         *     that is `active` has nothing to re-drive.
+         */
+        post: operations["retryZtpDevice"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2076,6 +2195,113 @@ export interface components {
         NumberLookupResult: {
             data: components["schemas"]["NumberLookup"];
         };
+        /**
+         * @description Where a queued write against somebody else's system stands. `pending` — we have recorded what
+         *     you asked for and have not called yet; `provisioning` — a call is in flight; `active` — the
+         *     far end matches; `failed` — we gave up, and the row says why.
+         * @enum {string}
+         */
+        ProvisioningState: "pending" | "provisioning" | "active" | "failed";
+        /**
+         * @description Which vendor's zero-touch redirect service the MAC is registered with.
+         * @enum {string}
+         */
+        ZtpVendor: "yealink";
+        ZtpDeviceAttributes: {
+            /**
+             * @description 12 lowercase hexadecimal characters — always, on the way out. On the way in, any of
+             *     `001565f0517a`, `00:15:65:f0:51:7a` or `00-15-65-f0-51-7a`, upper or lower case.
+             * @example 001565f0517a
+             */
+            mac?: string;
+            vendor?: components["schemas"]["ZtpVendor"];
+            /** @description Your own caption for the phone. It is never sent to the vendor. */
+            label?: string | null;
+            state?: components["schemas"]["ProvisioningState"];
+            /**
+             * @description While provisioning, the step we reached; after a failure, the reason — the vendor's own
+             *     sentence where there is one, because it is what names the fix.
+             */
+            stateDetail?: string | null;
+            /** Format: date-time */
+            stateChangedAt?: string | null;
+            /**
+             * Format: date-time
+             * @description When the vendor's redirect service first accepted this MAC.
+             */
+            registeredAt?: string | null;
+            /**
+             * Format: date-time
+             * @description When the phone last checked in with the redirect service.
+             */
+            lastConnectedAt?: string | null;
+            /** @description The address the phone last checked in from. */
+            lastIp?: string | null;
+            /**
+             * Format: date-time
+             * @description When the four fields above were last read from the vendor. They refresh hourly, so this
+             *     is how stale a `lastConnectedAt` may be.
+             */
+            observedAt?: string | null;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        ZtpDeviceRelationships: {
+            customer?: components["schemas"]["RelationshipToOne"];
+        };
+        ZtpDeviceResource: {
+            /** @enum {string} */
+            type: "ztp-devices";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["ZtpDeviceAttributes"];
+            relationships?: components["schemas"]["ZtpDeviceRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        ZtpDeviceDocumentResponse: {
+            data: components["schemas"]["ZtpDeviceResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        ZtpDeviceCollectionDocument: {
+            data: components["schemas"]["ZtpDeviceResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        ZtpDeviceCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "ztp-devices";
+                attributes: {
+                    mac: string;
+                    label?: string | null;
+                };
+                relationships?: {
+                    customer?: {
+                        data: components["schemas"]["ResourceIdentifier"] | null;
+                    };
+                };
+            };
+        };
+        ZtpDeviceUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "ztp-devices";
+                /** Format: uuid */
+                id: string;
+                attributes?: {
+                    label?: string | null;
+                };
+                relationships?: {
+                    customer?: {
+                        data: components["schemas"]["ResourceIdentifier"] | null;
+                    };
+                };
+            };
+        };
     };
     responses: {
         /** @description No usable bearer token was presented. */
@@ -2152,6 +2378,8 @@ export interface components {
         FaxAccountId: string;
         /** @description The webhook endpoint's id. */
         WebhookEndpointId: string;
+        /** @description The registered device's id. */
+        ZtpDeviceId: string;
         /**
          * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
          *     that is not a positive whole number, is refused with a 400 whose error carries
@@ -4176,6 +4404,354 @@ export interface operations {
                      *           "source": {
                      *             "pointer": "/number"
                      *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listZtpDevices: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /**
+                 * @description One MAC address, in any of the three accepted spellings.
+                 * @example 00:15:65:f0:51:7a
+                 */
+                "filter[mac]"?: string;
+                /** @description Only the devices assigned to this customer. */
+                "filter[customer]"?: string;
+                "filter[state]"?: components["schemas"]["ProvisioningState"];
+                /** @description One or more device ids. */
+                "filter[id]"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The registered devices. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "ztp-devices",
+                     *           "id": "0198c4a1-6f70-7081-b283-4d5e6f708192",
+                     *           "attributes": {
+                     *             "mac": "001565f0517a",
+                     *             "vendor": "yealink",
+                     *             "label": "Front desk",
+                     *             "state": "active",
+                     *             "stateDetail": null,
+                     *             "stateChangedAt": "2026-08-26T09:14:02.000000Z",
+                     *             "registeredAt": "2026-08-26T09:13:58.000000Z",
+                     *             "lastConnectedAt": "2026-08-26T11:02:40.000000Z",
+                     *             "lastIp": "203.0.113.24",
+                     *             "observedAt": "2026-08-26T11:30:00.000000Z",
+                     *             "createdAt": "2026-08-26T09:13:55.000000Z",
+                     *             "updatedAt": "2026-08-26T11:30:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ZtpDeviceCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    registerZtpDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "ztp-devices",
+                 *         "attributes": {
+                 *           "mac": "00:15:65:f0:51:7a",
+                 *           "label": "Front desk"
+                 *         },
+                 *         "relationships": {
+                 *           "customer": {
+                 *             "data": {
+                 *               "type": "customers",
+                 *               "id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081"
+                 *             }
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["ZtpDeviceCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The registered device, `pending` while the vendor call is queued. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ZtpDeviceDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description The `customer` relationship names a customer that does not exist for you. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "404",
+                     *           "title": "Not Found",
+                     *           "detail": "The related resource does not exist.",
+                     *           "source": {
+                     *             "pointer": "/data/relationships/customer"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The MAC was not one we can accept — it is not a MAC address, it is already registered by
+             *     another company, or it is already in your own inventory. `source.pointer` names the
+             *     member.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Registration refused",
+                     *           "detail": "This MAC is already registered — contact support.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/mac"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getZtpDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registered device's id. */
+                ztpDevice: components["parameters"]["ZtpDeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The device. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "ztp-devices",
+                     *         "id": "0198c4a1-6f70-7081-b283-4d5e6f708192",
+                     *         "attributes": {
+                     *           "mac": "001565f0517a",
+                     *           "vendor": "yealink",
+                     *           "label": "Front desk",
+                     *           "state": "failed",
+                     *           "stateDetail": "This MAC is registered to another company's Yealink account — contact Yealink support to have it released, then retry.",
+                     *           "stateChangedAt": "2026-08-26T09:14:02.000000Z",
+                     *           "registeredAt": null,
+                     *           "lastConnectedAt": null,
+                     *           "lastIp": null,
+                     *           "observedAt": null,
+                     *           "createdAt": "2026-08-26T09:13:55.000000Z",
+                     *           "updatedAt": "2026-08-26T09:14:02.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ZtpDeviceDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteZtpDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registered device's id. */
+                ztpDevice: components["parameters"]["ZtpDeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deregistered. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateZtpDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registered device's id. */
+                ztpDevice: components["parameters"]["ZtpDeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "ztp-devices",
+                 *         "id": "0198c4a1-6f70-7081-b283-4d5e6f708192",
+                 *         "attributes": {
+                 *           "label": "Suite 300"
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["ZtpDeviceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated device. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ZtpDeviceDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    retryZtpDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The registered device's id. */
+                ztpDevice: components["parameters"]["ZtpDeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The device has not failed, so there is nothing to retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Nothing to retry",
+                     *           "detail": "This registration is active, not failed, so there is nothing to retry."
                      *         }
                      *       ]
                      *     }
