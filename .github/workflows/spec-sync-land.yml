@@ -1,0 +1,111 @@
+name: spec-sync-land
+
+# Lands the rolling `spec-sync` branch on `main` by FAST-FORWARD PUSH, once ci has passed on it.
+#
+# WHY A PUSH AND NOT A MERGE. Every commit that reaches `main` here must keep the authorship it
+# was written with — `Ringivo Bot` — on every surface a reader can reach (upstream decision record
+# ADR-0083, sections `the-sdk-repos-are-public-and-stay-unlinked` and
+# `a-sync-pr-is-merged-by-push`). A squash merge does not preserve it: GitHub stamps the PULL
+# REQUEST AUTHOR onto the new commit. That is measured, not assumed — pull request #4 in this
+# repository carried exactly ONE commit authored `Ringivo Bot`, and the commit its squash merge
+# produced was authored by the account that had opened the pull request instead.
+#
+# A fast-forward push creates NO commit. Nothing is rewritten and nothing is re-authored: the
+# exact `Ringivo Bot` commit that ci validated becomes `main`. The pusher is `github-actions[bot]`
+# using this repository's OWN `GITHUB_TOKEN`, so no outside credential is involved and the bot
+# identity appears only in the push event, never in a commit. GitHub sees the branch's commits
+# become reachable from `main` and marks the rolling pull request merged on its own.
+#
+# NEVER replace this with `gh pr merge`, auto-merge, or a merge queue. All three produce a merge
+# or squash commit, which is the thing being avoided. `allow_auto_merge` is deliberately OFF on
+# this repository for the same reason.
+#
+# HOW IT IS TRIGGERED, AND WHY THAT IS THE PULL-REQUEST RUN. `ci.yml` runs on `push` only for
+# `main`, so the rolling branch's ci comes from its `pull_request` trigger — which is fine and is
+# what this listens for, because the sync workflow always keeps exactly one pull request open for
+# the branch. For a pull-request run, `workflow_run.head_sha` is the branch tip (verified against
+# run 32898174132), NOT a merge commit, so it is the right thing to push. If `ci.yml` ever gains a
+# push trigger for this branch, both runs would fire this workflow and the second would be a
+# harmless no-op ("Everything up-to-date"); the concurrency group below keeps them in order.
+#
+# THE TWO GUARDS ARE NOT DECORATION. `head_repository` must be this repository: a
+# `pull_request` run from a FORK also reports `head_branch: spec-sync`, so without that check
+# anyone could fork, push a branch of that name, pass ci on their own code and have this workflow
+# push it to `main`. And the validated sha must still be contained in this repository's
+# `spec-sync` branch: the sync workflow force-pushes that branch on every upstream spec change, so
+# a run that finished after a newer force-push validated a commit that no longer exists on it, and
+# landing that would silently revert the newer sync. The newer commit gets its own ci run.
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [spec-sync]
+
+# The whole point of this workflow. Nothing else here writes anything.
+permissions:
+  contents: write
+
+# Two ci runs can finish close together (a force-push while an earlier run is still going). Land
+# them one at a time: concurrent pushes to `main` would make one of them a spurious non-fast-forward
+# failure. Not cancel-in-progress — a cancelled land would look identical to a refused one.
+concurrency:
+  group: spec-sync-land
+  cancel-in-progress: false
+
+jobs:
+  land:
+    name: fast-forward main to the validated commit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'spec-sync' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      CI_RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The commit ci validated, plus enough history to prove the fast-forward below.
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Confirm the validated commit is still the rolling branch's own
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin \
+            "+refs/heads/spec-sync:refs/remotes/origin/spec-sync" \
+            "+refs/heads/main:refs/remotes/origin/main"
+          echo "ci run ${CI_RUN_ID} validated ${HEAD_SHA}"
+          echo "spec-sync is at $(git rev-parse origin/spec-sync)"
+          echo "main is at      $(git rev-parse origin/main)"
+          if ! git merge-base --is-ancestor "$HEAD_SHA" origin/spec-sync; then
+            echo "::error::${HEAD_SHA} is not contained in refs/heads/spec-sync any more — the branch was force-pushed after ci ran, so this commit is superseded. Refusing to land it; the newer commit gets its own ci run."
+            exit 1
+          fi
+          echo "contained in spec-sync: yes"
+
+      - name: Confirm this is a fast-forward, then take it
+        run: |
+          set -euo pipefail
+          if git merge-base --is-ancestor "$HEAD_SHA" origin/main; then
+            echo "main already contains ${HEAD_SHA} — nothing to land."
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor origin/main "$HEAD_SHA"; then
+            echo "::error::main ($(git rev-parse --short origin/main)) is not an ancestor of ${HEAD_SHA}, so landing it would not be a fast-forward. main moved after the rolling branch was built. Refusing — the next sync resets the branch onto the new main and ci runs again."
+            exit 1
+          fi
+          # No --force, ever. If the remote moved between the check above and this push, git
+          # rejects it as a non-fast-forward and this job goes red, which is the intended outcome.
+          git push origin "${HEAD_SHA}:refs/heads/main"
+          echo "main fast-forwarded to ${HEAD_SHA}"
+
+      - name: Report what landed
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin "+refs/heads/main:refs/remotes/origin/main"
+          echo "main is now $(git rev-parse origin/main)"
+          echo "author of that commit: $(git log -1 --format='%an <%ae>' origin/main)"
