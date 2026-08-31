@@ -992,6 +992,402 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/port-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List port orders
+         * @description Every port-in you have opened, newest first — drafts included, because a draft is where an
+         *     order spends the days before your customer has found their bill.
+         *
+         *     `filter[status]` is the axis this collection is actually read by: *which of my ports are
+         *     still in flight?* The words are the `PortOrderStatus` vocabulary, and the lifecycle they
+         *     belong to is written out under **Open a draft** below.
+         *
+         *     **There is no `meta.page.total` here.** The collection keeps every order you have ever
+         *     filed, so an exact count would be a second query over that whole history on every page of a
+         *     walk. Read the collection by following `links.next` until `meta.page.nextCursor` is `null`.
+         */
+        get: operations["listPortOrders"];
+        put?: never;
+        /**
+         * Open a draft
+         * @description ## The lifecycle, in words
+         *
+         *     ```
+         *     draft  ⇄  awaiting_signature  →  awaiting_review  →  submitted  →  foc_assigned  →  completed
+         *                                                                                       →  failed
+         *     ```
+         *
+         *     A port order starts as a **`draft`**: yours to edit, yours to throw away, and shown to
+         *     nobody. **`awaiting_signature`** is the same order with the Letter of Authorization in front
+         *     of your customer — it is read-only there, because the document a stranger is reading is a
+         *     render of these fields and an edit under it would leave them signing wording nobody agreed
+         *     to. Reopening for editing returns it to `draft`, which is the one edge in this lifecycle
+         *     that goes backwards. **`awaiting_review`** is our desk's: the request is in, and from here
+         *     on it is worked rather than edited. Everything past it — `submitted` to a carrier,
+         *     `foc_assigned` once one commits to a cutover date, then `completed` or `failed` — is us
+         *     working the port.
+         *
+         *     **No operation on this API moves an order into `awaiting_signature` or back out of it.**
+         *     What this API does owe you is how an order in that state behaves here, and every operation
+         *     below says so: an edit beyond a rename answers **409**, and `submit` is still accepted.
+         *
+         *     **The numbers share the lifecycle, except that one state.** A port splits — a carrier can
+         *     commit to three lines and refuse the fourth — so each number carries its own status in
+         *     `numberStates`, and a number has no paperwork of its own, so it stays `draft` until the
+         *     order enters review.
+         *
+         *     ## What a create takes
+         *
+         *     **A draft opens with a working title and nothing else.** `label` is required and may not be
+         *     blank; `country` is a two-letter code and defaults to `US`, and it cannot be changed
+         *     afterwards.
+         *
+         *     **Every other attribute is refused with a 422 rather than dropped.** Not because they are
+         *     read-only — most of them are exactly what you edit next — but because the bill they are
+         *     transcribed from usually does not exist yet, and a field silently discarded at create is one
+         *     you would find missing at a carrier's desk weeks later. The refusal names the field:
+         *     *A draft opens with just a label — the end user name rides an edit afterwards.*
+         */
+        post: operations["createPortOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/port-orders/{portOrder}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read one port order
+         * @description One representation serves both audiences: the snapshot you transcribed, plus where the order
+         *     and each of its numbers actually stand. Narrow it with `fields[port-orders]` if you only
+         *     want the progress half.
+         *
+         *     The progress attributes — `numberStates`, `documents`, `unsignedLoa`, `requestLink`,
+         *     `tasks`, `correctionsRequired`, `billExtraction` — are derived on every read, so nothing
+         *     here is a stored copy that can go stale against the thing it describes.
+         */
+        get: operations["getPortOrder"];
+        put?: never;
+        post?: never;
+        /**
+         * Discard a draft
+         * @description A draft is thrown away outright — the order, its numbers and its paperwork.
+         *
+         *     **Only a draft.** Anything from `awaiting_review` onward is a **409**: past that gate the row
+         *     is our record of what we actually sent, so an order that reached our desk is FAILED with a
+         *     reason rather than removed. An order locked for signature is reopened first.
+         */
+        delete: operations["deletePortOrder"];
+        options?: never;
+        head?: never;
+        /**
+         * Transcribe the bill into a draft
+         * @description The editing step: everything the losing carrier will be told, plus the numbers to move.
+         *
+         *     **A sparse PATCH changes what it names and leaves the rest alone.** An attribute you omit is
+         *     never written; an attribute you send as `null` is CLEARED. That distinction is real and it
+         *     is the one thing to get right — omitting is not the same as blanking.
+         *
+         *     **`numbers` is REPLACED wholesale, never merged.** Send the whole set every time. An entry
+         *     is a bare E.164 string, or an object `{"e164": …, "numberType": …}` where `numberType` is
+         *     `landline`, `wireless` or `voip` — what the BILL says the line is, which is not always what
+         *     the network says.
+         *
+         *     ## Two fields need explaining before you send them
+         *
+         *     **`accountPin` never comes back.** The port-out PIN is a credential on somebody else's
+         *     account: it is stored encrypted and every read answers `null`, so a response cannot tell you
+         *     whether one is on file. What you can read is `accountPinAttestedNone` — your own word that
+         *     the account has no PIN at all. They are two answers to one question and a row may hold only
+         *     one: typing a PIN clears the attestation for you, and asking to attest none while a PIN is
+         *     still stored is a **422** on `accountPinAttestedNone`. The submit gate below asks for one of
+         *     the two, never for the PIN specifically.
+         *
+         *     **The service address is five parts, and `endUserAddress` is rendered from them.** Send
+         *     `serviceStreetNumber`, `serviceStreetName`, `serviceCity`, `serviceState` and `serviceZip`;
+         *     the verbatim block a losing carrier reads is written for you on every edit that touches one.
+         *     `endUserAddress` stays writable because an order transcribed before the parts existed
+         *     carries a hand-typed block and nothing else.
+         *
+         *     ## Editing invalidates the letter
+         *
+         *     Any edit that changes something other than the label clears `unsignedLoa` and
+         *     `detailsConfirmedAt`: the generated Letter of Authorization was a render of the fields you
+         *     have just moved, and the confirmation was somebody's word that those fields matched the
+         *     bill. Generate the letter again afterwards.
+         *
+         *     ## When an edit is refused
+         *
+         *     A **409** on any order past `draft`, with one carve-out: **a rename alone is always
+         *     accepted** while the order is still alive, because the label is on no document and in
+         *     nobody's transcription. The carve-out is tested on the whole payload, so a snapshot field
+         *     riding along with a new label is not a rename.
+         *
+         *     The two refusals read differently on purpose. In `awaiting_signature` the order is locked
+         *     while your customer signs and the way out is to reopen it. Past `awaiting_review` the
+         *     refusal is permanent: our desk works from what was actually filed, so a wrong order is
+         *     failed and a new one opened rather than edited underneath a carrier.
+         *
+         *     Read-only attributes behave the way they do everywhere on this surface: echo the value you
+         *     were given and it passes, send a different one and it is a **422** naming the field.
+         */
+        patch: operations["updatePortOrder"];
+        trace?: never;
+    };
+    "/v1/port-orders/{portOrder}/submit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand the order to our desk
+         * @description The one door out of the intake, and the gate that decides whether the order is complete
+         *     enough to work. It is a verb rather than `PATCH {"status": "awaiting_review"}` because
+         *     passing it starts real work against carriers — every porting carrier is asked whether your
+         *     numbers can move — which is not a thing to put behind a field assignment.
+         *
+         *     **Legal from `draft` and from `awaiting_signature`**, and from nowhere else: a 409 otherwise.
+         *     Signing does not submit an order for you; you still send this, from wherever the order
+         *     stands.
+         *
+         *     It answers **200 and not 202**. The carrier questions run before this returns, and a carrier
+         *     we could not reach is recorded rather than raised, so both the transition and the sweep are
+         *     finished by the time you read the response.
+         *
+         *     **It shuts your customer's door.** The request link is revoked in the same act: past this
+         *     gate there is nothing left for an end user to do on the order, and a capability that
+         *     outlives its purpose is one nobody is watching.
+         *
+         *     **It stamps a cutover if you never chose one** — 11:00 Eastern on the tenth United States
+         *     business day out. A `requestedFocDate` you did choose is kept exactly, and it is re-checked
+         *     here against today rather than against the day you typed it: a date that was ten business
+         *     days out when a draft was opened can be in the past by the time the paperwork arrives. A
+         *     stale one is refused and handed back to you, never quietly moved.
+         *
+         *     ## What the gate asks for
+         *
+         *     In the order a person fills them in:
+         *
+         *     1. **At least one number.**
+         *     2. **Both documents** — the current phone bill and the signed LOA.
+         *     3. **The fields every carrier needs**: `endUserName`, `loaSigner`, `loaDate`,
+         *        `currentProvider`, `accountNumber`, `billingPhone`, the five service-address parts and an
+         *        explicit `portType`. On a `partial` port, `newBillingNumber` as well — the losing account
+         *        survives one, and a surviving account bills under a number.
+         *     4. **The port-out PIN, or the word that there is none** — `accountPin`, or
+         *        `accountPinAttestedNone`. Never both, and never neither.
+         *     5. **A cutover that is still legal now**, when you chose one.
+         *
+         *     `endUserAddress` appears in the list only when the five parts are present and the rendered
+         *     block somehow is not.
+         *
+         *     **The refusal names everything missing at once**, one JSON:API error object per item, so you
+         *     read the whole remaining list off one attempt. Each round trip through this gate goes via an
+         *     end user who has to go and look something up, which is why it is never one gap at a time.
+         */
+        post: operations["submitPortOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/port-orders/{portOrder}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Attach the bill or the signed LOA
+         * @description `multipart/form-data`, streamed through us — there is no JSON:API document that carries a
+         *     20 MB PDF, and no signed-URL handshake to perform. One `kind` field and one `file` part.
+         *
+         *     **PDF only, decided on the bytes.** The first five characters of the file must be `%PDF-`;
+         *     the filename and the part's declared content type decide nothing. **20 MB** (20971520 bytes)
+         *     is the ceiling, measured on what actually landed.
+         *
+         *     **Only a draft takes an upload**, including from a locked order: while your customer is
+         *     signing, the paperwork has to keep matching the letter in front of them.
+         *
+         *     **Re-uploading replaces.** A new document is stored, the digest changes, and the superseded
+         *     one is deleted. Nothing is ever overwritten in place, so a digest you recorded earlier keeps
+         *     naming the bytes it named.
+         *
+         *     **You are answered with the digest and never a handle.** A port document is fetched
+         *     *unauthenticated* by the losing carrier's LNP desk, so its identifier is the capability that
+         *     serves it, and no surface here publishes one. `sha256` is how you answer *is the console
+         *     holding the file I sent?* — hash your own copy and compare.
+         *
+         *     **Uploading a `bill` also queues a reading of it.** `billExtraction.status` becomes
+         *     `pending`, and when it answers, the fields it could name are written only where your order's
+         *     own column is still BLANK — a value you typed is never overwritten by one a model read. A
+         *     reading that fails blocks nothing; you type the fields, as you would have anyway.
+         */
+        post: operations["uploadPortOrderDocument"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/port-orders/{portOrder}/generate-loa": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Render the Letter of Authorization
+         * @description Turns what you have transcribed into the document your customer is asked to sign, and
+         *     answers its digest. It is the letter that appears as `unsignedLoa` on the order, and it is
+         *     what the signature task waits on: `tasks.signature` moves from `not_ready` to `ready` here.
+         *
+         *     **It asks for less than the submit gate does**, and deliberately: the numbers, plus
+         *     `endUserName`, `endUserAddress`, `loaSigner`, `loaDate`, `currentProvider` and
+         *     `accountNumber` — the six fields the document prints. It does NOT ask for the signed LOA,
+         *     because requiring a signature before the letter exists is a loop with no way in. A missing
+         *     item is the same one-error-object-per-gap **422** the submit gate answers with.
+         *
+         *     **Generating again replaces the previous letter**, and so does any edit that moves a field
+         *     it prints — see the PATCH above. The letter names no carrier: none has been chosen when it
+         *     is written, and a named one in a document you can open would tell your customer who we file
+         *     through.
+         *
+         *     Legal in `draft` and in `awaiting_signature` — regenerating is exactly what a locked order
+         *     whose brand or wording moved underneath it needs. A **409** anywhere else.
+         */
+        post: operations["generatePortOrderLoa"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/port-orders/{portOrder}/request-link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint your customer's link, rotating any live one
+         * @description Your customer has two things to do on a port — hand us their bill, then sign the transfer
+         *     form — and neither of them has a console account. This mints ONE durable link to this order,
+         *     served on your own branded portal host, and hands you the URL.
+         *
+         *     **The URL is in this response and nowhere else.** Only its hash is stored, so nothing can
+         *     recover it later: not a support query, not the audit trail, not this API. Put it wherever
+         *     you were going to put it before you discard the response.
+         *
+         *     **Issuing ROTATES.** Any live link on the order is revoked in the same act, so a URL you
+         *     handed out earlier stops working the moment you call this. That is the point rather than a
+         *     side effect: a reseller mints a new link precisely because the old one went somewhere it
+         *     should not have, and a button that left the old one alive would be decorative.
+         *
+         *     **The link lives 90 days**, stamped at issue. It also dies at the submit gate, which revokes
+         *     it — your customer's tasks end there.
+         *
+         *     **The page it opens is write-only.** It accepts uploads and shows progress, and it never
+         *     serves a document back, so a forwarded link is the ability to give us paperwork and never to
+         *     read any. The one exception is the letter being signed, which is displayed because that is
+         *     the task.
+         *
+         *     Intake states only — `draft` or `awaiting_signature` — and a **409** anywhere else, along
+         *     with a 409 if your reseller account has no canonical domain to serve the page from. That
+         *     check runs BEFORE anything is minted, so a refusal never spends your live link.
+         */
+        post: operations["issuePortOrderRequestLink"];
+        /**
+         * Close your customer's door
+         * @description Revokes every live link on the order. `revoked` says whether anything actually was live —
+         *     most orders never have a link at all, so a no-op is an ordinary answer and not an error.
+         *
+         *     There is no state check here, deliberately: revoking is exactly what an order that has
+         *     stopped being a draft needs, and this only ever takes a capability away.
+         */
+        delete: operations["revokePortOrderRequestLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/port-orders/{portOrder}/request-link/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mail the link to your customer
+         * @description The convenience on top of minting a link yourself: we send your customer branded mail
+         *     carrying it, from a neutral domain that names nobody but you.
+         *
+         *     **EVERY SEND MINTS A FRESH LINK, so it rotates.** This endpoint issues before it mails —
+         *     which means any URL you were already holding is dead the moment you call it, exactly as if
+         *     you had called the mint above. Send the mail, or hold the URL; do not do both and expect the
+         *     first one to keep working.
+         *
+         *     `kind` chooses which mail: `bill` (the default) asks for the phone bill, `signature` asks
+         *     for a signature and therefore needs a generated letter — a **409** if there is none yet.
+         *     `note` is your own sentence to your customer, up to 500 characters.
+         *
+         *     **It carries its own rate limit**, separate from the surface-wide one, because it sends real
+         *     mail on your behalf.
+         */
+        post: operations["sendPortOrderRequestLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -1357,8 +1753,12 @@ export interface components {
         Error: {
             /** @description The HTTP status, as a string. */
             status: string;
-            /** @description A short human phrase — the same for every instance of a code. */
-            title: string;
+            /**
+             * @description A short human phrase — the same for every instance of a code. **Optional**: a refusal
+             *     that comes from an endpoint's own business rule often carries `detail` and `source` and
+             *     no title at all, so branch on `status` and `code`, never on this.
+             */
+            title?: string;
             /** @description What went wrong this time, in a sentence. */
             detail?: string;
             code?: components["schemas"]["ErrorCode"];
@@ -2302,6 +2702,469 @@ export interface components {
                 };
             };
         };
+        /**
+         * @description Where an order stands. `draft` is yours to edit; `awaiting_signature` is the same order
+         *     locked while your customer signs the Letter of Authorization, and an edit returns it to
+         *     `draft`; `awaiting_review` is with our desk; `submitted` means the paperwork went to a
+         *     carrier; `foc_assigned` means one committed to a cutover date; `completed` and `failed` are
+         *     the two ends.
+         *
+         *     **The order and each of its numbers share this vocabulary, except `awaiting_signature`.**
+         *     That one is the order's alone: it is a fact about the paperwork, and a number has none of
+         *     its own — so a number stays `draft` until the order enters review.
+         * @enum {string}
+         */
+        PortOrderStatus: "draft" | "awaiting_signature" | "awaiting_review" | "submitted" | "foc_assigned" | "completed" | "failed";
+        /**
+         * @description Why ONE number left the port, beside the `failed` status it shares with every other way of
+         *     ending. `withdrawn` — it was taken off the order before it moved, and nothing refused it.
+         *     `carrier_refused` — a carrier declined this number while committing to the rest.
+         *
+         *     **`null` is a third reading and not a missing value:** nobody stated a cause. It is what
+         *     every number carries when the whole ORDER failed, whose own status says what happened.
+         *
+         *     It names no carrier: `carrier_refused` says a carrier refused, never which one.
+         * @enum {string|null}
+         */
+        PortNumberFailureCause: "withdrawn" | "carrier_refused" | null;
+        /**
+         * @description The two slots an order has, and the whole vocabulary of an upload's `kind`. The generated
+         *     letter is not one of them — nobody uploads a letter we write.
+         * @enum {string}
+         */
+        PortDocumentKind: "loa" | "bill";
+        /**
+         * @description Where ONE number stands. A port splits, so this is the only honest answer to "where is my
+         *     port?" on an order a carrier has answered unevenly.
+         */
+        PortOrderNumberState: {
+            e164?: string | null;
+            status?: components["schemas"]["PortOrderStatus"];
+            cause?: components["schemas"]["PortNumberFailureCause"];
+            /**
+             * Format: date
+             * @description The carrier's firm commitment for THIS number, as a plain `YYYY-MM-DD` day. Null until
+             *     there is one, which is most of an order's life.
+             */
+            focDate?: string | null;
+            /**
+             * @description Whether a carrier is currently holding this number pending a correction. It is the
+             *     MARKER and never the carrier's own words: a losing carrier's sentence about your account
+             *     does not cross to this plane.
+             */
+            stopped?: boolean;
+            /**
+             * Format: date-time
+             * @description Since when, or null while nothing is held.
+             */
+            stoppedSince?: string | null;
+        };
+        /**
+         * @description One uploaded document, as a digest and a date — **never a handle**. These documents are
+         *     fetched unauthenticated by a losing carrier's LNP desk, so their identifiers are bearer
+         *     capabilities and no surface here publishes one. `null` is a draft's ordinary condition: an
+         *     order is opened days before the bill it is transcribed from exists.
+         */
+        PortOrderDocumentSlot: {
+            /**
+             * @description The digest of the bytes as we hold them, read back off storage rather than computed from
+             *     what was sent. Hash your own copy and compare.
+             */
+            sha256?: string;
+            /** Format: date-time */
+            uploadedAt?: string | null;
+        } | null;
+        /** @description The two slots, keyed by kind. Both keys are always present; either may be null. */
+        PortOrderDocuments: {
+            loa?: components["schemas"]["PortOrderDocumentSlot"];
+            bill?: components["schemas"]["PortOrderDocumentSlot"];
+        };
+        /**
+         * @description The letter we generated for your customer to sign, or `null` before one has ever been built
+         *     — and again after any edit that moves a field it prints.
+         */
+        PortOrderUnsignedLoa: {
+            sha256?: string;
+            /** Format: date-time */
+            generatedAt?: string | null;
+        } | null;
+        /**
+         * @description Whether your customer's door is open, and nothing that would let anyone walk through it. The
+         *     URL exists in plaintext exactly once, in the response to the call that minted it.
+         */
+        PortOrderRequestLinkState: {
+            /**
+             * @description True while a link is live. Revoked, expired and never-issued are one answer here, as
+             *     they are everywhere else on this surface.
+             */
+            active?: boolean;
+        };
+        /**
+         * @description What is left for your customer to do, in their two steps. Poll this to know whether to chase
+         *     them — it is progress and names no document, no digest and no identifier.
+         */
+        PortOrderTasks: {
+            /**
+             * @description `missing` until the bill is in its slot, `received` afterwards.
+             * @enum {string}
+             */
+            bill?: "missing" | "received";
+            /**
+             * @description `not_ready` — no letter has been generated, so there is nothing to sign. `ready` — a
+             *     letter is waiting and the signed slot is empty. `signed` — the slot is filled, by the
+             *     signing ceremony or by a wet-signed scan you uploaded yourself; either way your customer
+             *     is finished.
+             * @enum {string}
+             */
+            signature?: "not_ready" | "ready" | "signed";
+        };
+        /**
+         * @description Whether a model read the bill, and which fields it answered for — **never what it said**.
+         *     `null` until a bill has been uploaded at all.
+         *
+         *     The values are already this order's own attributes wherever the reading was applied, so a
+         *     second copy here would be one that can disagree with the fields beside it. The NAMES answer
+         *     the question you actually have: which of these did we not have to type?
+         */
+        PortOrderBillExtraction: {
+            /**
+             * @description `pending` — a bill has just been uploaded and the reading has not answered yet.
+             *     `done` — a model answered and the blank columns were filled. `failed` — nobody could
+             *     read it, which blocks nothing; you type the fields. `skipped` — the order left `draft`
+             *     before the answer arrived, so nothing was applied.
+             * @enum {string}
+             */
+            status?: "pending" | "done" | "failed" | "skipped";
+            /**
+             * @description The columns the reading carried a value for, in the snake_case the extractor names them
+             *     by. `done` with an empty list is real and ordinary: the bill was read and every column
+             *     it could have filled was already filled.
+             */
+            fields?: string[];
+            /** Format: date-time */
+            extractedAt?: string | null;
+        } | null;
+        PortOrderAttributes: {
+            /**
+             * @description Your own working title for the order, and the one field editable in any live state. It
+             *     is never sent to a carrier and never printed on the letter, which is exactly why a
+             *     rename is allowed after the rest of the order has frozen.
+             */
+            label?: string;
+            /** @description Declared once at create and immutable after. Defaults to `US`. */
+            country?: string;
+            status?: components["schemas"]["PortOrderStatus"];
+            /**
+             * @description The LEGAL name on the losing account, exactly as the bill prints it — not a contact's
+             *     personal name, and not your own label for them. A carrier matches on this.
+             */
+            endUserName?: string | null;
+            /**
+             * @description The service address as one verbatim block, which is what a losing carrier receives and
+             *     what the letter prints. **RENDERED from the five parts below** on every edit that
+             *     touches one, so send the parts. It stays writable because an order transcribed before
+             *     the parts existed carries a hand-typed block and nothing else.
+             */
+            endUserAddress?: string | null;
+            /** @description Who signs the Letter of Authorization. */
+            loaSigner?: string | null;
+            /**
+             * Format: date
+             * @description The day they sign it, as a plain `YYYY-MM-DD` — a day and not an instant, so nothing
+             *     here invents a time nobody stored.
+             */
+            loaDate?: string | null;
+            /** @description Who carries the numbers today. */
+            currentProvider?: string | null;
+            /** @description The account number with them, as their bill prints it. */
+            accountNumber?: string | null;
+            /**
+             * @description Monthly minutes of use on the losing account. Nobody is asked for one — it rides the
+             *     wire at its stored value, `0` unless somebody set it — and it is kept writable because
+             *     it is a real column a carrier is told about.
+             */
+            monthlyMou?: number;
+            /**
+             * @description **Write-only. Every read answers `null`.** The port-out PIN is a credential on somebody
+             *     else's account: it is stored encrypted, and a response cannot tell you whether one is on
+             *     file. Read `accountPinAttestedNone` instead — it is the other answer to the same
+             *     question.
+             */
+            accountPin?: null;
+            /**
+             * @description Your own word that the losing account has NO port-out PIN. It round-trips freely — it is
+             *     a fact about the account rather than a credential.
+             *
+             *     A row may hold this or a PIN and never both: typing a PIN clears this for you, and
+             *     setting this while a PIN is stored is refused. The submit gate asks for one of the two.
+             */
+            accountPinAttestedNone?: boolean;
+            /**
+             * @description The billing telephone number the losing account bills under — the BTN a carrier finds
+             *     the customer service record by. Bill data, not a credential.
+             */
+            billingPhone?: string | null;
+            /**
+             * @description Whether the whole account moves or some lines stay behind. There is no default: a draft
+             *     that has never been asked must not read like one that answered `full`.
+             * @enum {string|null}
+             */
+            portType?: "full" | "partial" | null;
+            /**
+             * @description The number the surviving account will bill under — asked only on a `partial` port, where
+             *     the losing account lives on. On a full port it closes and the question has no answer.
+             */
+            newBillingNumber?: string | null;
+            serviceStreetNumber?: string | null;
+            serviceStreetName?: string | null;
+            serviceCity?: string | null;
+            /** @description A two-letter state or province code. */
+            serviceState?: string | null;
+            serviceZip?: string | null;
+            /**
+             * Format: date-time
+             * @description The cutover you are asking a carrier for — an INSTANT, unlike `loaDate`, because both
+             *     carriers are told a time of day. Optional while the order is a draft and never null
+             *     afterwards: the submit gate stamps 11:00 Eastern on the tenth United States business day
+             *     out when you named none, and keeps yours exactly when you did.
+             */
+            requestedFocDate?: string | null;
+            contactName?: string | null;
+            contactTitle?: string | null;
+            contactEmail?: string | null;
+            contactPhone?: string | null;
+            /**
+             * @description Free text for the lines staying behind on a partial port — a note for the desk, never a
+             *     second number list.
+             */
+            numbersNotTransferring?: string | null;
+            /**
+             * @description The whole set to move, as bare E.164 strings. This is the WRITABLE set and it is
+             *     replaced wholesale on every edit; where each of them STANDS is `numberStates` below.
+             */
+            numbers?: string[];
+            /**
+             * @description **Is this port waiting on you?** True while a carrier is holding a number pending a
+             *     correction, or our desk has asked you for one. Derived on every read from those markers,
+             *     so it un-sets itself the moment a carrier withdraws its objection — which is exactly why
+             *     it is a flag beside `status` and not an eighth state.
+             */
+            correctionsRequired?: boolean;
+            /**
+             * @description What we said to fix, in our desk's own sentence, written for you. Null wherever nobody
+             *     has said anything — including every purely derived `correctionsRequired`, because the
+             *     remedy for a carrier's stop lives in that carrier's own prose and that does not cross to
+             *     this plane.
+             */
+            correctionsNote?: string | null;
+            /**
+             * @description Where each number stands, one entry per number. A port splits, so this and not the
+             *     order's own `status` is what answers "which of my lines have moved?".
+             */
+            numberStates?: components["schemas"]["PortOrderNumberState"][];
+            documents?: components["schemas"]["PortOrderDocuments"];
+            unsignedLoa?: components["schemas"]["PortOrderUnsignedLoa"];
+            requestLink?: components["schemas"]["PortOrderRequestLinkState"];
+            tasks?: components["schemas"]["PortOrderTasks"];
+            /**
+             * Format: date-time
+             * @description When a person vouched that the transcribed fields match the bill. It CLEARS on any edit
+             *     that touches them, so it is a live fact rather than a milestone.
+             */
+            detailsConfirmedAt?: string | null;
+            /**
+             * Format: date-time
+             * @description When the letter went to your customer. Not the request link's own age — a link is minted
+             *     for the bill task days earlier and survives a reopen.
+             */
+            signatureRequestedAt?: string | null;
+            billExtraction?: components["schemas"]["PortOrderBillExtraction"];
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        PortOrderResource: {
+            /** @enum {string} */
+            type: "port-orders";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["PortOrderAttributes"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        PortOrderDocumentResponse: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        PortOrderCollectionDocument: {
+            data: components["schemas"]["PortOrderResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        PortOrderCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "port-orders";
+                attributes: {
+                    label: string;
+                    country?: string;
+                };
+            };
+        };
+        /** @description One number to move: a bare E.164 string, or an object naming what the bill says the line is. */
+        PortOrderNumberInput: string | {
+            e164: string;
+            /**
+             * @description What the BILL says this line is. It is deliberately not corrected from what the
+             *     network says — the two disagree often, and a carrier works from the bill.
+             * @enum {string|null}
+             */
+            numberType?: "landline" | "wireless" | "voip" | null;
+        };
+        PortOrderUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "port-orders";
+                /** Format: uuid */
+                id: string;
+                /**
+                 * @description Send what you are changing. An omitted attribute is left alone; an explicit `null`
+                 *     clears the field. `numbers` is replaced wholesale. `country`, `status`, the
+                 *     timestamps and every derived attribute may be echoed back unchanged and are a 422
+                 *     with a different value.
+                 */
+                attributes?: {
+                    label?: string | null;
+                    endUserName?: string | null;
+                    endUserAddress?: string | null;
+                    loaSigner?: string | null;
+                    /** Format: date */
+                    loaDate?: string | null;
+                    currentProvider?: string | null;
+                    accountNumber?: string | null;
+                    monthlyMou?: number | null;
+                    /** @description Write-only — see the attribute of the same name on the resource. */
+                    accountPin?: string | null;
+                    accountPinAttestedNone?: boolean;
+                    billingPhone?: string | null;
+                    /** @enum {string|null} */
+                    portType?: "full" | "partial" | null;
+                    newBillingNumber?: string | null;
+                    serviceStreetNumber?: string | null;
+                    serviceStreetName?: string | null;
+                    serviceCity?: string | null;
+                    serviceState?: string | null;
+                    serviceZip?: string | null;
+                    /** Format: date-time */
+                    requestedFocDate?: string | null;
+                    contactName?: string | null;
+                    contactTitle?: string | null;
+                    contactEmail?: string | null;
+                    contactPhone?: string | null;
+                    numbersNotTransferring?: string | null;
+                    numbers?: components["schemas"]["PortOrderNumberInput"][] | null;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /**
+         * @description The two parts an upload is made of. PDF only, decided on the file's own first five bytes,
+         *     and at most 20 MB.
+         */
+        PortOrderDocumentUploadRequest: {
+            kind: components["schemas"]["PortDocumentKind"];
+            /**
+             * Format: binary
+             * @description The PDF itself, as one file part.
+             */
+            file: string;
+        };
+        /**
+         * @description A flat acknowledgement, not a JSON:API document. Read the whole order back at
+         *     `GET /v1/port-orders/{portOrder}`.
+         */
+        PortOrderSubmitted: {
+            data: {
+                /** Format: uuid */
+                id?: string;
+                status?: components["schemas"]["PortOrderStatus"];
+                /** @description The set the order went in with, as it now stands. */
+                numbers?: string[];
+            };
+        };
+        PortOrderDocumentStored: {
+            data: {
+                /** Format: uuid */
+                id?: string;
+                kind?: components["schemas"]["PortDocumentKind"];
+                /**
+                 * @description The digest of the bytes as stored — the handle-free way to check we hold the file
+                 *     you sent.
+                 */
+                sha256?: string | null;
+            };
+        };
+        PortOrderLoaGenerated: {
+            data: {
+                /** Format: uuid */
+                id?: string;
+                /** @description The digest of the letter now waiting to be signed. */
+                sha256?: string | null;
+            };
+        };
+        PortOrderRequestLinkIssued: {
+            data: {
+                /** Format: uuid */
+                id?: string;
+                /**
+                 * Format: uri
+                 * @description Your customer's link, on your own branded portal host. **This is the only copy** —
+                 *     only its hash is stored, so nothing can ever return it to you again.
+                 */
+                url?: string;
+            };
+        };
+        PortOrderRequestLinkRevoked: {
+            data: {
+                /** Format: uuid */
+                id?: string;
+                /**
+                 * @description Whether anything was live to revoke. `false` is an ordinary answer — most orders
+                 *     never have a link at all — and not an error.
+                 */
+                revoked?: boolean;
+            };
+        };
+        PortOrderRequestLinkSendRequest: {
+            /**
+             * Format: email
+             * @description Your customer's address.
+             */
+            to: string;
+            /**
+             * @description Which mail to send. `bill` asks for the phone bill; `signature` asks for a signature and
+             *     needs a generated letter to point at.
+             * @default bill
+             * @enum {string}
+             */
+            kind: "bill" | "signature";
+            /** @description Your own sentence to your customer, carried in the mail. */
+            note?: string | null;
+        };
+        PortOrderRequestLinkSent: {
+            data: {
+                /** Format: uuid */
+                id?: string;
+                /**
+                 * Format: email
+                 * @description The address the mail went to, echoed back.
+                 */
+                sent_to?: string;
+            };
+        };
     };
     responses: {
         /** @description No usable bearer token was presented. */
@@ -2380,6 +3243,8 @@ export interface components {
         WebhookEndpointId: string;
         /** @description The registered device's id. */
         ZtpDeviceId: string;
+        /** @description The port order's id. */
+        PortOrderId: string;
         /**
          * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
          *     that is not a positive whole number, is refused with a 400 whose error carries
@@ -4760,6 +5625,934 @@ export interface operations {
                 };
             };
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listPortOrders: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only the orders standing in this state. */
+                "filter[status]"?: components["schemas"]["PortOrderStatus"];
+                /** @description One or more order ids. */
+                "filter[id]"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The port orders. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "port-orders",
+                     *           "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *           "attributes": {
+                     *             "label": "Second Chances — 5 main lines",
+                     *             "country": "US",
+                     *             "status": "submitted",
+                     *             "endUserName": "Second Chances Thrift, LLC",
+                     *             "endUserAddress": "12 Market Street\nDover, DE 19901",
+                     *             "loaSigner": "Ada Lovelace",
+                     *             "loaDate": "2026-08-10",
+                     *             "currentProvider": "Twilio",
+                     *             "accountNumber": "7ef81fe0",
+                     *             "monthlyMou": 0,
+                     *             "accountPin": null,
+                     *             "accountPinAttestedNone": true,
+                     *             "billingPhone": "+13025046250",
+                     *             "portType": "full",
+                     *             "newBillingNumber": null,
+                     *             "serviceStreetNumber": "12",
+                     *             "serviceStreetName": "Market Street",
+                     *             "serviceCity": "Dover",
+                     *             "serviceState": "DE",
+                     *             "serviceZip": "19901",
+                     *             "requestedFocDate": "2026-09-14T15:00:00Z",
+                     *             "contactName": "Grace Hopper",
+                     *             "contactTitle": "Office manager",
+                     *             "contactEmail": "grace@second-chances.example",
+                     *             "contactPhone": "+13025046251",
+                     *             "numbersNotTransferring": null,
+                     *             "numbers": [
+                     *               "+13025046250",
+                     *               "+13025046251"
+                     *             ],
+                     *             "correctionsRequired": false,
+                     *             "correctionsNote": null,
+                     *             "numberStates": [
+                     *               {
+                     *                 "e164": "+13025046250",
+                     *                 "status": "submitted",
+                     *                 "cause": null,
+                     *                 "focDate": null,
+                     *                 "stopped": false,
+                     *                 "stoppedSince": null
+                     *               },
+                     *               {
+                     *                 "e164": "+13025046251",
+                     *                 "status": "submitted",
+                     *                 "cause": null,
+                     *                 "focDate": null,
+                     *                 "stopped": false,
+                     *                 "stoppedSince": null
+                     *               }
+                     *             ],
+                     *             "documents": {
+                     *               "bill": {
+                     *                 "sha256": "623210167553939c87ed8c5f2bfe0b3e0684e12c3a3dd2513613c4e67263b5a1",
+                     *                 "uploadedAt": "2026-08-11T09:41:02+00:00"
+                     *               },
+                     *               "loa": {
+                     *                 "sha256": "b5fd4da6901078530ad0b1f776a46799caa446aa1d7b69de54bed210035821ba",
+                     *                 "uploadedAt": "2026-08-12T16:03:55+00:00"
+                     *               }
+                     *             },
+                     *             "unsignedLoa": {
+                     *               "sha256": "2ab85836811bd0e27a120ef5cdb64c43687fff18b1f24cbcecb6e2519bf64175",
+                     *               "generatedAt": "2026-08-12T14:20:11+00:00"
+                     *             },
+                     *             "requestLink": {
+                     *               "active": false
+                     *             },
+                     *             "tasks": {
+                     *               "bill": "received",
+                     *               "signature": "signed"
+                     *             },
+                     *             "detailsConfirmedAt": "2026-08-12T14:19:40.000000Z",
+                     *             "signatureRequestedAt": "2026-08-12T14:21:03.000000Z",
+                     *             "billExtraction": {
+                     *               "status": "done",
+                     *               "fields": [
+                     *                 "end_user_name",
+                     *                 "loa_signer",
+                     *                 "current_provider",
+                     *                 "account_number",
+                     *                 "billing_phone"
+                     *               ],
+                     *               "extractedAt": "2026-08-11T09:41:19Z"
+                     *             },
+                     *             "createdAt": "2026-08-10T15:22:00.000000Z",
+                     *             "updatedAt": "2026-08-13T08:04:11.000000Z"
+                     *           },
+                     *           "meta": {
+                     *             "page": {
+                     *               "cursor": "eyJ2IjoxLCJrIjpbIjIwMjYtMDgtMTAgMTU6MjI6MDAiLCIwMTk4YzRhMS05MjAzLTc0YzUtYTZkNy04MTkyMDMxNDI1MzYiXSwiZCI6IjNmMWM5YTdlNDBiMmQ2NTgifQ"
+                     *             }
+                     *           }
+                     *         }
+                     *       ],
+                     *       "meta": {
+                     *         "page": {
+                     *           "size": 25,
+                     *           "nextCursor": null
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["PortOrderCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createPortOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "port-orders",
+                 *         "attributes": {
+                 *           "label": "Second Chances — 5 main lines",
+                 *           "country": "US"
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["PortOrderCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The draft, with every other attribute still null. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            /**
+             * @description The caller may not open port orders. A **client-credentials token always lands here**:
+             *     no machine scope reaches the intake at all (see the tag note above).
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The label is blank or over 255 characters, `country` is not a two-letter code, or the
+             *     document carried an attribute a create may not set. `source.pointer` names the member.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "A port order needs a working title — label may not be blank.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/label"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getPortOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The port order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "port-orders",
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "label": "Second Chances — 5 main lines",
+                     *           "country": "US",
+                     *           "status": "draft",
+                     *           "endUserName": "Second Chances Thrift, LLC",
+                     *           "endUserAddress": "12 Market Street\nDover, DE 19901",
+                     *           "loaSigner": "Ada Lovelace",
+                     *           "loaDate": "2026-08-10",
+                     *           "currentProvider": "Twilio",
+                     *           "accountNumber": "7ef81fe0",
+                     *           "monthlyMou": 0,
+                     *           "accountPin": null,
+                     *           "accountPinAttestedNone": true,
+                     *           "billingPhone": "+13025046250",
+                     *           "portType": "full",
+                     *           "newBillingNumber": null,
+                     *           "serviceStreetNumber": "12",
+                     *           "serviceStreetName": "Market Street",
+                     *           "serviceCity": "Dover",
+                     *           "serviceState": "DE",
+                     *           "serviceZip": "19901",
+                     *           "requestedFocDate": null,
+                     *           "contactName": "Grace Hopper",
+                     *           "contactTitle": "Office manager",
+                     *           "contactEmail": "grace@second-chances.example",
+                     *           "contactPhone": "+13025046251",
+                     *           "numbersNotTransferring": "+13025046299 stays with the alarm panel",
+                     *           "numbers": [
+                     *             "+13025046250",
+                     *             "+13025046251"
+                     *           ],
+                     *           "correctionsRequired": false,
+                     *           "correctionsNote": null,
+                     *           "numberStates": [
+                     *             {
+                     *               "e164": "+13025046250",
+                     *               "status": "draft",
+                     *               "cause": null,
+                     *               "focDate": null,
+                     *               "stopped": false,
+                     *               "stoppedSince": null
+                     *             },
+                     *             {
+                     *               "e164": "+13025046251",
+                     *               "status": "draft",
+                     *               "cause": null,
+                     *               "focDate": null,
+                     *               "stopped": false,
+                     *               "stoppedSince": null
+                     *             }
+                     *           ],
+                     *           "documents": {
+                     *             "bill": {
+                     *               "sha256": "623210167553939c87ed8c5f2bfe0b3e0684e12c3a3dd2513613c4e67263b5a1",
+                     *               "uploadedAt": "2026-08-11T09:41:02+00:00"
+                     *             },
+                     *             "loa": null
+                     *           },
+                     *           "unsignedLoa": {
+                     *             "sha256": "2ab85836811bd0e27a120ef5cdb64c43687fff18b1f24cbcecb6e2519bf64175",
+                     *             "generatedAt": "2026-08-12T14:20:11+00:00"
+                     *           },
+                     *           "requestLink": {
+                     *             "active": true
+                     *           },
+                     *           "tasks": {
+                     *             "bill": "received",
+                     *             "signature": "ready"
+                     *           },
+                     *           "detailsConfirmedAt": "2026-08-12T14:19:40.000000Z",
+                     *           "signatureRequestedAt": null,
+                     *           "billExtraction": {
+                     *             "status": "done",
+                     *             "fields": [
+                     *               "end_user_name",
+                     *               "loa_signer",
+                     *               "current_provider",
+                     *               "account_number",
+                     *               "billing_phone"
+                     *             ],
+                     *             "extractedAt": "2026-08-11T09:41:19Z"
+                     *           },
+                     *           "createdAt": "2026-08-10T15:22:00.000000Z",
+                     *           "updatedAt": "2026-08-12T14:20:11.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deletePortOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Discarded. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The order is not a draft, so it can no longer be discarded. `title` is `Not deletable`
+             *     and `detail` names the state it is in and says an order that reached review is failed
+             *     rather than removed.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updatePortOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "port-orders",
+                 *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                 *         "attributes": {
+                 *           "endUserName": "Second Chances Thrift, LLC",
+                 *           "loaSigner": "Ada Lovelace",
+                 *           "loaDate": "2026-08-10",
+                 *           "currentProvider": "Twilio",
+                 *           "accountNumber": "7ef81fe0",
+                 *           "billingPhone": "+13025046250",
+                 *           "portType": "full",
+                 *           "serviceStreetNumber": "12",
+                 *           "serviceStreetName": "Market Street",
+                 *           "serviceCity": "Dover",
+                 *           "serviceState": "DE",
+                 *           "serviceZip": "19901",
+                 *           "accountPinAttestedNone": true,
+                 *           "numbers": [
+                 *             "+13025046250",
+                 *             {
+                 *               "e164": "+13025046251",
+                 *               "numberType": "landline"
+                 *             }
+                 *           ]
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["PortOrderUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The order as it now stands. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The order is past `draft`, and this was more than a rename. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Not editable",
+                     *           "detail": "Locked while your customer signs — use 'Edit the order' to reopen it."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description A value the action refuses — an unknown `portType`, an `e164` that is not a phone
+             *     number, a date that is not `YYYY-MM-DD`, an attestation sent while a PIN is stored, or a
+             *     read-only attribute carrying a changed value. `source.pointer` names the member when the
+             *     refusal is about one field.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "detail": "port_type must be one of: full, partial.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/portType"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    submitPortOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The order is with our desk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "status": "awaiting_review",
+                     *         "numbers": [
+                     *           "+13025046250",
+                     *           "+13025046251"
+                     *         ]
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderSubmitted"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The order is not in a state this gate leads out of. `title` is `Not submittable` and
+             *     `detail` names the state it is in and the one it could not move to.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The order is incomplete. One error object per missing item; `detail` names it as the
+             *     gate sees it and `source.pointer` points at the attribute where there is one.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Draft incomplete",
+                     *           "detail": "Still needed before this draft can be submitted: the signed LOA."
+                     *         },
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Draft incomplete",
+                     *           "detail": "Still needed before this draft can be submitted: billing_phone.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/billingPhone"
+                     *           }
+                     *         },
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Draft incomplete",
+                     *           "detail": "Still needed before this draft can be submitted: account_pin.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/accountPin"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    uploadPortOrderDocument: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["PortOrderDocumentUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description Stored, with the digest of the bytes as we now hold them. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "kind": "bill",
+                     *         "sha256": "623210167553939c87ed8c5f2bfe0b3e0684e12c3a3dd2513613c4e67263b5a1"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderDocumentStored"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The order is no longer a draft, so its paperwork is frozen — an order out for signature
+             *     included. `title` is `Not editable` and `detail` names the state it is in.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The parts were not what this endpoint takes, or the file was not one we accept — not a
+             *     PDF, or past the size ceiling. The message names the rule rather than the file.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Document refused",
+                     *           "detail": "august-bill.jpg is not a PDF: it does not start with %PDF-. Port documents are PDF only — scan or export the paperwork as a PDF and upload it again."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    generatePortOrderLoa: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The letter, by its digest. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "sha256": "2ab85836811bd0e27a120ef5cdb64c43687fff18b1f24cbcecb6e2519bf64175"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderLoaGenerated"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The order is past the intake, so nothing is rendered from it any more. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The order does not yet carry the numbers and the six fields the document prints. One
+             *     error object per missing item.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Draft incomplete",
+                     *           "detail": "Still needed before this draft can be submitted: loa_signer.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/loaSigner"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    issuePortOrderRequestLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The link, in the only copy that will ever exist. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "url": "https://portal.acme-telecom.example/port-request/3f9c1d0a7b52e864a1d3f70b9c2e8d465a70f1b3c9d2e846a70b1c3d5e79f204"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderRequestLinkIssued"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The order has left the intake, so there is nothing left for an end user to do on it
+             *     (`title: Not editable`, and `detail` names the state) — or your reseller account has no
+             *     canonical domain to serve the page from (`title: No canonical host`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revokePortOrderRequestLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Whether a live link was closed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "revoked": true
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderRequestLinkRevoked"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    sendPortOrderRequestLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "to": "grace@second-chances.example",
+                 *       "kind": "signature",
+                 *       "note": "Last step — sign this and we will book the cutover."
+                 *     }
+                 */
+                "application/json": components["schemas"]["PortOrderRequestLinkSendRequest"];
+            };
+        };
+        responses: {
+            /** @description Sent. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "sent_to": "grace@second-chances.example"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderRequestLinkSent"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The order has left the intake, your reseller account has no canonical domain, or this is
+             *     a `signature` mail and no letter has been generated to sign.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Cannot send request link",
+                     *           "detail": "Generate the LOA before requesting a signature."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description `to` is missing or is not an email address, `note` is over 500 characters, or `kind` is
+             *     neither `bill` nor `signature`.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Request refused",
+                     *           "detail": "Send a `to` email address."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description Too many sends. This endpoint's own per-caller budget, on top of the surface-wide limit. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
         };
     };
     onFaxReceived: {
