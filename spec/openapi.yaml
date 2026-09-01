@@ -5657,6 +5657,58 @@ components:
         The two slots an order has, and the whole vocabulary of an upload's `kind`. The generated
         letter is not one of them — nobody uploads a letter we write.
       enum: [loa, bill]
+    PortType:
+      type: [string, 'null']
+      description: |
+        Whether the whole account moves or some lines stay behind. There is no default: a draft that
+        has never been asked must not read like one that answered `full`.
+
+        **`null` is a third reading and not a missing value:** nobody has said yet. A `partial` port
+        is the one that needs `newBillingNumber`, because the losing account lives on.
+      enum: [full, partial, null]
+    PortNumberType:
+      type: [string, 'null']
+      description: |
+        What the BILL says one line is. It is deliberately not corrected from what the network says —
+        the two disagree often, and a carrier works from the bill.
+
+        **`null` is a third reading and not a missing value:** the bill did not say.
+      enum: [landline, wireless, voip, null]
+    PortOrderTaskBillState:
+      type: string
+      description: '`missing` until the bill is in its slot, `received` afterwards.'
+      enum: [missing, received]
+    PortOrderTaskDateState:
+      type: string
+      description: |
+        `missing` until somebody has said when the numbers should move, `chosen` once they have.
+
+        `chosen` with a null `requestedFocDate` is an ordinary answer and not a half-finished one:
+        "the first available date" is an answer that names no day, and the day is stamped when the
+        order enters review, against the calendar as it stands then.
+      enum: [missing, chosen]
+    PortOrderTaskSignatureState:
+      type: string
+      description: |
+        `not_ready` — no letter has been generated, so there is nothing to sign. `ready` — a letter
+        is waiting and the signed slot is empty. `signed` — the slot is filled, by the signing
+        ceremony or by a wet-signed scan you uploaded yourself; either way your customer is finished.
+      enum: [not_ready, ready, signed]
+    PortOrderBillExtractionStatus:
+      type: string
+      description: |
+        `pending` — a bill has just been uploaded and the reading has not answered yet.
+        `done` — a model answered and the blank columns were filled. `failed` — nobody could read
+        it, which blocks nothing; you type the fields. `skipped` — the order left `draft` before the
+        answer arrived, so nothing was applied.
+      enum: [pending, done, failed, skipped]
+    PortOrderRequestLinkMailKind:
+      type: string
+      description: |
+        Which mail to send. `bill` asks for the phone bill; `signature` asks for a signature and
+        needs a generated letter to point at. Both carry the SAME link — one durable link per order
+        carries every task — so a kind is different words around one URL and never a second URL.
+      enum: [bill, signature]
     PortOrderNumberState:
       type: object
       description: |
@@ -5731,21 +5783,18 @@ components:
     PortOrderTasks:
       type: object
       description: |
-        What is left for your customer to do, in their two steps. Poll this to know whether to chase
-        them — it is progress and names no document, no digest and no identifier.
+        What is left for your customer to do, in their three steps: hand us the bill, say when the
+        numbers should move, then sign the transfer form. Poll this to know whether to chase them —
+        it is progress and names no document, no digest and no identifier.
+
+        Each task has its OWN vocabulary; they are not one list. Read them per key.
       properties:
         bill:
-          type: string
-          description: '`missing` until the bill is in its slot, `received` afterwards.'
-          enum: [missing, received]
+          $ref: '#/components/schemas/PortOrderTaskBillState'
+        date:
+          $ref: '#/components/schemas/PortOrderTaskDateState'
         signature:
-          type: string
-          description: |
-            `not_ready` — no letter has been generated, so there is nothing to sign. `ready` — a
-            letter is waiting and the signed slot is empty. `signed` — the slot is filled, by the
-            signing ceremony or by a wet-signed scan you uploaded yourself; either way your customer
-            is finished.
-          enum: [not_ready, ready, signed]
+          $ref: '#/components/schemas/PortOrderTaskSignatureState'
     PortOrderBillExtraction:
       type: [object, 'null']
       description: |
@@ -5757,13 +5806,7 @@ components:
         the question you actually have: which of these did we not have to type?
       properties:
         status:
-          type: string
-          description: |
-            `pending` — a bill has just been uploaded and the reading has not answered yet.
-            `done` — a model answered and the blank columns were filled. `failed` — nobody could
-            read it, which blocks nothing; you type the fields. `skipped` — the order left `draft`
-            before the answer arrived, so nothing was applied.
-          enum: [pending, done, failed, skipped]
+          $ref: '#/components/schemas/PortOrderBillExtractionStatus'
         fields:
           type: array
           description: |
@@ -5844,11 +5887,7 @@ components:
             The billing telephone number the losing account bills under — the BTN a carrier finds
             the customer service record by. Bill data, not a credential.
         portType:
-          type: [string, 'null']
-          description: |
-            Whether the whole account moves or some lines stay behind. There is no default: a draft
-            that has never been asked must not read like one that answered `full`.
-          enum: [full, partial, null]
+          $ref: '#/components/schemas/PortType'
         newBillingNumber:
           type: [string, 'null']
           description: |
@@ -5992,11 +6031,7 @@ components:
           properties:
             e164: { type: string }
             numberType:
-              type: [string, 'null']
-              description: |
-                What the BILL says this line is. It is deliberately not corrected from what the
-                network says — the two disagree often, and a carrier works from the bill.
-              enum: [landline, wireless, voip, null]
+              $ref: '#/components/schemas/PortNumberType'
     PortOrderUpdateRequest:
       type: object
       required: [data]
@@ -6029,8 +6064,7 @@ components:
                 accountPinAttestedNone: { type: boolean }
                 billingPhone: { type: [string, 'null'] }
                 portType:
-                  type: [string, 'null']
-                  enum: [full, partial, null]
+                  $ref: '#/components/schemas/PortType'
                 newBillingNumber: { type: [string, 'null'] }
                 serviceStreetNumber: { type: [string, 'null'] }
                 serviceStreetName: { type: [string, 'null'] }
@@ -6142,11 +6176,7 @@ components:
           format: email
           description: Your customer's address.
         kind:
-          type: string
-          description: |
-            Which mail to send. `bill` asks for the phone bill; `signature` asks for a signature and
-            needs a generated letter to point at.
-          enum: [bill, signature]
+          $ref: '#/components/schemas/PortOrderRequestLinkMailKind'
           default: bill
         note:
           type: [string, 'null']

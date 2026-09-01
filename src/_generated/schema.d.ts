@@ -2734,6 +2734,59 @@ export interface components {
          */
         PortDocumentKind: "loa" | "bill";
         /**
+         * @description Whether the whole account moves or some lines stay behind. There is no default: a draft that
+         *     has never been asked must not read like one that answered `full`.
+         *
+         *     **`null` is a third reading and not a missing value:** nobody has said yet. A `partial` port
+         *     is the one that needs `newBillingNumber`, because the losing account lives on.
+         * @enum {string|null}
+         */
+        PortType: "full" | "partial" | null;
+        /**
+         * @description What the BILL says one line is. It is deliberately not corrected from what the network says —
+         *     the two disagree often, and a carrier works from the bill.
+         *
+         *     **`null` is a third reading and not a missing value:** the bill did not say.
+         * @enum {string|null}
+         */
+        PortNumberType: "landline" | "wireless" | "voip" | null;
+        /**
+         * @description `missing` until the bill is in its slot, `received` afterwards.
+         * @enum {string}
+         */
+        PortOrderTaskBillState: "missing" | "received";
+        /**
+         * @description `missing` until somebody has said when the numbers should move, `chosen` once they have.
+         *
+         *     `chosen` with a null `requestedFocDate` is an ordinary answer and not a half-finished one:
+         *     "the first available date" is an answer that names no day, and the day is stamped when the
+         *     order enters review, against the calendar as it stands then.
+         * @enum {string}
+         */
+        PortOrderTaskDateState: "missing" | "chosen";
+        /**
+         * @description `not_ready` — no letter has been generated, so there is nothing to sign. `ready` — a letter
+         *     is waiting and the signed slot is empty. `signed` — the slot is filled, by the signing
+         *     ceremony or by a wet-signed scan you uploaded yourself; either way your customer is finished.
+         * @enum {string}
+         */
+        PortOrderTaskSignatureState: "not_ready" | "ready" | "signed";
+        /**
+         * @description `pending` — a bill has just been uploaded and the reading has not answered yet.
+         *     `done` — a model answered and the blank columns were filled. `failed` — nobody could read
+         *     it, which blocks nothing; you type the fields. `skipped` — the order left `draft` before the
+         *     answer arrived, so nothing was applied.
+         * @enum {string}
+         */
+        PortOrderBillExtractionStatus: "pending" | "done" | "failed" | "skipped";
+        /**
+         * @description Which mail to send. `bill` asks for the phone bill; `signature` asks for a signature and
+         *     needs a generated letter to point at. Both carry the SAME link — one durable link per order
+         *     carries every task — so a kind is different words around one URL and never a second URL.
+         * @enum {string}
+         */
+        PortOrderRequestLinkMailKind: "bill" | "signature";
+        /**
          * @description Where ONE number stands. A port splits, so this is the only honest answer to "where is my
          *     port?" on an order a carrier has answered unevenly.
          */
@@ -2800,23 +2853,16 @@ export interface components {
             active?: boolean;
         };
         /**
-         * @description What is left for your customer to do, in their two steps. Poll this to know whether to chase
-         *     them — it is progress and names no document, no digest and no identifier.
+         * @description What is left for your customer to do, in their three steps: hand us the bill, say when the
+         *     numbers should move, then sign the transfer form. Poll this to know whether to chase them —
+         *     it is progress and names no document, no digest and no identifier.
+         *
+         *     Each task has its OWN vocabulary; they are not one list. Read them per key.
          */
         PortOrderTasks: {
-            /**
-             * @description `missing` until the bill is in its slot, `received` afterwards.
-             * @enum {string}
-             */
-            bill?: "missing" | "received";
-            /**
-             * @description `not_ready` — no letter has been generated, so there is nothing to sign. `ready` — a
-             *     letter is waiting and the signed slot is empty. `signed` — the slot is filled, by the
-             *     signing ceremony or by a wet-signed scan you uploaded yourself; either way your customer
-             *     is finished.
-             * @enum {string}
-             */
-            signature?: "not_ready" | "ready" | "signed";
+            bill?: components["schemas"]["PortOrderTaskBillState"];
+            date?: components["schemas"]["PortOrderTaskDateState"];
+            signature?: components["schemas"]["PortOrderTaskSignatureState"];
         };
         /**
          * @description Whether a model read the bill, and which fields it answered for — **never what it said**.
@@ -2827,14 +2873,7 @@ export interface components {
          *     the question you actually have: which of these did we not have to type?
          */
         PortOrderBillExtraction: {
-            /**
-             * @description `pending` — a bill has just been uploaded and the reading has not answered yet.
-             *     `done` — a model answered and the blank columns were filled. `failed` — nobody could
-             *     read it, which blocks nothing; you type the fields. `skipped` — the order left `draft`
-             *     before the answer arrived, so nothing was applied.
-             * @enum {string}
-             */
-            status?: "pending" | "done" | "failed" | "skipped";
+            status?: components["schemas"]["PortOrderBillExtractionStatus"];
             /**
              * @description The columns the reading carried a value for, in the snake_case the extractor names them
              *     by. `done` with an empty list is real and ordinary: the bill was read and every column
@@ -2904,12 +2943,7 @@ export interface components {
              *     the customer service record by. Bill data, not a credential.
              */
             billingPhone?: string | null;
-            /**
-             * @description Whether the whole account moves or some lines stay behind. There is no default: a draft
-             *     that has never been asked must not read like one that answered `full`.
-             * @enum {string|null}
-             */
-            portType?: "full" | "partial" | null;
+            portType?: components["schemas"]["PortType"];
             /**
              * @description The number the surviving account will bill under — asked only on a `partial` port, where
              *     the losing account lives on. On a full port it closes and the question has no answer.
@@ -3016,12 +3050,7 @@ export interface components {
         /** @description One number to move: a bare E.164 string, or an object naming what the bill says the line is. */
         PortOrderNumberInput: string | {
             e164: string;
-            /**
-             * @description What the BILL says this line is. It is deliberately not corrected from what the
-             *     network says — the two disagree often, and a carrier works from the bill.
-             * @enum {string|null}
-             */
-            numberType?: "landline" | "wireless" | "voip" | null;
+            numberType?: components["schemas"]["PortNumberType"];
         };
         PortOrderUpdateRequest: {
             data: {
@@ -3049,8 +3078,7 @@ export interface components {
                     accountPin?: string | null;
                     accountPinAttestedNone?: boolean;
                     billingPhone?: string | null;
-                    /** @enum {string|null} */
-                    portType?: "full" | "partial" | null;
+                    portType?: components["schemas"]["PortType"];
                     newBillingNumber?: string | null;
                     serviceStreetNumber?: string | null;
                     serviceStreetName?: string | null;
@@ -3144,13 +3172,8 @@ export interface components {
              * @description Your customer's address.
              */
             to: string;
-            /**
-             * @description Which mail to send. `bill` asks for the phone bill; `signature` asks for a signature and
-             *     needs a generated letter to point at.
-             * @default bill
-             * @enum {string}
-             */
-            kind: "bill" | "signature";
+            /** @default bill */
+            kind: components["schemas"]["PortOrderRequestLinkMailKind"];
             /** @description Your own sentence to your customer, carried in the mail. */
             note?: string | null;
         };
