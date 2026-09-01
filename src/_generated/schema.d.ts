@@ -1311,22 +1311,23 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Mint your customer's link, rotating any live one
+         * Get your customer's link
          * @description Your customer has two things to do on a port — hand us their bill, then sign the transfer
-         *     form — and neither of them has a console account. This mints ONE durable link to this order,
-         *     served on your own branded portal host, and hands you the URL.
+         *     form — and neither of them has a console account. This gives you the ONE durable link to
+         *     this order, served on your own branded portal host.
          *
-         *     **The URL is in this response and nowhere else.** Only its hash is stored, so nothing can
-         *     recover it later: not a support query, not the audit trail, not this API. Put it wherever
-         *     you were going to put it before you discard the response.
+         *     **It is idempotent.** Call it as often as you like: you get the same URL every time, and the
+         *     link your customer is already holding goes on working. It mints one only when the order has
+         *     none — a first ask, or one whose link you revoked or let expire.
          *
-         *     **Issuing ROTATES.** Any live link on the order is revoked in the same act, so a URL you
-         *     handed out earlier stops working the moment you call this. That is the point rather than a
-         *     side effect: a reseller mints a new link precisely because the old one went somewhere it
-         *     should not have, and a button that left the old one alive would be decorative.
+         *     **This ROTATED on every call until 2026-09-01**, because the token was stored hashed and
+         *     minting was the only way to learn a URL. If you cached the first response because a second
+         *     call would have broken your customer's link, you no longer need to. Rotation is now
+         *     `POST /v1/port-orders/{portOrder}/request-link/regenerate`, which you have to ask for by
+         *     name.
          *
-         *     **The link lives 90 days**, stamped at issue. It also dies at the submit gate, which revokes
-         *     it — your customer's tasks end there.
+         *     **The link lives 90 days**, stamped when it is minted. It also dies at the submit gate,
+         *     which revokes it — your customer's tasks end there.
          *
          *     **The page it opens is write-only.** It accepts uploads and shows progress, and it never
          *     serves a document back, so a forwarded link is the ability to give us paperwork and never to
@@ -1352,6 +1353,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/port-orders/{portOrder}/request-link/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace your customer's link
+         * @description Mints a new link and **revokes the one your customer is holding**, in the same act. Call
+         *     this when the URL went somewhere it should not have — forwarded to the wrong person, pasted
+         *     into a ticket — and not to read the link back, which is what
+         *     `POST /v1/port-orders/{portOrder}/request-link` is for.
+         *
+         *     The old URL answers the same 404 as any other miss from the moment this returns. Nothing
+         *     your customer has already uploaded or signed is lost: the ORDER keeps its paperwork, and
+         *     only the door changes.
+         *
+         *     Same rules as the endpoint it replaces the link for: intake states only (`draft` or
+         *     `awaiting_signature`, a **409** anywhere else), a 409 if your reseller account has no
+         *     canonical domain, and a fresh 90-day expiry stamped now. The canonical-domain check runs
+         *     BEFORE anything is minted, so a refusal never shuts your customer's door for nothing.
+         */
+        post: operations["regeneratePortOrderRequestLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/port-orders/{portOrder}/request-link/send": {
         parameters: {
             query?: never;
@@ -1369,10 +1405,12 @@ export interface paths {
          * @description The convenience on top of minting a link yourself: we send your customer branded mail
          *     carrying it, from a neutral domain that names nobody but you.
          *
-         *     **EVERY SEND MINTS A FRESH LINK, so it rotates.** This endpoint issues before it mails —
-         *     which means any URL you were already holding is dead the moment you call it, exactly as if
-         *     you had called the mint above. Send the mail, or hold the URL; do not do both and expect the
-         *     first one to keep working.
+         *     **IT SENDS THE ORDER'S OWN LINK, and never a new one.** The URL in the mail is the same one
+         *     the endpoint above hands you, so you may mail it, copy it and mail it again — your customer
+         *     can use any of them. It mints only when the order has no live link to send.
+         *
+         *     It rotated on every call until 2026-09-01, which meant a URL you were holding died the moment
+         *     you mailed one. It no longer does.
          *
          *     `kind` chooses which mail: `bill` (the default) asks for the phone bill, `signature` asks
          *     for a signature and therefore needs a generated letter — a **409** if there is none yet.
@@ -3149,8 +3187,10 @@ export interface components {
                 id?: string;
                 /**
                  * Format: uri
-                 * @description Your customer's link, on your own branded portal host. **This is the only copy** —
-                 *     only its hash is stored, so nothing can ever return it to you again.
+                 * @description Your customer's link, on your own branded portal host. **Ask again whenever you need
+                 *     it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same URL for
+                 *     as long as the link is live, so you need not store it. It was the only copy until
+                 *     2026-09-01, when the token stopped being stored hashed-only.
                  */
                 url?: string;
             };
@@ -6407,7 +6447,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The link, in the only copy that will ever exist. */
+            /** @description Your customer's link. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -6475,6 +6515,54 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    regeneratePortOrderRequestLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The port order's id. */
+                portOrder: components["parameters"]["PortOrderId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new link. The previous one is already dead. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "url": "https://portal.acme-telecom.example/port-request/c1e4a70b93d25f86a4d1b30f7c9e2d86f5a01b7c3d9e28a640b1c7d3e5f9a2046"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PortOrderRequestLinkIssued"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The order has left the intake, so there is nothing left for an end user to do on it
+             *     (`title: Not editable`, and `detail` names the state) — or your reseller account has no
+             *     canonical domain to serve the page from (`title: No canonical host`).
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
