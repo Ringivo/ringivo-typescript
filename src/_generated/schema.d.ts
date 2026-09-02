@@ -992,6 +992,139 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/messaging-enablements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List text-messaging requests
+         * @description Every request you have made to turn text messaging on, newest first — in flight and
+         *     historical, because a request is a permanent record of an attempt.
+         *
+         *     `stage` is a 0-4 progress counter and is what to branch on; `stageWord` and `detail` are the
+         *     sentences to show a person. `stage` is a HIGH-WATER MARK, not a position: a failed request
+         *     keeps the stage it REACHED, so `status: failed` with `stage: 3` means the number's current
+         *     provider had the authorization in front of them before it was refused, and `stage: 2` means
+         *     it never got that far. That difference is what tells you whether retrying is worth a second
+         *     attempt.
+         */
+        get: operations["listMessagingEnablements"];
+        put?: never;
+        /**
+         * Turn text messaging on for a number
+         * @description Name one of your numbers and we do the rest: we generate the letter of authorization, record
+         *     the person who asked as its signer, and send the request immediately. The response is the new
+         *     request in `scheduled`; read it back, or wait for the webhook, to learn how it ended.
+         *
+         *     **This needs a personal access token, not a client-credentials token.** Turning messaging on
+         *     SIGNS an authorization, and an authorization has to be signed by a person who can be named on
+         *     it — an API credential has no name, no title and no capacity to state. A client-credentials
+         *     token is refused with a 401 at the door, whatever scopes it holds. The same is true of turning
+         *     messaging off. Reading this collection is not restricted that way.
+         *
+         *     **There is nothing else to choose.** Every enablement is `A2P` with MMS on. Sending any other
+         *     attribute is refused with a 422 rather than ignored.
+         *
+         *     **A number that is still porting to us is not done here.** Text messaging on a porting number
+         *     is chosen on the port order itself, where it fires when the voice port is released. Sending a
+         *     `portOrder` relationship here is refused.
+         *
+         *     The refusals worth handling: the number is not yet active (wait), it already has messaging,
+         *     or a request for it is already in flight — there is no cancel, so a second request for one
+         *     number is refused rather than queued.
+         */
+        post: operations["createMessagingEnablement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/messaging-enablements/{enablement}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one text-messaging request
+         * @description One request and where it has got to. `include=phoneNumber` side-loads the number if you still
+         *     hold it — a request outlives the number it was for, so this is null once a number is released.
+         *     `include=portOrder` side-loads the port order a request rides, and is null for a request made
+         *     directly against a number already in your inventory.
+         */
+        get: operations["getMessagingEnablement"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/messaging-enablements/{enablement}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try a failed text-messaging request again
+         * @description **A retry is a new request, not a restart of the old one.** The failed request keeps its
+         *     cause and its timestamps forever — that history is what support reads when a number will not
+         *     enable — so this answers **201 with a different id**, carrying the same authorization.
+         *
+         *     The response is that new request in full, so nothing has to be fetched afterwards.
+         *
+         *     **Only a failed request can be retried**, and not within 24 hours of the failure. Both
+         *     refusals are told apart by their status: a 422 means "not yet" and carries the instant you
+         *     may try again in `meta.retryAllowedAt`; a 409 means the request did not fail at all, so there
+         *     is nothing to try again.
+         *
+         *     Send no body.
+         */
+        post: operations["retryMessagingEnablement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/phone-numbers/{phoneNumber}/messaging": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Turn text messaging off for a number
+         * @description Messaging stops for this number. The number's `messaging` object reads `enabled: false`
+         *     immediately, and the removal at the provider follows on its own.
+         *
+         *     **This does not undo the request that turned it on.** That request completed, and the record
+         *     of it stays in `GET /v1/messaging-enablements` — turning messaging off is a new act, not a
+         *     reversal. Turning it back on later is a fresh request with a fresh authorization.
+         *
+         *     Like turning messaging on, this needs a personal access token; a client-credentials token is
+         *     refused with a 401.
+         */
+        delete: operations["disableNumberMessaging"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/port-orders": {
         parameters: {
             query?: never;
@@ -2251,6 +2384,7 @@ export interface components {
                 activatedAt?: string | null;
                 /** Format: date-time */
                 createdAt?: string | null;
+                messaging?: components["schemas"]["PhoneNumberMessaging"];
             };
             relationships?: {
                 customer?: components["schemas"]["RelationshipToOne"];
@@ -2259,6 +2393,36 @@ export interface components {
             };
             links?: components["schemas"]["ResourceLinks"];
             meta?: components["schemas"]["ResourceMeta"];
+        };
+        /**
+         * @description Whether this number can send and receive text messages today, and what it was given
+         *     (console ADR-0094).
+         *
+         *     **`enabled` is the whole of the question**; the other three are null whenever it is false,
+         *     so a client reads one boolean and stops. The object is always present — a number with no
+         *     messaging reports `enabled: false` rather than omitting it, so nothing has to branch on
+         *     whether the key is there.
+         *
+         *     **This is current STATE, not a request.** Turning messaging on and off is
+         *     `POST /v1/messaging-enablements` and `DELETE /v1/phone-numbers/{phoneNumber}/messaging`, and
+         *     the record of every attempt is `GET /v1/messaging-enablements`.
+         */
+        PhoneNumberMessaging: {
+            /** @description Whether this number can send and receive text messages. */
+            enabled: boolean;
+            /** @description Whether picture messaging is on too. Null when messaging is off. */
+            mmsEnabled: boolean | null;
+            /**
+             * @description What the number is registered as. Every number we enable is `A2P` — application-to-person,
+             *     the class business messaging is sent under. Null when messaging is off.
+             * @enum {string|null}
+             */
+            messageClass: "A2P" | "P2P" | null;
+            /**
+             * Format: date-time
+             * @description When messaging started working on this number. Null when messaging is off.
+             */
+            enabledAt: string | null;
         };
         PhoneNumberCollectionDocument: {
             data: components["schemas"]["PhoneNumberResource"][];
@@ -2645,6 +2809,125 @@ export interface components {
          * @enum {string}
          */
         ZtpVendor: "yealink";
+        /**
+         * @description Where the request stands.
+         *
+         *     `scheduled` it has not been sent yet · `submitted` it is with the provider · `completed` the
+         *     number can text · `failed` it ended without messaging being turned on. The two terminal
+         *     values are final: a failed request is never revived, it is retried, and a retry is a new
+         *     request.
+         * @enum {string}
+         */
+        MessagingEnablementStatus: "scheduled" | "submitted" | "completed" | "failed";
+        /**
+         * @description Why a failed request ended, in four words.
+         *
+         *     `provider_rejected` somebody refused the authorization · `withdrawn` it was taken off before
+         *     it was ever sent, which includes a number leaving a port · `submission_error` we could not
+         *     send it · `poll_gave_up` we stopped waiting for an answer. Only the first means anybody said
+         *     no; `detail` carries the sentence to show a person.
+         * @enum {string}
+         */
+        MessagingEnablementFailureCause: "provider_rejected" | "withdrawn" | "submission_error" | "poll_gave_up";
+        MessagingEnablementAttributes: {
+            /**
+             * @description The number this request is about. It is held as digits rather than as a link, so it
+             *     still says which number it was for after that number is released.
+             * @example +13215550101
+             */
+            e164?: string;
+            status?: components["schemas"]["MessagingEnablementStatus"];
+            /**
+             * @description How far the request got, as 0-4 — **this is the field to branch on**.
+             *
+             *     It is a HIGH-WATER MARK and not a current position: a failed request keeps the stage it
+             *     reached, so `3` on a failed row means the number's current provider had the authorization
+             *     in front of them and `2` means it never reached them. `0` means nothing was ever sent.
+             */
+            stage?: number;
+            /**
+             * @description The one word to print beneath a progress meter — `Scheduled`, `Submitted`, `In review`,
+             *     `Active`, `Removed` or `Failed`.
+             *
+             *     **Display copy, not a vocabulary to branch on**; use `stage` and `status` for that. It is
+             *     deliberately not an enum here, because it is wording we may improve.
+             * @example In review
+             */
+            stageWord?: string;
+            /**
+             * @description One sentence you can show a person, or null when the status already says everything —
+             *     a scheduled request and a plain submitted one have nothing to add.
+             * @example Submitted 2026-09-01. The losing provider is reviewing the authorization.
+             */
+            detail?: string | null;
+            failedCause?: components["schemas"]["MessagingEnablementFailureCause"] | null;
+            /**
+             * Format: date-time
+             * @description When the request was due to be sent. Null means "as soon as possible", which is a real
+             *     answer on a request that rides a port order rather than a missing value.
+             */
+            scheduledFor?: string | null;
+            /** Format: date-time */
+            submittedAt?: string | null;
+            /** Format: date-time */
+            completedAt?: string | null;
+            /** Format: date-time */
+            failedAt?: string | null;
+            /**
+             * Format: date-time
+             * @description When a failed request may be tried again — null unless it failed. It is the same instant
+             *     a too-early retry returns in `meta.retryAllowedAt`, so a button drawn from this field
+             *     cannot offer a retry the endpoint would refuse.
+             */
+            retryAllowedAt?: string | null;
+            /** Format: date-time */
+            createdAt?: string | null;
+        };
+        MessagingEnablementRelationships: {
+            /**
+             * @description The number, while you still hold it. Null once the number has been released — the
+             *     request outlives it, and `e164` is what still names it.
+             */
+            phoneNumber?: components["schemas"]["RelationshipToOne"];
+            /**
+             * @description The port order this request rides, or null when it was made directly against a number
+             *     already in your inventory. This is what tells the two kinds apart.
+             */
+            portOrder?: components["schemas"]["RelationshipToOne"];
+        };
+        MessagingEnablementResource: {
+            /** @enum {string} */
+            type: "messaging-enablements";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["MessagingEnablementAttributes"];
+            relationships?: components["schemas"]["MessagingEnablementRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        MessagingEnablementDocumentResponse: {
+            data: components["schemas"]["MessagingEnablementResource"];
+            included?: Record<string, never>[];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        MessagingEnablementCollectionDocument: {
+            data: components["schemas"]["MessagingEnablementResource"][];
+            included?: Record<string, never>[];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        MessagingEnablementCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "messaging-enablements";
+                relationships: {
+                    phoneNumber: {
+                        data: components["schemas"]["ResourceIdentifier"];
+                    };
+                };
+            };
+        };
         ZtpDeviceAttributes: {
             /**
              * @description 12 lowercase hexadecimal characters — always, on the way out. On the way in, any of
@@ -3308,6 +3591,10 @@ export interface components {
         ZtpDeviceId: string;
         /** @description The port order's id. */
         PortOrderId: string;
+        /** @description The text-messaging request's id. */
+        MessagingEnablementId: string;
+        /** @description The phone number's id. */
+        PhoneNumberId: string;
         /**
          * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
          *     that is not a positive whole number, is refused with a 400 whose error carries
@@ -5680,6 +5967,388 @@ export interface operations {
                      *           "status": "409",
                      *           "title": "Nothing to retry",
                      *           "detail": "This registration is active, not failed, so there is nothing to retry."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listMessagingEnablements: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                "filter[status]"?: components["schemas"]["MessagingEnablementStatus"];
+                /**
+                 * @description One number in E.164, including requests for a number you have since released.
+                 * @example +13215550101
+                 */
+                "filter[e164]"?: string;
+                /**
+                 * @description Every request for one number in your inventory, by that number's id. An id that is not
+                 *     one of yours matches nothing — it is never an error, because an empty list is the
+                 *     truthful answer to "requests for a number you do not have".
+                 */
+                "filter[phoneNumber]"?: string;
+                /** @description One or more request ids. */
+                "filter[id]"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Your text-messaging requests. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "messaging-enablements",
+                     *           "id": "0198c4a1-8f70-7081-b283-4d5e6f708201",
+                     *           "attributes": {
+                     *             "e164": "+13215550101",
+                     *             "status": "submitted",
+                     *             "stage": 3,
+                     *             "stageWord": "In review",
+                     *             "detail": "Submitted 2026-09-01. The losing provider is reviewing the authorization.",
+                     *             "failedCause": null,
+                     *             "scheduledFor": "2026-09-01T14:02:00.000000Z",
+                     *             "submittedAt": "2026-09-01T14:02:07.000000Z",
+                     *             "completedAt": null,
+                     *             "failedAt": null,
+                     *             "retryAllowedAt": null,
+                     *             "createdAt": "2026-09-01T14:02:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["MessagingEnablementCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createMessagingEnablement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "messaging-enablements",
+                 *         "relationships": {
+                 *           "phoneNumber": {
+                 *             "data": {
+                 *               "type": "phone-numbers",
+                 *               "id": "0198c4a1-2f70-7081-b283-4d5e6f708111"
+                 *             }
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["MessagingEnablementCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The request was accepted and sent. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "messaging-enablements",
+                     *         "id": "0198c4a1-8f70-7081-b283-4d5e6f708202",
+                     *         "attributes": {
+                     *           "e164": "+13215550101",
+                     *           "status": "scheduled",
+                     *           "stage": 1,
+                     *           "stageWord": "Scheduled",
+                     *           "detail": null,
+                     *           "failedCause": null,
+                     *           "scheduledFor": "2026-09-02T09:15:00.000000Z",
+                     *           "submittedAt": null,
+                     *           "completedAt": null,
+                     *           "failedAt": null,
+                     *           "retryAllowedAt": null,
+                     *           "createdAt": "2026-09-02T09:15:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["MessagingEnablementDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description No number of yours has that id. A number belonging to somebody else answers this too — we
+             *     never confirm that another company's id exists.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The number cannot be text-enabled right now. The message says which of the four reasons
+             *     it is, in words you can show a person.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Text messaging refused",
+                     *           "detail": "Text messaging cannot be turned on for +13215550101 yet: the number is still being set up with the carrier. Try again once it is active.",
+                     *           "source": {
+                     *             "pointer": "/data/relationships/phoneNumber"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            /**
+             * @description Text messaging is not available on your account yet. This is ours to fix, not yours —
+             *     contact support, and retrying later may succeed.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+        };
+    };
+    getMessagingEnablement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The text-messaging request's id. */
+                enablement: components["parameters"]["MessagingEnablementId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The request. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["MessagingEnablementDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    retryMessagingEnablement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The text-messaging request's id. */
+                enablement: components["parameters"]["MessagingEnablementId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description A fresh request was created and sent — **the full resource, the same shape
+             *     `POST /v1/messaging-enablements` answers with**, so you do not need a second call to
+             *     learn where the new request stands.
+             */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "messaging-enablements",
+                     *         "id": "0198c4a1-8f70-7081-b283-4d5e6f708203",
+                     *         "attributes": {
+                     *           "e164": "+13215550101",
+                     *           "status": "scheduled",
+                     *           "stage": 1,
+                     *           "stageWord": "Scheduled",
+                     *           "detail": null,
+                     *           "failedCause": null,
+                     *           "scheduledFor": "2026-09-03T11:20:04.000000Z",
+                     *           "submittedAt": null,
+                     *           "completedAt": null,
+                     *           "failedAt": null,
+                     *           "retryAllowedAt": null,
+                     *           "createdAt": "2026-09-03T11:20:04.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["MessagingEnablementDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The request did not fail, so there is nothing to try again — it is still on its way, or
+             *     it already succeeded.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Nothing to retry",
+                     *           "detail": "The request to text-enable +13215550101 (0198c4a1-8f70-7081-b283-4d5e6f708201) is submitted, so there is nothing to try again. Only a failed request can be retried."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description It failed too recently. `meta.retryAllowedAt` on the error is when a new attempt is
+             *     allowed — the same instant the resource carries as `retryAllowedAt`.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Too soon to try again",
+                     *           "detail": "The request to text-enable +13215550101 (0198c4a1-8f70-7081-b283-4d5e6f708201) failed too recently to try again. A new request can be made from 2026-09-03T11:20:00+00:00; staff can retry sooner from the backoffice.",
+                     *           "meta": {
+                     *             "retryAllowedAt": "2026-09-03T11:20:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    disableNumberMessaging: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Text messaging is off for this number. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The number does not have text messaging, so there is nothing to turn off. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Text messaging refused",
+                     *           "detail": "+13215550101 does not have text messaging."
                      *         }
                      *       ]
                      *     }
