@@ -2843,6 +2843,126 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/inbound-messages:
+    get:
+      tags: [Text messaging]
+      operationId: listInboundMessages
+      summary: List messages sent to your numbers
+      description: |
+        Every text and picture message somebody sent to one of your text-enabled numbers, newest
+        first.
+
+        THIS IS THE POLLING HALF OF A PAIR. The other is the `message.received` webhook: register an
+        endpoint and your backend is told as each message arrives. Read this collection to catch up
+        on what you missed while your endpoint was down, or instead of a webhook if you have no
+        public callback URL.
+
+        `receivedAt` is when the message was SENT, and `createdAt` is when we stored it — they differ
+        by however long a redelivery took. Filter on the first; page on the second.
+
+        **Media is described, never carried.** A picture message lists each part's content type,
+        filename and size, and there is no image and no URL to fetch one: we do not keep the bytes.
+      security:
+        - bearerAuth: [numbers:read]
+        - bearerAuth: [numbers:messaging]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[number]
+          in: query
+          required: false
+          description: One of your numbers in E.164 — the number the message was sent TO.
+          schema: { type: string }
+          example: '+13215550101'
+        - name: filter[from]
+          in: query
+          required: false
+          description: The sender's number in E.164.
+          schema: { type: string }
+          example: '+12003004000'
+        - name: filter[kind]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/InboundMessageKind'
+        - name: filter[receivedAfter]
+          in: query
+          required: false
+          description: |
+            Messages received at or after this instant. A value that is not a date matches NOTHING
+            rather than being ignored — a filter that quietly did nothing would hand you your whole
+            history while you believed you had narrowed it to a day.
+          schema: { type: string, format: date-time }
+        - name: filter[receivedBefore]
+          in: query
+          required: false
+          description: Messages received at or before this instant. Both ends are inclusive.
+          schema: { type: string, format: date-time }
+        - name: filter[id]
+          in: query
+          required: false
+          description: One or more message ids.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: A page of received messages.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/InboundMessageCollectionDocument'
+              example:
+                data:
+                  - type: inbound-messages
+                    id: 0198c4a1-8f70-7081-b283-4d5e6f708301
+                    attributes:
+                      kind: sms
+                      from: '+12003004000'
+                      to: '+13215550101'
+                      body: Hello World
+                      media: []
+                      receivedAt: '2026-09-03T09:14:02.000000Z'
+                      createdAt: '2026-09-03T09:14:03.000000Z'
+                      updatedAt: '2026-09-03T09:14:03.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/inbound-messages/{message}:
+    get:
+      tags: [Text messaging]
+      operationId: getInboundMessage
+      summary: Read one received message
+      description: |
+        One message, exactly as the list serves it. A message addressed to a number you do not carry
+        text messaging for is not yours and answers 404.
+      security:
+        - bearerAuth: [numbers:read]
+        - bearerAuth: [numbers:messaging]
+      parameters:
+        - $ref: '#/components/parameters/InboundMessageId'
+      responses:
+        '200':
+          description: The message.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/InboundMessageDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /v1/messaging-enablements/{enablement}/retry:
     post:
       tags: [Text messaging]
@@ -4341,6 +4461,12 @@ components:
       required: true
       description: The text-messaging request's id.
       schema: { type: string, format: uuid }
+    InboundMessageId:
+      name: message
+      in: path
+      required: true
+      description: The received message's id.
+      schema: { type: string, format: uuid }
     PhoneNumberId:
       name: phoneNumber
       in: path
@@ -4807,6 +4933,7 @@ components:
         - fax.partial
         - fax.failed
         - fax.cancelled
+        - message.received
     WebhookDeliveryStatus:
       type: string
       description: |
@@ -6044,6 +6171,79 @@ components:
           description: |
             The port order this request rides, or null when it was made directly against a number
             already in your inventory. This is what tells the two kinds apart.
+    InboundMessageKind:
+      type: string
+      description: |
+        Which family the message came from. NOT derivable from `media`: an MMS carrying only a
+        caption and an SMS both arrive with a body and no attachment.
+      enum:
+        - sms
+        - mms
+    InboundMessageMediaPart:
+      type: object
+      description: |
+        One part of a picture message, DESCRIBED. There is no image and no URL — we do not keep the
+        bytes. If you need the file, ask your messaging provider.
+      properties:
+        content_type: { type: string, example: image/jpeg }
+        filename: { type: [string, 'null'], description: 'The part''s filename, when it named one.', example: photo.jpg }
+        encoding: { type: string, example: base64 }
+        bytes: { type: integer, description: 'The part''s decoded size, in bytes.', example: 40213 }
+    InboundMessageAttributes:
+      type: object
+      properties:
+        kind:
+          $ref: '#/components/schemas/InboundMessageKind'
+        from: { type: string, description: 'The sending number, in E.164.', example: '+12003004000' }
+        to: { type: string, description: 'Your number, in E.164.', example: '+13215550101' }
+        body:
+          type: [string, 'null']
+          description: The text. Null for a picture message with no caption.
+        media:
+          type: array
+          description: The described parts of a picture message. Empty for a text message.
+          items:
+            $ref: '#/components/schemas/InboundMessageMediaPart'
+        receivedAt:
+          type: string
+          format: date-time
+          description: When the message was SENT — filter on this one.
+        createdAt: { type: string, format: date-time, description: When we stored it. }
+        updatedAt: { type: string, format: date-time }
+    InboundMessageResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [inbound-messages] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/InboundMessageAttributes'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    InboundMessageDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/InboundMessageResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    InboundMessageCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/InboundMessageResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
     MessagingEnablementResource:
       type: object
       required: [type, id]

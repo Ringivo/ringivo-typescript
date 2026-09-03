@@ -1066,6 +1066,59 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/inbound-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List messages sent to your numbers
+         * @description Every text and picture message somebody sent to one of your text-enabled numbers, newest
+         *     first.
+         *
+         *     THIS IS THE POLLING HALF OF A PAIR. The other is the `message.received` webhook: register an
+         *     endpoint and your backend is told as each message arrives. Read this collection to catch up
+         *     on what you missed while your endpoint was down, or instead of a webhook if you have no
+         *     public callback URL.
+         *
+         *     `receivedAt` is when the message was SENT, and `createdAt` is when we stored it — they differ
+         *     by however long a redelivery took. Filter on the first; page on the second.
+         *
+         *     **Media is described, never carried.** A picture message lists each part's content type,
+         *     filename and size, and there is no image and no URL to fetch one: we do not keep the bytes.
+         */
+        get: operations["listInboundMessages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/inbound-messages/{message}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one received message
+         * @description One message, exactly as the list serves it. A message addressed to a number you do not carry
+         *     text messaging for is not yours and answers 404.
+         */
+        get: operations["getInboundMessage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/messaging-enablements/{enablement}/retry": {
         parameters: {
             query?: never;
@@ -1981,7 +2034,7 @@ export interface components {
          * @description Every event name a subscriber may ask for.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -2895,6 +2948,80 @@ export interface components {
              */
             portOrder?: components["schemas"]["RelationshipToOne"];
         };
+        /**
+         * @description Which family the message came from. NOT derivable from `media`: an MMS carrying only a
+         *     caption and an SMS both arrive with a body and no attachment.
+         * @enum {string}
+         */
+        InboundMessageKind: "sms" | "mms";
+        /**
+         * @description One part of a picture message, DESCRIBED. There is no image and no URL — we do not keep the
+         *     bytes. If you need the file, ask your messaging provider.
+         */
+        InboundMessageMediaPart: {
+            /** @example image/jpeg */
+            content_type?: string;
+            /**
+             * @description The part's filename, when it named one.
+             * @example photo.jpg
+             */
+            filename?: string | null;
+            /** @example base64 */
+            encoding?: string;
+            /**
+             * @description The part's decoded size, in bytes.
+             * @example 40213
+             */
+            bytes?: number;
+        };
+        InboundMessageAttributes: {
+            kind?: components["schemas"]["InboundMessageKind"];
+            /**
+             * @description The sending number, in E.164.
+             * @example +12003004000
+             */
+            from?: string;
+            /**
+             * @description Your number, in E.164.
+             * @example +13215550101
+             */
+            to?: string;
+            /** @description The text. Null for a picture message with no caption. */
+            body?: string | null;
+            /** @description The described parts of a picture message. Empty for a text message. */
+            media?: components["schemas"]["InboundMessageMediaPart"][];
+            /**
+             * Format: date-time
+             * @description When the message was SENT — filter on this one.
+             */
+            receivedAt?: string;
+            /**
+             * Format: date-time
+             * @description When we stored it.
+             */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        InboundMessageResource: {
+            /** @enum {string} */
+            type: "inbound-messages";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["InboundMessageAttributes"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        InboundMessageDocumentResponse: {
+            data: components["schemas"]["InboundMessageResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        InboundMessageCollectionDocument: {
+            data: components["schemas"]["InboundMessageResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
         MessagingEnablementResource: {
             /** @enum {string} */
             type: "messaging-enablements";
@@ -3593,6 +3720,8 @@ export interface components {
         PortOrderId: string;
         /** @description The text-messaging request's id. */
         MessagingEnablementId: string;
+        /** @description The received message's id. */
+        InboundMessageId: string;
         /** @description The phone number's id. */
         PhoneNumberId: string;
         /**
@@ -6204,6 +6333,129 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["MessagingEnablementDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listInboundMessages: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /**
+                 * @description One of your numbers in E.164 — the number the message was sent TO.
+                 * @example +13215550101
+                 */
+                "filter[number]"?: string;
+                /**
+                 * @description The sender's number in E.164.
+                 * @example +12003004000
+                 */
+                "filter[from]"?: string;
+                "filter[kind]"?: components["schemas"]["InboundMessageKind"];
+                /**
+                 * @description Messages received at or after this instant. A value that is not a date matches NOTHING
+                 *     rather than being ignored — a filter that quietly did nothing would hand you your whole
+                 *     history while you believed you had narrowed it to a day.
+                 */
+                "filter[receivedAfter]"?: string;
+                /** @description Messages received at or before this instant. Both ends are inclusive. */
+                "filter[receivedBefore]"?: string;
+                /** @description One or more message ids. */
+                "filter[id]"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of received messages. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "inbound-messages",
+                     *           "id": "0198c4a1-8f70-7081-b283-4d5e6f708301",
+                     *           "attributes": {
+                     *             "kind": "sms",
+                     *             "from": "+12003004000",
+                     *             "to": "+13215550101",
+                     *             "body": "Hello World",
+                     *             "media": [],
+                     *             "receivedAt": "2026-09-03T09:14:02.000000Z",
+                     *             "createdAt": "2026-09-03T09:14:03.000000Z",
+                     *             "updatedAt": "2026-09-03T09:14:03.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["InboundMessageCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getInboundMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The received message's id. */
+                message: components["parameters"]["InboundMessageId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The message. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["InboundMessageDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
