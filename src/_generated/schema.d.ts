@@ -1612,6 +1612,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/tenants/{tenant}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
+                tenant: components["parameters"]["TenantId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read your reseller account
+         * @description Self-view only: this resource always answers with the credential's own tenant. Any other id
+         *     resolves to nothing — **404**, fail-closed, exactly as an id that names no row at all.
+         *
+         *     `onboardingRequirements` is what this account still owes before it may write anything on this
+         *     surface — `[]` means nothing is outstanding. Reading it is never walled, so a client checks
+         *     here before a write and confirms here once it is fixed.
+         */
+        get: operations["getTenant"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change your brand colors or support contact
+         * @description The two Settings › Branding panels, as an API write: brand colors and the support contact
+         *     your customers see. Every other attribute on this resource — including the domain and
+         *     sending-identity objects — is read-only; there is no API write path for either yet.
+         *
+         *     Send only what changed. An attribute you leave out keeps its current value; one you send as
+         *     `null` clears it — all four are nullable. `brandColorPrimary`/`brandColorAccent` are
+         *     six-digit hex; `supportPhone` is E.164.
+         *
+         *     **Blocked while onboarding is incomplete.** An account with a non-empty
+         *     `onboardingRequirements` (see the GET above) refuses every write on this surface with a 403.
+         */
+        patch: operations["updateTenant"];
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -3638,6 +3679,93 @@ export interface components {
                 sent_to?: string;
             };
         };
+        /**
+         * @description The reseller onboarding lifecycle (console ADR-0006). Only `active` opens the portal;
+         *     `suspended` is a staff action reachable from any other state.
+         * @enum {string}
+         */
+        TenantStatus: "pending_email" | "pending_kyc" | "kyc_in_progress" | "kyc_in_review" | "active" | "kyc_declined" | "suspended";
+        TenantAttributes: {
+            brandName?: string | null;
+            legalName?: string | null;
+            status?: components["schemas"]["TenantStatus"];
+            /** Format: date-time */
+            createdAt?: string | null;
+            /**
+             * @description Stable machine identifiers for what this account still owes before it may write on this
+             *     surface — `[]` means nothing is outstanding. `company_address` is the only code today.
+             */
+            onboardingRequirements?: string[];
+            /** @description Six-digit hex, like `#0057b8`. Null clears the override. */
+            brandColorPrimary?: string | null;
+            /** @description Six-digit hex, like `#0057b8`. Null clears the override. */
+            brandColorAccent?: string | null;
+            /** Format: email */
+            supportEmail?: string | null;
+            /** @description E.164, like +14155550100. */
+            supportPhone?: string | null;
+            /**
+             * @description The platform-issued host this tenant always answers on, under the shared base domain.
+             *     Read-only.
+             */
+            includedDomain?: string | null;
+            /**
+             * @description The tenant's own connected domain, once one exists — null until it does. Read-only:
+             *     there is no API write path for a domain or a DNS zone yet (console ADR-0096).
+             */
+            whiteLabelDomain?: {
+                registrableDomain?: string;
+                consoleHost?: string;
+                apiHost?: string;
+                /** @enum {string} */
+                status?: "pending_dns" | "provisioning" | "verifying" | "active" | "failed" | "disabled";
+                /** @description Whether the console host above is this tenant's canonical login surface. */
+                isPrimary?: boolean;
+            } | null;
+            /**
+             * @description The address this tenant's outbound mail sends from, once one is provisioned — null until
+             *     it is. Read-only: there is no API write path yet (console ADR-0097).
+             */
+            sendingIdentity?: {
+                /** Format: email */
+                address?: string;
+                /** @enum {string} */
+                status?: "pending" | "dns_pending" | "verifying" | "active" | "failed" | "disabled";
+            } | null;
+        };
+        TenantResource: {
+            /** @enum {string} */
+            type: "tenants";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["TenantAttributes"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        TenantDocumentResponse: {
+            data: components["schemas"]["TenantResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        TenantWritableAttributes: {
+            /** @description Six-digit hex, like `#0057b8`. Null clears the override. */
+            brandColorPrimary?: string | null;
+            /** @description Six-digit hex, like `#0057b8`. Null clears the override. */
+            brandColorAccent?: string | null;
+            /** Format: email */
+            supportEmail?: string | null;
+            /** @description E.164, like +14155550100. */
+            supportPhone?: string | null;
+        };
+        TenantUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "tenants";
+                /** Format: uuid */
+                id: string;
+                attributes: components["schemas"]["TenantWritableAttributes"];
+            };
+        };
     };
     responses: {
         /** @description No usable bearer token was presented. */
@@ -3724,6 +3852,8 @@ export interface components {
         InboundMessageId: string;
         /** @description The phone number's id. */
         PhoneNumberId: string;
+        /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
+        TenantId: string;
         /**
          * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
          *     that is not a positive whole number, is refused with a 400 whose error carries
@@ -7585,6 +7715,110 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
+        };
+    };
+    getTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
+                tenant: components["parameters"]["TenantId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Your reseller account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "tenants",
+                     *         "id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                     *         "attributes": {
+                     *           "brandName": "Acme Vet Communications",
+                     *           "legalName": "Acme Vet Communications LLC",
+                     *           "status": "active",
+                     *           "createdAt": "2026-06-01T12:00:00.000000Z",
+                     *           "onboardingRequirements": [],
+                     *           "brandColorPrimary": "#0057b8",
+                     *           "brandColorAccent": "#ffb703",
+                     *           "supportEmail": "support@acme-vet.example",
+                     *           "supportPhone": "+14155550100",
+                     *           "includedDomain": "acme-vet.reseller.example",
+                     *           "whiteLabelDomain": {
+                     *             "registrableDomain": "acmevet.com",
+                     *             "consoleHost": "portal.acmevet.com",
+                     *             "apiHost": "api.acmevet.com",
+                     *             "status": "active",
+                     *             "isPrimary": true
+                     *           },
+                     *           "sendingIdentity": {
+                     *             "address": "no-reply@acmevet.com",
+                     *             "status": "active"
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["TenantDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateTenant: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
+                tenant: components["parameters"]["TenantId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "tenants",
+                 *         "id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "attributes": {
+                 *           "brandColorPrimary": "#0057b8",
+                 *           "brandColorAccent": "#ffb703",
+                 *           "supportEmail": "support@acme-vet.example",
+                 *           "supportPhone": "+14155550100"
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["TenantUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated account. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["TenantDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
         };
     };
     onFaxReceived: {

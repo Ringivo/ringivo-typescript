@@ -175,6 +175,18 @@ tags:
       **The carrier is absent from this resource, by decision.** Which wholesale carrier we file a
       port through is our supplier relationship, so nothing here names one: not the order, not its
       carrier-side reference, and not the carrier's own words about a number.
+  - name: Tenants
+    description: |
+      Your own reseller account — one row, always yours. There is no list and no id to choose: the
+      resource resolves the credential's own tenant and nothing else.
+
+      **Machine credential only.** These two operations sit behind the same client-credentials-only
+      route group as `/v1/integrations`, so a personal access token cannot reach them.
+
+      **Reading is never walled; writing can be.** `GET` always answers, even while your account
+      still owes onboarding requirements — that is how a client learns what it owes.
+      `onboardingRequirements` carries the list, and every write on this surface is refused with a
+      403 while it is non-empty.
 
 paths:
   /oauth/token:
@@ -4066,6 +4078,111 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDocument'
 
+  /v1/tenants/{tenant}:
+    parameters:
+      - $ref: '#/components/parameters/TenantId'
+    get:
+      tags: [Tenants]
+      operationId: getTenant
+      summary: Read your reseller account
+      description: |
+        Self-view only: this resource always answers with the credential's own tenant. Any other id
+        resolves to nothing — **404**, fail-closed, exactly as an id that names no row at all.
+
+        `onboardingRequirements` is what this account still owes before it may write anything on this
+        surface — `[]` means nothing is outstanding. Reading it is never walled, so a client checks
+        here before a write and confirms here once it is fixed.
+      security:
+        - bearerAuth: [tenants:read]
+      responses:
+        '200':
+          description: Your reseller account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/TenantDocumentResponse'
+              example:
+                data:
+                  type: tenants
+                  id: 0198c4a1-b425-76e7-18e9-031425364a5b
+                  attributes:
+                    brandName: Acme Vet Communications
+                    legalName: Acme Vet Communications LLC
+                    status: active
+                    createdAt: '2026-06-01T12:00:00.000000Z'
+                    onboardingRequirements: []
+                    brandColorPrimary: '#0057b8'
+                    brandColorAccent: '#ffb703'
+                    supportEmail: support@acme-vet.example
+                    supportPhone: '+14155550100'
+                    includedDomain: acme-vet.reseller.example
+                    whiteLabelDomain:
+                      registrableDomain: acmevet.com
+                      consoleHost: portal.acmevet.com
+                      apiHost: api.acmevet.com
+                      status: active
+                      isPrimary: true
+                    sendingIdentity:
+                      address: no-reply@acmevet.com
+                      status: active
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [Tenants]
+      operationId: updateTenant
+      summary: Change your brand colors or support contact
+      description: |
+        The two Settings › Branding panels, as an API write: brand colors and the support contact
+        your customers see. Every other attribute on this resource — including the domain and
+        sending-identity objects — is read-only; there is no API write path for either yet.
+
+        Send only what changed. An attribute you leave out keeps its current value; one you send as
+        `null` clears it — all four are nullable. `brandColorPrimary`/`brandColorAccent` are
+        six-digit hex; `supportPhone` is E.164.
+
+        **Blocked while onboarding is incomplete.** An account with a non-empty
+        `onboardingRequirements` (see the GET above) refuses every write on this surface with a 403.
+      security:
+        - bearerAuth: [tenants:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/TenantUpdateRequest'
+            example:
+              data:
+                type: tenants
+                id: 0198c4a1-b425-76e7-18e9-031425364a5b
+                attributes:
+                  brandColorPrimary: '#0057b8'
+                  brandColorAccent: '#ffb703'
+                  supportEmail: support@acme-vet.example
+                  supportPhone: '+14155550100'
+      responses:
+        '200':
+          description: The updated account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/TenantDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
 # -------------------------------------------------------------------------------------------------
 # Outbound webhooks — what WE send to YOUR server.
 # -------------------------------------------------------------------------------------------------
@@ -4472,6 +4589,12 @@ components:
       in: path
       required: true
       description: The phone number's id.
+      schema: { type: string, format: uuid }
+    TenantId:
+      name: tenant
+      in: path
+      required: true
+      description: The tenant's id. Only the credential's own tenant resolves; any other id is a 404.
       schema: { type: string, format: uuid }
     PageSize:
       name: page[size]
@@ -7028,3 +7151,131 @@ components:
               type: string
               format: email
               description: The address the mail went to, echoed back.
+
+    # -- tenants (the credential's own view of itself, ADR-0029) -----------------------------------
+    TenantStatus:
+      type: string
+      description: |
+        The reseller onboarding lifecycle (console ADR-0006). Only `active` opens the portal;
+        `suspended` is a staff action reachable from any other state.
+      enum:
+        - pending_email
+        - pending_kyc
+        - kyc_in_progress
+        - kyc_in_review
+        - active
+        - kyc_declined
+        - suspended
+    TenantAttributes:
+      type: object
+      properties:
+        brandName: { type: [string, 'null'] }
+        legalName: { type: [string, 'null'] }
+        status:
+          $ref: '#/components/schemas/TenantStatus'
+        createdAt: { type: [string, 'null'], format: date-time }
+        onboardingRequirements:
+          type: array
+          items: { type: string }
+          description: |
+            Stable machine identifiers for what this account still owes before it may write on this
+            surface — `[]` means nothing is outstanding. `company_address` is the only code today.
+        brandColorPrimary:
+          type: [string, 'null']
+          pattern: '^#[0-9a-fA-F]{6}$'
+          description: Six-digit hex, like `#0057b8`. Null clears the override.
+        brandColorAccent:
+          type: [string, 'null']
+          pattern: '^#[0-9a-fA-F]{6}$'
+          description: Six-digit hex, like `#0057b8`. Null clears the override.
+        supportEmail:
+          type: [string, 'null']
+          format: email
+          maxLength: 255
+        supportPhone:
+          type: [string, 'null']
+          maxLength: 20
+          description: E.164, like +14155550100.
+        includedDomain:
+          type: [string, 'null']
+          description: |
+            The platform-issued host this tenant always answers on, under the shared base domain.
+            Read-only.
+        whiteLabelDomain:
+          type: [object, 'null']
+          description: |
+            The tenant's own connected domain, once one exists — null until it does. Read-only:
+            there is no API write path for a domain or a DNS zone yet (console ADR-0096).
+          properties:
+            registrableDomain: { type: string }
+            consoleHost: { type: string }
+            apiHost: { type: string }
+            status:
+              type: string
+              enum: [pending_dns, provisioning, verifying, active, failed, disabled]
+            isPrimary:
+              type: boolean
+              description: Whether the console host above is this tenant's canonical login surface.
+        sendingIdentity:
+          type: [object, 'null']
+          description: |
+            The address this tenant's outbound mail sends from, once one is provisioned — null until
+            it is. Read-only: there is no API write path yet (console ADR-0097).
+          properties:
+            address: { type: string, format: email }
+            status:
+              type: string
+              enum: [pending, dns_pending, verifying, active, failed, disabled]
+    TenantResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [tenants] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/TenantAttributes'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    TenantDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/TenantResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    TenantWritableAttributes:
+      type: object
+      properties:
+        brandColorPrimary:
+          type: [string, 'null']
+          pattern: '^#[0-9a-fA-F]{6}$'
+          description: Six-digit hex, like `#0057b8`. Null clears the override.
+        brandColorAccent:
+          type: [string, 'null']
+          pattern: '^#[0-9a-fA-F]{6}$'
+          description: Six-digit hex, like `#0057b8`. Null clears the override.
+        supportEmail:
+          type: [string, 'null']
+          format: email
+          maxLength: 255
+        supportPhone:
+          type: [string, 'null']
+          maxLength: 20
+          description: E.164, like +14155550100.
+    TenantUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [tenants] }
+            id: { type: string, format: uuid }
+            attributes:
+              $ref: '#/components/schemas/TenantWritableAttributes'
