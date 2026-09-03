@@ -3702,14 +3702,32 @@ paths:
       summary: Attach the bill or the signed LOA
       description: |
         `multipart/form-data`, streamed through us — there is no JSON:API document that carries a
-        20 MB PDF, and no signed-URL handshake to perform. One `kind` field and one `file` part.
+        20 MB PDF, and no signed-URL handshake to perform. A `kind` field, a `file` part, and — on
+        the `loa` slot — the two facts a scan cannot carry.
+
+        **A signed LOA is a signature, not only a file.** `kind=loa` REQUIRES `signed_on` (the day
+        your customer put pen to paper, `YYYY-MM-DD`, never a day that has not happened) and `signer`
+        (the name in the signature block). They are written in the same transaction as the document,
+        so an order can never hold a signed letter whose signing date nobody recorded — which reads
+        finished on every screen and is refused when you submit it. A refusal names the part in
+        `source.parameter`. **This changed on 2026-09-03**: a `loa` upload with a file alone used to
+        be accepted, and is now a **422**.
+
+        **A signed LOA needs a letter to be on.** Generate it first
+        (`POST /v1/port-orders/{portOrder}/generate-loa`) — a scan of a letter this console never
+        wrote can be compared against nothing. Uploading one before then is a **409**.
+
+        **The `bill` slot takes neither part**, and is unchanged in every other respect. Nobody signs
+        a phone bill.
 
         **PDF only, decided on the bytes.** The first five characters of the file must be `%PDF-`;
         the filename and the part's declared content type decide nothing. **20 MB** (20971520 bytes)
         is the ceiling, measured on what actually landed.
 
-        **Only a draft takes an upload**, including from a locked order: while your customer is
-        signing, the paperwork has to keep matching the letter in front of them.
+        **Only a draft takes an upload** — with one exception, and it is the paper one: a signed LOA
+        is also accepted while the order is out for signature, because that is precisely how a wet
+        signature happens. Every other upload stays draft-only: while your customer is signing, the
+        paperwork has to keep matching the letter in front of them.
 
         **Re-uploading replaces.** A new document is stored, the digest changes, and the superseded
         one is deleted. Nothing is ever overwritten in place, so a digest you recorded earlier keeps
@@ -3752,8 +3770,10 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           description: |
-            The order is no longer a draft, so its paperwork is frozen — an order out for signature
-            included. `title` is `Not editable` and `detail` names the state it is in.
+            Two state conflicts, told apart by `title`. `Not editable` — the order is no longer a
+            draft, so its paperwork is frozen, and `detail` names the state it is in (a `loa` upload
+            is still accepted from an order out for signature). `No letter to sign` — the LOA has not
+            been generated yet, so there is nothing a signed copy could be compared against.
           content:
             application/vnd.api+json:
               schema:
@@ -3761,18 +3781,34 @@ paths:
         '422':
           description: |
             The parts were not what this endpoint takes, or the file was not one we accept — not a
-            PDF, or past the size ceiling. The message names the rule rather than the file.
+            PDF, or past the size ceiling. A `loa` upload missing `signed_on` or `signer`, or dated
+            in the future, lands here too, and `source.parameter` names the part. The message names
+            the rule rather than the file.
           content:
             application/vnd.api+json:
               schema:
                 $ref: '#/components/schemas/ErrorDocument'
-              example:
-                errors:
-                  - status: '422'
-                    title: Document refused
-                    detail: >-
-                      august-bill.jpg is not a PDF: it does not start with %PDF-. Port documents are
-                      PDF only — scan or export the paperwork as a PDF and upload it again.
+              examples:
+                notAPdf:
+                  summary: The file is not a PDF
+                  value:
+                    errors:
+                      - status: '422'
+                        title: Document refused
+                        detail: >-
+                          august-bill.jpg is not a PDF: it does not start with %PDF-. Port documents
+                          are PDF only — scan or export the paperwork as a PDF and upload it again.
+                noSigningDate:
+                  summary: A signed LOA with no day on it
+                  value:
+                    errors:
+                      - status: '422'
+                        title: Document refused
+                        detail: >-
+                          loa_date is required — a signed letter is dated, and only the person
+                          holding it knows the day.
+                        source:
+                          parameter: signed_on
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -7042,8 +7078,13 @@ components:
     PortOrderDocumentUploadRequest:
       type: object
       description: |
-        The two parts an upload is made of. PDF only, decided on the file's own first five bytes,
-        and at most 20 MB.
+        The parts an upload is made of. PDF only, decided on the file's own first five bytes, and at
+        most 20 MB.
+
+        `signed_on` and `signer` are REQUIRED on the `loa` slot and accepted on no other — a signed
+        letter carries two facts the PDF cannot, and they are stored in the same transaction as the
+        document. They are named as parts rather than as the `loaDate`/`loaSigner` attributes the
+        JSON:API document uses, because this body is a form and has no `data.attributes`.
       required: [kind, file]
       properties:
         kind:
@@ -7052,6 +7093,22 @@ components:
           type: string
           format: binary
           description: The PDF itself, as one file part.
+        signed_on:
+          type: string
+          format: date
+          description: |
+            **`loa` only, and required there.** The day your customer signed, as `YYYY-MM-DD`. Never
+            a day that has not happened — an LOA dated after the day a carrier reads it authorizes
+            nothing yet. Today is decided in UTC.
+          example: '2026-08-20'
+        signer:
+          type: string
+          maxLength: 255
+          description: |
+            **`loa` only, and required there.** The name in the signature block — who actually
+            signed, which is not always who `loaSigner` said would. It OVERWRITES that attribute,
+            because what a carrier is told has to be what happened.
+          example: Bea Whitfield
     PortOrderSubmitted:
       type: object
       description: |
