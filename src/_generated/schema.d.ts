@@ -2034,7 +2034,7 @@ export interface components {
          * @description Every event name a subscriber may ask for.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
