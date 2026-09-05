@@ -159,6 +159,26 @@ tags:
       current provider refusing the authorization, and sending the same letter an hour later gets the
       same answer. The refusal tells you when you may try again, in `meta.retryAllowedAt`, and the
       same instant is on the resource as `retryAllowedAt`.
+  - name: Hosted messaging orders
+    description: |
+      Bringing a number whose calls another provider carries into your inventory, so you can text
+      from it.
+
+      **This is not a port.** The number's voice service stays exactly where it is, and the number
+      reports `voice.enabled: false` for as long as that is true. Moving the calls onto the platform
+      as well is a port order, and a later port keeps the number's texting instead of replacing it.
+
+      **One order always makes exactly one number.** Read it back through the `phoneNumber`
+      relationship. The order is a permanent record and outlives the number: disconnect it and this
+      row stays, with `phoneNumber` gone to null and `e164` still saying which number it was about.
+
+      **The order holds no progress of its own.** `mechanism: claimed` is finished the moment it
+      exists — the number could already text where it lives, so nothing was ordered and nothing was
+      signed. `mechanism: enabled` means we asked its provider, and `messagingEnablement` points at
+      the request whose `stage` you follow.
+
+      **Emergency service is not available on these numbers.** We never see their 911 traffic, so
+      registering an address for one is refused.
   - name: Port orders
     description: |
       Moving numbers a customer already owns onto the platform: the paperwork, your customer's part
@@ -3110,6 +3130,208 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/hosted-messaging-orders:
+    get:
+      tags: [Hosted messaging orders]
+      operationId: listHostedMessagingOrders
+      summary: List hosted messaging orders
+      description: |
+        Every number you have brought in for text messaging, newest first — in flight and
+        historical, because an order is a permanent record of an attempt.
+
+        An order OUTLIVES the number it made. Disconnect the number and this row stays, with
+        `phoneNumber` gone to null and `e164` still saying which number it was about. That is what
+        keeps "how did this number get here?" answerable afterwards.
+      security:
+        - bearerAuth: [port-orders:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[status]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/HostedMessagingOrderStatus'
+        - name: filter[e164]
+          in: query
+          required: false
+          description: One number in E.164, including orders for a number you have since disconnected.
+          schema: { type: string }
+          example: '+13215550101'
+        - name: filter[id]
+          in: query
+          required: false
+          description: One or more order ids.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Your hosted messaging orders.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/HostedMessagingOrderCollectionDocument'
+              example:
+                data:
+                  - type: hosted-messaging-orders
+                    id: 0198c4a1-9f70-7081-b283-4d5e6f708301
+                    attributes:
+                      e164: '+13215550101'
+                      status: claimed
+                      mechanism: claimed
+                      createdAt: '2026-09-02T09:15:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Hosted messaging orders]
+      operationId: createHostedMessagingOrder
+      summary: Bring a number in for text messaging
+      description: |
+        Name a number whose calls another provider carries, and we bring it into your inventory so
+        you can text from it. One order always produces exactly one number — read it back through
+        the `phoneNumber` relationship.
+
+        **The number is an attribute, not a link.** Every other endpoint here points at a number you
+        already hold; this one is how a number arrives, so there is no id to name yet.
+
+        **Add `?include=phoneNumber` to get the number back in the same response.** Relationships
+        carry their links always and their linkage only when you ask, so without the include you get
+        the order and follow a link for the number it made.
+
+        **Name who will authorize it.** The number's calls are carried by another provider, so the
+        authorization has to come from whoever that provider bills rather than from you. Send their
+        name and email address as `endUser` and we email them a secure link to read and sign the
+        letter; text messaging starts once they have signed. It is required on every create because
+        the mechanism is not knowable until we look, and it is kept only when the answer is
+        `enabled` — a `claimed` order needed no authorization and stores none of it. The details are
+        write-only and are never returned.
+
+        **You do not choose the mechanism.** We check what the number already has and answer with
+        what we did. `mechanism: claimed` means it was already
+        text-enabled where it lives and we recorded it: nothing was ordered, nothing was signed and
+        nothing was spent. `mechanism: enabled` means we asked its provider to turn messaging on,
+        and `messagingEnablement` points at the request to follow. Sending `mechanism` yourself is
+        refused with a 422 rather than ignored.
+
+        **This does not move the number's calls.** Its voice service stays exactly where it is, and
+        `GET /v1/phone-numbers/{id}` reports `voice.enabled: false` for it. Moving the calls too is
+        a port order, and a later port keeps this number's texting rather than replacing the row.
+
+        **Emergency service is not available on such a number** — we do not carry its 911 traffic,
+        so registering an address for it is refused.
+
+        The refusals worth handling: the value is not a phone number, somebody already holds it, or
+        it is one of yours whose calls we already carry — for that last one, text messaging is the
+        `messaging-enablements` collection instead.
+      security:
+        - bearerAuth: [port-orders:hosted-messaging]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/HostedMessagingOrderCreateRequest'
+            example:
+              data:
+                type: hosted-messaging-orders
+                attributes:
+                  e164: '+13215550101'
+                  endUser:
+                    name: Dana Okonkwo
+                    email: dana@okonkwovet.test
+                relationships:
+                  customer:
+                    data:
+                      type: customers
+                      id: 0198c4a1-1f70-7081-b283-4d5e6f708100
+      responses:
+        '201':
+          description: The number is in your inventory, and this is the record of how.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/HostedMessagingOrderDocumentResponse'
+              example:
+                data:
+                  type: hosted-messaging-orders
+                  id: 0198c4a1-9f70-7081-b283-4d5e6f708302
+                  attributes:
+                    e164: '+13215550101'
+                    status: claimed
+                    mechanism: claimed
+                    createdAt: '2026-09-02T09:15:00.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            No customer of yours has that id. A customer belonging to somebody else answers this too
+            — we never confirm that another company's id exists.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          description: |
+            The number cannot be brought in. The message says which of the three reasons it is, in
+            words you can show a person.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    title: Hosted messaging order refused
+                    detail: >-
+                      +13215550101 is already one of your numbers, and we carry its calls. Turn text
+                      messaging on from the number's own Messaging control instead — hosted
+                      messaging is for a number whose calls another provider carries.
+                    source:
+                      pointer: /data/attributes/e164
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/hosted-messaging-orders/{hostedMessagingOrder}:
+    get:
+      tags: [Hosted messaging orders]
+      operationId: getHostedMessagingOrder
+      summary: Read one hosted messaging order
+      description: |
+        One order and what it produced. `include=phoneNumber` side-loads the number if you still
+        hold it — an order outlives the number it made, so this is null once the number has been
+        disconnected. `include=messagingEnablement` side-loads the text-messaging request on the
+        enable path, and is null on the claim path, where nothing was ever sent.
+      security:
+        - bearerAuth: [port-orders:read]
+      parameters:
+        - $ref: '#/components/parameters/HostedMessagingOrderId'
+      responses:
+        '200':
+          description: The order.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/HostedMessagingOrderDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /v1/port-orders:
     get:
       tags: [Port orders]
@@ -4620,6 +4842,12 @@ components:
       required: true
       description: The received message's id.
       schema: { type: string, format: uuid }
+    HostedMessagingOrderId:
+      name: hostedMessagingOrder
+      in: path
+      required: true
+      description: The hosted messaging order's id.
+      schema: { type: string, format: uuid }
     PhoneNumberId:
       name: phoneNumber
       in: path
@@ -5645,6 +5873,8 @@ components:
             createdAt: { type: [string, 'null'], format: date-time }
             messaging:
               $ref: '#/components/schemas/PhoneNumberMessaging'
+            voice:
+              $ref: '#/components/schemas/PhoneNumberVoice'
         relationships:
           type: object
           properties:
@@ -5690,6 +5920,26 @@ components:
           type: [string, 'null']
           format: date-time
           description: When messaging started working on this number. Null when messaging is off.
+    PhoneNumberVoice:
+      type: object
+      description: |
+        Whether this platform supplies the number's calls (console ADR-0094).
+
+        **`false` does not mean the number is dead.** It means somebody else carries its calls: a
+        number brought in with `POST /v1/hosted-messaging-orders` is live and textable, and its
+        voice service is with the provider it was already with. Emergency service is not available
+        on such a number, and it has no routing target here.
+
+        The object is always present, so nothing has to branch on whether the key is there. It is an
+        object rather than a bare boolean so that a further service can arrive beside `messaging` and
+        `voice` without either of them changing shape.
+
+        **Which carrier supplies the calls is not published**, here or anywhere on this API.
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: Whether we carry this number's calls.
     PhoneNumberCollectionDocument:
       type: object
       required: [data]
@@ -6242,14 +6492,19 @@ components:
     # stable reading of it.
     MessagingEnablementStatus:
       type: string
-      enum: [scheduled, submitted, completed, failed]
+      enum: [awaiting_signature, scheduled, submitted, completed, failed]
       description: |
         Where the request stands.
 
-        `scheduled` it has not been sent yet · `submitted` it is with the provider · `completed` the
-        number can text · `failed` it ended without messaging being turned on. The two terminal
-        values are final: a failed request is never revived, it is retried, and a retry is a new
-        request.
+        `awaiting_signature` the number's own end user has not signed the authorization yet, so
+        nothing has been sent and nothing will be until they do · `scheduled` it has not been sent
+        yet · `submitted` it is with the provider · `completed` the number can text · `failed` it
+        ended without messaging being turned on. The two terminal values are final: a failed request
+        is never revived, it is retried, and a retry is a new request.
+
+        `awaiting_signature` appears only on a request created by a hosted messaging order, where the
+        number's calls are carried by another provider: the subscriber of record is then the end user
+        rather than you, so they sign, and the request waits for a person outside the console.
     MessagingEnablementFailureCause:
       type: string
       enum: [provider_rejected, withdrawn, submission_error, poll_gave_up]
@@ -6461,6 +6716,166 @@ components:
               required: [phoneNumber]
               properties:
                 phoneNumber:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+    HostedMessagingOrderStatus:
+      type: string
+      enum: [claimed, awaiting_signature, submitted]
+      description: |
+        How far the order got.
+
+        `claimed` the number was already text-enabled where it lives and we recorded it ·
+        `awaiting_signature` the authorization is out and your end user has not signed it yet ·
+        `submitted` the signed request reached the provider.
+
+        `claimed` is FINAL the moment the order exists: nothing was ordered, nothing was signed and
+        nothing is owed. `submitted` will not move either — what is still outstanding is outstanding
+        on the request, and `messagingEnablement` is what you follow for it. This is deliberately not
+        a second progress meter.
+    HostedMessagingMechanism:
+      type: string
+      enum: [claimed, enabled]
+      description: |
+        Which door the order took. Decided by us from what the number already had, never chosen by
+        the caller, and never changed afterwards.
+
+        `claimed` the number could already text where it lives, so we recorded it and asked its
+        provider for nothing · `enabled` we asked its provider to turn text messaging on, and
+        `messagingEnablement` is the request.
+    HostedMessagingOrderAttributes:
+      type: object
+      properties:
+        e164:
+          type: string
+          description: |
+            The number this order is about. It is held as digits rather than only as a link, so it
+            still says which number it was for after that number is disconnected.
+          example: '+13215550101'
+        status:
+          $ref: '#/components/schemas/HostedMessagingOrderStatus'
+        mechanism:
+          $ref: '#/components/schemas/HostedMessagingMechanism'
+        createdAt:
+          type: [string, 'null']
+          format: date-time
+          description: When the order was placed.
+    HostedMessagingOrderRelationships:
+      type: object
+      properties:
+        phoneNumber:
+          allOf:
+            - $ref: '#/components/schemas/RelationshipToOne'
+          description: |
+            The number the order put in your inventory. Always set when the order is made; null once
+            that number has been disconnected — the order outlives it, and `e164` is what still
+            names it.
+        messagingEnablement:
+          allOf:
+            - $ref: '#/components/schemas/RelationshipToOne'
+          description: |
+            The text-messaging request this order raised, or null on the claim path, where nothing
+            was ever sent. This is what tells the two mechanisms apart, and what you follow for live
+            progress on the enable path.
+        customer:
+          allOf:
+            - $ref: '#/components/schemas/RelationshipToOne'
+          description: The customer the number is for, or null when it stays in your own pool.
+    HostedMessagingOrderResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [hosted-messaging-orders] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/HostedMessagingOrderAttributes'
+        relationships:
+          $ref: '#/components/schemas/HostedMessagingOrderRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    HostedMessagingOrderDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/HostedMessagingOrderResource'
+        included:
+          type: array
+          items: { type: object }
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    HostedMessagingOrderCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/HostedMessagingOrderResource'
+        included:
+          type: array
+          items: { type: object }
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    HostedMessagingOrderCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes]
+          properties:
+            type: { type: string, enum: [hosted-messaging-orders] }
+            attributes:
+              type: object
+              required: [e164, endUser]
+              properties:
+                e164:
+                  type: string
+                  description: |
+                    The number to bring in, in full and with the country code. It must not already
+                    be in anybody's inventory here.
+                  example: '+13215550101'
+                endUser:
+                  type: object
+                  description: |
+                    Who will authorize text messaging on the number, and where to email them. The
+                    number's calls are carried by another provider, so the authorization has to come
+                    from whoever that provider bills — not from you — and we email them a secure link
+                    to read and sign it.
+
+                    Required on every create. It is stored only when the number takes the `enabled`
+                    path: which path a number takes is decided from what the number already has, so
+                    it cannot be known when you send this. An order that comes back `claimed` needed
+                    no authorization and keeps none of these details.
+
+                    Write-only. These are the ceremony's contact details rather than the order's, so
+                    they are never returned.
+                  required: [name, email]
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 120
+                      description: The person or business the phone company bills for this number.
+                      example: Dana Okonkwo
+                    email:
+                      type: string
+                      format: email
+                      maxLength: 254
+                      description: Where the signing link is sent.
+                      example: dana@okonkwovet.test
+            relationships:
+              type: object
+              properties:
+                customer:
                   type: object
                   required: [data]
                   properties:
