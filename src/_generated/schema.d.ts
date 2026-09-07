@@ -825,7 +825,8 @@ export interface paths {
          *     **It needs a personal access token, not a client-credentials token.** This is the only
          *     operation here with that requirement, and it follows from the line above: because a lookup
          *     spends your balance, it is not something a third-party integration's credential may do on
-         *     your behalf. Mint a token for one of your own console users from the portal's Security page.
+         *     your behalf. Mint a token for one of your own console users from the portal's Personal access tokens page
+         *     (Account › Personal access tokens).
          *     That user needs permission to look numbers up, which is held by exactly the roles that can
          *     already buy a number — so if they can purchase a DID, they can run a lookup.
          *

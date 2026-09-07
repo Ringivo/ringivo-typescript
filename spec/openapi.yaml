@@ -2228,7 +2228,8 @@ paths:
         **It needs a personal access token, not a client-credentials token.** This is the only
         operation here with that requirement, and it follows from the line above: because a lookup
         spends your balance, it is not something a third-party integration's credential may do on
-        your behalf. Mint a token for one of your own console users from the portal's Security page.
+        your behalf. Mint a token for one of your own console users from the portal's Personal access tokens page
+        (Account › Personal access tokens).
         That user needs permission to look numbers up, which is held by exactly the roles that can
         already buy a number — so if they can purchase a DID, they can run a lookup.
 
@@ -4770,9 +4771,9 @@ webhooks:
 
 components:
   securitySchemes:
-    # A personal access token, issued to one of your own console users from the portal's Security
-    # page. It authenticates AS that person and is authorized by their live permissions, so it
-    # carries no scopes at all.
+    # A personal access token, issued to one of your own console users from the portal's Personal
+    # access tokens page (Account › Personal access tokens). It authenticates AS that person and is
+    # authorized by their live permissions, so it carries no scopes at all.
     #
     # Only ONE operation takes this instead of a client-credentials token, and the reason is money:
     # a number lookup spends your balance on every call, so it is deliberately not reachable by a
@@ -4780,7 +4781,7 @@ components:
     personalAccessToken:
       type: http
       scheme: bearer
-      description: A personal access token from your console user's Security page.
+      description: A personal access token from your console user's Personal access tokens page (Account › Personal access tokens).
     bearerAuth:
       type: http
       scheme: bearer
