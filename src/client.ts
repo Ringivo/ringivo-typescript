@@ -3,7 +3,7 @@
  *
  * `Ringivo` owns three things: the base URL (there is no default — see
  * below), one authenticated request path, and the resource namespaces hung
- * off it (`client.faxes`).
+ * off it (`client.faxes`, `client.faxAccounts`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -41,6 +41,7 @@ import { type PathBasedClient, createPathBasedClient } from "openapi-fetch";
 import type { paths } from "./_generated/schema.js";
 import { ClientCredentialsAuth, USER_AGENT } from "./auth.js";
 import { throwForResponse } from "./errors.js";
+import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
 import { VERSION } from "./version.js";
 
@@ -80,6 +81,11 @@ export interface RingivoOptions {
    * your provider's answer rather than assuming the request was honoured in
    * full. Only two cases are loud: a scope NAME nobody publishes, and an
    * intersection that comes out empty.
+   *
+   * `fax:read` and `fax:write` are what the fax calls need. Opening,
+   * changing or deleting a fax account needs `fax-accounts:write` as well —
+   * a reseller-tier scope, so a credential issued for one customer cannot
+   * hold it however it is asked for.
    */
   scopes: readonly string[];
   /**
@@ -121,6 +127,9 @@ export class Ringivo {
 
   /** Send a fax, read one, list them, cancel one, fetch its pages. */
   readonly faxes: Faxes;
+
+  /** Open a customer's fax account, read it, change it, delete it. */
+  readonly faxAccounts: FaxAccounts;
 
   private readonly auth: ClientCredentialsAuth;
 
@@ -199,6 +208,7 @@ export class Ringivo {
     );
 
     this.faxes = new Faxes(this);
+    this.faxAccounts = new FaxAccounts(this);
   }
 
   toString(): string {

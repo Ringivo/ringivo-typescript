@@ -21,6 +21,10 @@
  * The base URL has no default and no hostname is compiled into this package:
  * your provider gives you theirs.
  *
+ * Fax accounts are `client.faxAccounts` — list them, read one, open one for
+ * a customer, change its settings, delete it, and read the numbers routed to
+ * it. Reads need `fax:read`; every write needs `fax-accounts:write`.
+ *
  * Webhook receivers want `verifyWebhook()`, which needs no client and no
  * network.
  */
@@ -33,6 +37,8 @@ export {
   SignatureVerificationError,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
+export { FaxAccounts } from "./faxAccounts.js";
+export type { ListFaxAccountsOptions } from "./faxAccounts.js";
 export { Faxes } from "./faxes.js";
 export type {
   ListFaxesOptions,
@@ -40,7 +46,15 @@ export type {
   SendFaxOptions,
   FaxUpload,
 } from "./faxes.js";
-export type { Fax, FaxDocument, FaxPage, MediaLink } from "./models.js";
+export type {
+  Fax,
+  FaxAccount,
+  FaxAccountNumber,
+  FaxAccountPage,
+  FaxDocument,
+  FaxPage,
+  MediaLink,
+} from "./models.js";
 export { VERSION } from "./version.js";
 export { DEFAULT_TOLERANCE_SECONDS, SIGNATURE_HEADER, verifyWebhook } from "./webhooks.js";
 export type { VerifyWebhookOptions } from "./webhooks.js";

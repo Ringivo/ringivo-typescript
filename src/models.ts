@@ -142,6 +142,23 @@ function nested(source: RawJson, key: string): RawJson | null {
 }
 
 /**
+ * The id inside a to-one relationship's linkage, or null.
+ *
+ * THE LINKAGE IS OPTIONAL IN THE DOCUMENT, so null here does not mean the
+ * resource has no such relation. JSON:API lets a server answer a
+ * relationship with `links` alone and no `data` member at all, and this
+ * API's own schema marks the member optional. So null reads "the server did
+ * not send the linkage on this response", never "there is no customer" —
+ * and `raw` still carries whatever did arrive.
+ */
+function relationshipId(resource: RawJson, name: string): string | null {
+  const relationships = nested(resource, "relationships");
+  const relation = relationships ? nested(relationships, name) : null;
+  const data = relation ? nested(relation, "data") : null;
+  return data ? text(data, "id") : null;
+}
+
+/**
  * An ISO-8601 instant as the API writes it, or null.
  *
  * The API writes both `...T11:02:31.000000Z` and `...T11:02:31+00:00`, and
@@ -245,6 +262,129 @@ export function mediaLinkFromJson(payload: RawJson): MediaLink {
     sha256: text(payload, "sha256"),
     raw: payload,
   });
+}
+
+/**
+ * One fax account: a customer's container for numbers, faxes and settings.
+ *
+ * `retentionDays` and `retentionPages` are the two prune rules, and **null
+ * means the rule is OFF** — the pages are kept for ever, or without a count
+ * limit. The API writes `null` for that, so null is the honest reading of
+ * it; it is also what you get if a server stops sending the member at all,
+ * and `raw` is where the two can be told apart.
+ *
+ * `customerId` is the customer this account belongs to, when the server
+ * sends the relationship linkage. An account is never moved between
+ * customers: every fax it holds carries the customer it was sent or
+ * received for.
+ */
+export interface FaxAccount {
+  readonly id: string;
+  readonly name: string | null;
+  readonly headerText: string | null;
+  readonly defaultFromE164: string | null;
+  readonly retentionDays: number | null;
+  readonly retentionPages: number | null;
+  readonly status: string | null;
+  readonly customerId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `faxAccounts.list()`, newest first.
+ *
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` —
+ * never one this client built — and it is null on the last page. `nextUrl`
+ * mirrors `links.next`, which is absent rather than null at the end.
+ */
+export interface FaxAccountPage {
+  readonly accounts: readonly FaxAccount[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One number routed to a fax account.
+ *
+ * It is a `phone-numbers` resource — the routing API's own object, read
+ * here through the account it points at. This model carries the members a
+ * fax integration needs and leaves the rest in `raw`, which is where a
+ * number's messaging and voice blocks stay.
+ */
+export interface FaxAccountNumber {
+  readonly id: string;
+  readonly e164: string | null;
+  readonly status: string | null;
+  readonly country: string | null;
+  readonly activatedAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — every fax-account call. */
+export function faxAccountFromResource(resource: RawJson): FaxAccount {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    name: text(attributes, "name"),
+    headerText: text(attributes, "headerText"),
+    defaultFromE164: text(attributes, "defaultFromE164"),
+    retentionDays: integer(attributes, "retentionDays"),
+    retentionPages: integer(attributes, "retentionPages"),
+    status: text(attributes, "status"),
+    customerId: relationshipId(resource, "customer"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+/** Build from a `phone-numbers` resource object — `faxAccounts.numbers()`. */
+export function faxAccountNumberFromResource(resource: RawJson): FaxAccountNumber {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    e164: text(attributes, "e164"),
+    status: text(attributes, "status"),
+    country: text(attributes, "country"),
+    activatedAt: instant(attributes.activatedAt),
+    createdAt: instant(attributes.createdAt),
+    raw: resource,
+  });
+}
+
+export function faxAccountPageFromDocument(document: RawJson): FaxAccountPage {
+  const data = document.data;
+  const accounts = (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountFromResource);
+
+  return Object.freeze({
+    accounts: Object.freeze(accounts),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/** The `phone-numbers` resources in one page of the numbers relationship. */
+export function faxAccountNumbersFromDocument(document: RawJson): readonly FaxAccountNumber[] {
+  const data = document.data;
+  return (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountNumberFromResource);
+}
+
+/**
+ * `meta.page.nextCursor` off any collection document.
+ *
+ * Exported for `faxAccounts.numbers()`, which walks the numbers collection
+ * itself rather than handing back a page object — the cursor reader is the
+ * same one every other page uses, and there is no second copy of it.
+ */
+export function nextCursorOfDocument(document: RawJson): string | null {
+  return nextCursorOf(document);
 }
 
 export function faxPageFromDocument(document: RawJson): FaxPage {
