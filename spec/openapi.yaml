@@ -5807,17 +5807,19 @@ components:
         retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
         status:
           $ref: '#/components/schemas/FaxAccountStatus'
+    # A FLAT OBJECT, NOT AN `allOf` OVER THE WRITABLE SCHEMA: a TypedDict cannot re-require an
+    # inherited key; both generators want a flat object here.
     FaxAccountCreateAttributes:
-      allOf:
-        - $ref: '#/components/schemas/FaxAccountWritableAttributes'
-        # THE BRANCH CARRIES `name` AS WELL AS REQUIRING IT, and the one duplicated line is the price
-        # of a generated type an integrator can use: a branch that requires a property it does not
-        # declare renders as `Record<string, never>` in openapi-typescript, and intersecting with that
-        # makes the whole attributes object unwritable. The field list itself is still in ONE place.
-        - type: object
-          required: [name]
-          properties:
-            name: { type: string, maxLength: 128 }
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, maxLength: 128 }
+        headerText: { type: [string, 'null'], maxLength: 64 }
+        defaultFromE164: { type: [string, 'null'] }
+        retentionDays: { type: [integer, 'null'], minimum: 1, maximum: 36500 }
+        retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
+        status:
+          $ref: '#/components/schemas/FaxAccountStatus'
     FaxAccountCreateRequest:
       type: object
       required: [data]

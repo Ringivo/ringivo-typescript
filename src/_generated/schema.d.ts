@@ -2541,8 +2541,13 @@ export interface components {
             retentionPages?: number | null;
             status?: components["schemas"]["FaxAccountStatus"];
         };
-        FaxAccountCreateAttributes: components["schemas"]["FaxAccountWritableAttributes"] & {
+        FaxAccountCreateAttributes: {
             name: string;
+            headerText?: string | null;
+            defaultFromE164?: string | null;
+            retentionDays?: number | null;
+            retentionPages?: number | null;
+            status?: components["schemas"]["FaxAccountStatus"];
         };
         FaxAccountCreateRequest: {
             data: {
