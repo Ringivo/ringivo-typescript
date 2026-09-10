@@ -1,8 +1,8 @@
 # ringivo
 
 The TypeScript and JavaScript client for the Ringivo fax API: send a fax,
-read one, list them, cancel one, fetch its pages, and verify the webhooks
-that tell you what happened.
+read one, list them, cancel one, fetch its pages, manage your customers' fax
+accounts, and verify the webhooks that tell you what happened.
 
 ```sh
 npm install ringivo
@@ -70,6 +70,28 @@ Two cases are loud instead. A scope **name** nobody publishes is refused
 outright — a typo is a mistake, not an answer about permissions. And if every
 scope you asked for is dropped, so that nothing at all is left, the mint
 refuses rather than handing you a token no endpoint accepts.
+
+The scopes this client's calls need are `fax:read` and `fax:write` for
+faxes, and `fax-accounts:write` for opening, changing or deleting a fax
+account — a reseller-tier scope, so a credential issued for one customer
+cannot hold it however it is asked for. A client that provisions accounts
+and then reads them asks for both:
+
+```ts
+const provisioning = new Ringivo({
+  baseUrl: "https://api.yourprovider.example",
+  clientId: "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
+  clientSecret: "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
+  tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+  scopes: ["fax:read", "fax-accounts:write"],
+});
+
+const account = await provisioning.faxAccounts.create({
+  customer: "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+  name: "Front desk",
+});
+console.log(account.id, account.retentionDays);
+```
 
 ## Send a fax
 
@@ -162,6 +184,101 @@ await writeFile("received.pdf", pdf);
 `media()` mints a short-lived download link and follows it for you. Use
 `mediaLink()` instead if you want the URL and its expiry — but do not cache
 it or pass it on: anyone holding it reads that document.
+
+## Fax accounts
+
+A fax account is a customer's container: the numbers routed to it, the faxes
+sent and received on it, and the settings that govern both. Opening,
+changing and deleting one is `client.faxAccounts`.
+
+```ts
+const account = await client.faxAccounts.create({
+  customer: "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+  name: "Front desk",
+  headerText: "ACME VETERINARY",
+  retentionDays: 365,
+});
+
+const page = await client.faxAccounts.list({
+  customer: "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+});
+for (const one of page.accounts) {
+  console.log(one.id, one.name, one.status);
+}
+
+for (const number of await client.faxAccounts.numbers(account.id)) {
+  console.log(number.e164, number.status);
+}
+
+await client.faxAccounts.update(account.id, { status: "suspended" }); // receive only
+await client.faxAccounts.delete(account.id);
+```
+
+**An account belongs to one customer for its whole life.** Every fax it
+holds carries the customer it was sent or received for, so there is no way
+to move it and no option that would try.
+
+**Numbers are attached through the routing API, not here.** A number points
+at one destination, and that rule belongs to the number:
+`POST /v1/phone-numbers/{id}/routing` with `target_type: fax`, through
+`client.request()`. `numbers()` reads back what is pointed at this account —
+all of them, walking the pages for you, because a half-list of a fax
+account's numbers looks exactly like a full one.
+
+### Retention: two rules, either of them off
+
+Retention here DELETES; it never holds anything back.
+
+| Option | What it does | Off |
+|---|---|---|
+| `retentionDays` | Delete a fax's pages once they are older than this many days. | `null` — kept for ever |
+| `retentionPages` | Keep only this many of the newest pages on the account. | `null` — no page limit |
+
+A new account gets your provider's defaults — a year, and no page limit, at
+the time of writing — because this client sends nothing for an option you
+did not pass.
+
+```ts
+await client.faxAccounts.update(account.id, { retentionDays: 90, retentionPages: 5000 });
+await client.faxAccounts.update(account.id, { retentionDays: null }); // keep for ever
+```
+
+Deleting a FAX is never blocked by retention: `DELETE /v1/faxes/{id}`
+removes its pages now.
+
+### Changing one setting changes one setting
+
+`update()` is a sparse PATCH: it sends only the members you pass, so
+suspending an account leaves its retention rules exactly as they were.
+`undefined` is "not given"; `null` is a value that clears a nullable field.
+
+```ts
+await client.faxAccounts.update(account.id, { defaultFromE164: null }); // clears it
+await client.faxAccounts.update(account.id, {});                       // throws
+```
+
+### Deleting an account
+
+`delete()` DESTROYS the stored pages of every fax on the account and cannot
+be undone — download anything worth keeping first. The account then leaves
+your listings and the people granted it lose access; the fax records
+themselves survive as the billing and audit evidence, and nothing bills
+after the delete.
+
+It is refused while any number still routes to the account:
+
+```ts
+try {
+  await client.faxAccounts.delete(account.id);
+} catch (refusal) {
+  if (refusal instanceof ApiError && refusal.code === "fax_account_has_routed_numbers") {
+    console.log("move or release its numbers first");
+  }
+}
+```
+
+Branch on `code`, not on the 409: a fax that cannot be cancelled is a 409
+too, and it carries no code at all.
 
 ## Verify a webhook
 
@@ -278,22 +395,28 @@ decision and not a library's.
 
 ## What is in the box
 
-| | |
-|---|---|
-| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant, customer?, timeoutMs? })` | The client. `tenant` is required; `scopes` may not be empty. |
-| `client.faxes.send({ faxAccount, to, file \| urls, … })` | Send one fax. Resolves to the accepted `Fax`. |
-| `client.faxes.get(faxId, { include? })` | One fax, complete. |
-| `client.faxes.list({ …filters, after?, before?, pageSize? })` | A `FaxPage`: `faxes` plus `nextCursor`. |
-| `client.faxes.cancel(faxId)` | Withdraw a fax before it is answered. |
-| `client.faxes.media(faxId, { format? })` | The document's bytes, as a `Uint8Array`. |
-| `client.faxes.mediaLink(faxId, { format? })` | The URL and its expiry, as a `MediaLink`. |
-| `client.request(request)` | Any endpoint this client does not wrap yet, with your credential. |
-| `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | Throws unless the body is genuine and fresh. |
+| | Scope | |
+|---|---|---|
+| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant, customer?, timeoutMs? })` | — | The client. `tenant` is required; `scopes` may not be empty. |
+| `client.faxes.send({ faxAccount, to, file \| urls, … })` | `fax:write` | Send one fax. Resolves to the accepted `Fax`. |
+| `client.faxes.get(faxId, { include? })` | `fax:read` | One fax, complete. |
+| `client.faxes.list({ …filters, after?, before?, pageSize? })` | `fax:read` | A `FaxPage`: `faxes` plus `nextCursor`. |
+| `client.faxes.cancel(faxId)` | `fax:write` | Withdraw a fax before it is answered. |
+| `client.faxes.media(faxId, { format? })` | `fax:read` | The document's bytes, as a `Uint8Array`. |
+| `client.faxes.mediaLink(faxId, { format? })` | `fax:read` | The URL and its expiry, as a `MediaLink`. |
+| `client.faxAccounts.list({ customer?, status?, after?, before?, pageSize? })` | `fax:read` | A `FaxAccountPage`: `accounts` plus `nextCursor`. |
+| `client.faxAccounts.get(faxAccountId)` | `fax:read` | One `FaxAccount`. |
+| `client.faxAccounts.numbers(faxAccountId)` | `fax:read` | Every `FaxAccountNumber` routed to it, all pages walked. |
+| `client.faxAccounts.create({ customer, name, headerText?, defaultFromE164?, retentionDays?, retentionPages? })` | `fax-accounts:write` | Open an account for a customer. |
+| `client.faxAccounts.update(faxAccountId, { … })` | `fax-accounts:write` | A sparse PATCH: only what you pass. |
+| `client.faxAccounts.delete(faxAccountId)` | `fax-accounts:write` | Delete the account and its pages. 409 while numbers route to it. |
+| `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
+| `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 
-`Fax`, `FaxDocument`, `FaxPage` and `MediaLink` are frozen plain objects, and
-each keeps the JSON it was built from in `.raw` — so a member the API adds
-after this release reaches you without a new SDK. A member the API did not
-send reads `null`.
+`Fax`, `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxDocument`,
+`FaxPage` and `MediaLink` are frozen plain objects, and each keeps the JSON
+it was built from in `.raw` — so a member the API adds after this release
+reaches you without a new SDK. A member the API did not send reads `null`.
 
 The whole endpoint surface is typed from the OpenAPI document at
 `src/_generated/schema.d.ts`. Those types are private: they are regenerated
