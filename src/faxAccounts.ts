@@ -21,17 +21,22 @@
  * (client.ts). These two calls set both headers themselves.
  *
  * An earlier draft carried a second and larger reason: the spec declared
- * the request attributes as
+ * the create attributes as
  * `allOf: [FaxAccountWritableAttributes, {type: object, required: [name]}]`,
  * which openapi-typescript rendered as an intersection with
  * `Record<string, never>` — a type no property at all can be assigned to.
- * That is fixed, and it was measured rather than assumed. On the synced
- * tree of 2026-09-10 (spec rev 2ed4589) a create body and an update body
- * both compile against the generated request types, while a deliberate
- * control in the same throwaway probe file — `attributes: { retentionDays:
- * "365" }` — is still reported:
+ * The spec no longer does that. `FaxAccountCreateAttributes` is a plain
+ * object of the same six members with `name` required, and
+ * `FaxAccountUpdateRequest` carries `FaxAccountWritableAttributes` with
+ * nothing intersected onto it.
  *
- *     src/__probe.ts(32,19): error TS2322: Type 'string' is not assignable
+ * That was measured rather than assumed. On the synced tree of 2026-09-10
+ * (spec rev 31d1f36) a create body and an update body both compile against
+ * the generated request types, while a deliberate control in the same
+ * throwaway probe file — `attributes: { retentionDays: "365" }` — is still
+ * reported:
+ *
+ *     src/__probe.ts(30,19): error TS2322: Type 'string' is not assignable
  *     to type 'number'.
  *
  * so the clean compile says the types are usable rather than saying nothing
