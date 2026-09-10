@@ -109,6 +109,10 @@ tags:
     description: The customer-scoped container every fax hangs off.
   - name: Fax account users
     description: Which people may read which fax account's faxes.
+  - name: Phone numbers
+    description: |
+      Your DID inventory and where each number points. Only the routing REMOVAL is described here so
+      far; the rest of the collection is documented as it is written up.
   - name: Webhook endpoints
     description: |
       Where you want to be called back, and with what signing secret.
@@ -1380,8 +1384,7 @@ paths:
                       headerText: ACME VETERINARY
                       defaultFromE164: '+14075550100'
                       retentionDays: 90
-                      complianceRetention: false
-                      maxAttempts: 2
+                      retentionPages: 500
                       status: active
                       createdAt: '2026-08-01T09:00:00.000000Z'
                       updatedAt: '2026-08-16T11:00:00.000000Z'
@@ -1402,6 +1405,10 @@ paths:
         customer id that is not yours answers **404** on that relationship pointer — the same answer
         an id that names nothing anywhere gets.
 
+        Retention is two rules and each may be off: `retentionDays` deletes pages older than N days,
+        `retentionPages` keeps only the newest N pages. Send `null` for either to turn it off. Naming
+        neither gives the defaults — one year, no page limit.
+
         Numbers are not attached here: point a DID at the account through the routing API.
       security:
         - bearerAuth: [fax-accounts:write]
@@ -1418,7 +1425,7 @@ paths:
                   name: Front desk
                   headerText: ACME VETERINARY
                   retentionDays: 90
-                  maxAttempts: 2
+                  retentionPages: 500
                 relationships:
                   customer:
                     data:
@@ -1479,8 +1486,7 @@ paths:
                     headerText: ACME VETERINARY
                     defaultFromE164: '+14075550100'
                     retentionDays: 90
-                    complianceRetention: false
-                    maxAttempts: 2
+                    retentionPages: 500
                     status: active
                     createdAt: '2026-08-01T09:00:00.000000Z'
                     updatedAt: '2026-08-16T11:00:00.000000Z'
@@ -1538,8 +1544,14 @@ paths:
     delete:
       tags: [Fax accounts]
       operationId: deleteFaxAccount
-      summary: Retire a fax account
-      description: The account stops being listed; its record survives.
+      summary: Delete a fax account
+      description: |
+        The account's fax PAGES are deleted permanently and the account stops being listed. The fax
+        records survive — a transmission is the evidence a retention obligation and an audit are
+        about — and so do the account's user grants.
+
+        **Deleting is refused while any number routes to the account.** Remove the routing first
+        (`DELETE /v1/phone-numbers/{phoneNumber}/routing`), then delete.
       security:
         - bearerAuth: [fax-accounts:write]
       responses:
@@ -1551,6 +1563,18 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: Numbers still route to this account.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    code: fax_account_has_routed_numbers
+                    title: Fax account has routed numbers
+                    detail: 2 number(s) still route to the Front desk fax account. Remove their routing first, then delete it.
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -3086,6 +3110,47 @@ paths:
                       the backoffice.
                     meta:
                       retryAllowedAt: '2026-09-03T11:20:00.000000Z'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/phone-numbers/{phoneNumber}/routing:
+    delete:
+      tags: [Phone numbers]
+      operationId: unroutePhoneNumber
+      summary: Stop a number pointing anywhere
+      description: |
+        The number stops routing. It is NOT released and NOT taken off its customer — the customer
+        still holds it, it simply rings nowhere — and the edge picks the change up on its next
+        reconcile.
+
+        Two states refuse it, and each names the one step that clears the block: the number is still
+        inside its customer's phone system, or it is the default caller ID of the fax account it
+        routes to (`code: number_is_default_caller_id`).
+      security:
+        - bearerAuth: [numbers:route]
+      parameters:
+        - $ref: '#/components/parameters/PhoneNumberId'
+      responses:
+        '204':
+          description: The number no longer routes anywhere.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The number does not route anywhere, or a state refuses the removal.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    code: number_is_default_caller_id
+                    title: Number is a default caller ID
+                    detail: +14075550100 is the default caller ID of the Front desk fax account. Choose a different default there first, then remove this number's routing.
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -5248,6 +5313,8 @@ components:
         - too_many_pages
         - unsupported_media_type
         - fax_account_suspended
+        - fax_account_has_routed_numbers
+        - number_is_default_caller_id
         - rate_limited
         - not_found
         - forbidden
@@ -5670,15 +5737,19 @@ components:
             The caller ID a send falls back to. May be set before the number is routed — whether the
             account holds it is asked at the send.
         retentionDays:
-          type: integer
+          type: [integer, 'null']
           minimum: 1
-          maximum: 2557
-          description: How long this account's fax media is kept.
-        complianceRetention: { type: boolean }
-        maxAttempts:
-          type: integer
+          maximum: 36500
+          description: |
+            How long this account's fax pages are kept, in days. **Null means they are never deleted
+            by age.**
+        retentionPages:
+          type: [integer, 'null']
           minimum: 1
-          maximum: 3
+          maximum: 1000000
+          description: |
+            How many pages this account keeps, newest first; everything past the limit is deleted.
+            **Null means there is no limit.**
         status:
           $ref: '#/components/schemas/FaxAccountStatus'
         createdAt: { type: [string, 'null'], format: date-time }
@@ -5732,11 +5803,21 @@ components:
         name: { type: string, maxLength: 128 }
         headerText: { type: [string, 'null'], maxLength: 64 }
         defaultFromE164: { type: [string, 'null'] }
-        retentionDays: { type: integer, minimum: 1, maximum: 2557 }
-        complianceRetention: { type: boolean }
-        maxAttempts: { type: integer, minimum: 1, maximum: 3 }
+        retentionDays: { type: [integer, 'null'], minimum: 1, maximum: 36500 }
+        retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
         status:
           $ref: '#/components/schemas/FaxAccountStatus'
+    FaxAccountCreateAttributes:
+      allOf:
+        - $ref: '#/components/schemas/FaxAccountWritableAttributes'
+        # THE BRANCH CARRIES `name` AS WELL AS REQUIRING IT, and the one duplicated line is the price
+        # of a generated type an integrator can use: a branch that requires a property it does not
+        # declare renders as `Record<string, never>` in openapi-typescript, and intersecting with that
+        # makes the whole attributes object unwritable. The field list itself is still in ONE place.
+        - type: object
+          required: [name]
+          properties:
+            name: { type: string, maxLength: 128 }
     FaxAccountCreateRequest:
       type: object
       required: [data]
@@ -5747,10 +5828,7 @@ components:
           properties:
             type: { type: string, enum: [fax-accounts] }
             attributes:
-              allOf:
-                - $ref: '#/components/schemas/FaxAccountWritableAttributes'
-                - type: object
-                  required: [name]
+              $ref: '#/components/schemas/FaxAccountCreateAttributes'
             relationships:
               type: object
               required: [customer]
@@ -5772,10 +5850,7 @@ components:
             type: { type: string, enum: [fax-accounts] }
             id: { type: string, format: uuid }
             attributes:
-              allOf:
-                - $ref: '#/components/schemas/FaxAccountWritableAttributes'
-                - type: object
-                  required: [name]
+              $ref: '#/components/schemas/FaxAccountWritableAttributes'
 
     # -- fax-account-users -------------------------------------------------------------------------
     FaxAccountUserAttributes:

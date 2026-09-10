@@ -501,6 +501,10 @@ export interface paths {
          *     customer id that is not yours answers **404** on that relationship pointer — the same answer
          *     an id that names nothing anywhere gets.
          *
+         *     Retention is two rules and each may be off: `retentionDays` deletes pages older than N days,
+         *     `retentionPages` keeps only the newest N pages. Send `null` for either to turn it off. Naming
+         *     neither gives the defaults — one year, no page limit.
+         *
          *     Numbers are not attached here: point a DID at the account through the routing API.
          */
         post: operations["createFaxAccount"];
@@ -525,8 +529,13 @@ export interface paths {
         put?: never;
         post?: never;
         /**
-         * Retire a fax account
-         * @description The account stops being listed; its record survives.
+         * Delete a fax account
+         * @description The account's fax PAGES are deleted permanently and the account stops being listed. The fax
+         *     records survive — a transmission is the evidence a retention obligation and an audit are
+         *     about — and so do the account's user grants.
+         *
+         *     **Deleting is refused while any number routes to the account.** Remove the routing first
+         *     (`DELETE /v1/phone-numbers/{phoneNumber}/routing`), then delete.
          */
         delete: operations["deleteFaxAccount"];
         options?: never;
@@ -1146,6 +1155,32 @@ export interface paths {
          */
         post: operations["retryMessagingEnablement"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/phone-numbers/{phoneNumber}/routing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Stop a number pointing anywhere
+         * @description The number stops routing. It is NOT released and NOT taken off its customer — the customer
+         *     still holds it, it simply rings nowhere — and the edge picks the change up on its next
+         *     reconcile.
+         *
+         *     Two states refuse it, and each names the one step that clears the block: the number is still
+         *     inside its customer's phone system, or it is the default caller ID of the fax account it
+         *     routes to (`code: number_is_default_caller_id`).
+         */
+        delete: operations["unroutePhoneNumber"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2144,7 +2179,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "rate_limited" | "not_found" | "forbidden" | "internal_error";
+        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -2458,10 +2493,16 @@ export interface components {
              *     account holds it is asked at the send.
              */
             defaultFromE164?: string | null;
-            /** @description How long this account's fax media is kept. */
-            retentionDays?: number;
-            complianceRetention?: boolean;
-            maxAttempts?: number;
+            /**
+             * @description How long this account's fax pages are kept, in days. **Null means they are never deleted
+             *     by age.**
+             */
+            retentionDays?: number | null;
+            /**
+             * @description How many pages this account keeps, newest first; everything past the limit is deleted.
+             *     **Null means there is no limit.**
+             */
+            retentionPages?: number | null;
             status?: components["schemas"]["FaxAccountStatus"];
             /** Format: date-time */
             createdAt?: string | null;
@@ -2496,16 +2537,18 @@ export interface components {
             name?: string;
             headerText?: string | null;
             defaultFromE164?: string | null;
-            retentionDays?: number;
-            complianceRetention?: boolean;
-            maxAttempts?: number;
+            retentionDays?: number | null;
+            retentionPages?: number | null;
             status?: components["schemas"]["FaxAccountStatus"];
+        };
+        FaxAccountCreateAttributes: components["schemas"]["FaxAccountWritableAttributes"] & {
+            name: string;
         };
         FaxAccountCreateRequest: {
             data: {
                 /** @enum {string} */
                 type: "fax-accounts";
-                attributes: components["schemas"]["FaxAccountWritableAttributes"] & Record<string, never>;
+                attributes: components["schemas"]["FaxAccountCreateAttributes"];
                 relationships: {
                     customer: {
                         data: components["schemas"]["ResourceIdentifier"];
@@ -2519,7 +2562,7 @@ export interface components {
                 type: "fax-accounts";
                 /** Format: uuid */
                 id: string;
-                attributes: components["schemas"]["FaxAccountWritableAttributes"] & Record<string, never>;
+                attributes: components["schemas"]["FaxAccountWritableAttributes"];
             };
         };
         FaxAccountUserAttributes: {
@@ -5115,8 +5158,7 @@ export interface operations {
                      *             "headerText": "ACME VETERINARY",
                      *             "defaultFromE164": "+14075550100",
                      *             "retentionDays": 90,
-                     *             "complianceRetention": false,
-                     *             "maxAttempts": 2,
+                     *             "retentionPages": 500,
                      *             "status": "active",
                      *             "createdAt": "2026-08-01T09:00:00.000000Z",
                      *             "updatedAt": "2026-08-16T11:00:00.000000Z"
@@ -5151,7 +5193,7 @@ export interface operations {
                  *           "name": "Front desk",
                  *           "headerText": "ACME VETERINARY",
                  *           "retentionDays": 90,
-                 *           "maxAttempts": 2
+                 *           "retentionPages": 500
                  *         },
                  *         "relationships": {
                  *           "customer": {
@@ -5234,8 +5276,7 @@ export interface operations {
                      *           "headerText": "ACME VETERINARY",
                      *           "defaultFromE164": "+14075550100",
                      *           "retentionDays": 90,
-                     *           "complianceRetention": false,
-                     *           "maxAttempts": 2,
+                     *           "retentionPages": 500,
                      *           "status": "active",
                      *           "createdAt": "2026-08-01T09:00:00.000000Z",
                      *           "updatedAt": "2026-08-16T11:00:00.000000Z"
@@ -5274,6 +5315,27 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /** @description Numbers still route to this account. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "code": "fax_account_has_routed_numbers",
+                     *           "title": "Fax account has routed numbers",
+                     *           "detail": "2 number(s) still route to the Front desk fax account. Remove their routing first, then delete it."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
@@ -6961,6 +7023,52 @@ export interface operations {
                      *           "meta": {
                      *             "retryAllowedAt": "2026-09-03T11:20:00.000000Z"
                      *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    unroutePhoneNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number no longer routes anywhere. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The number does not route anywhere, or a state refuses the removal. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "code": "number_is_default_caller_id",
+                     *           "title": "Number is a default caller ID",
+                     *           "detail": "+14075550100 is the default caller ID of the Front desk fax account. Choose a different default there first, then remove this number's routing."
                      *         }
                      *       ]
                      *     }
