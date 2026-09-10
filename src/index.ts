@@ -38,7 +38,11 @@ export {
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
 export { FaxAccounts } from "./faxAccounts.js";
-export type { ListFaxAccountsOptions } from "./faxAccounts.js";
+export type {
+  CreateFaxAccountOptions,
+  ListFaxAccountsOptions,
+  UpdateFaxAccountOptions,
+} from "./faxAccounts.js";
 export { Faxes } from "./faxes.js";
 export type {
   ListFaxesOptions,

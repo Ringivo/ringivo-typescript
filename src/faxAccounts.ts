@@ -28,8 +28,8 @@
  * That is fixed, and it was measured rather than assumed. On the synced
  * tree of 2026-09-10 (spec rev 2ed4589) a create body and an update body
  * both compile against the generated request types, while a deliberate
- * control in the same file — `attributes: { retentionDays: "365" }` — is
- * still reported:
+ * control in the same throwaway probe file — `attributes: { retentionDays:
+ * "365" }` — is still reported:
  *
  *     src/__probe.ts(32,19): error TS2322: Type 'string' is not assignable
  *     to type 'number'.
@@ -51,8 +51,8 @@
  * attribute nobody named is absent from the document and the platform's own
  * defaults apply rather than this package inventing them.
  */
-import type { paths } from "./_generated/schema.js";
-import { type Ringivo, transportOf } from "./client.js";
+import type { components, paths } from "./_generated/schema.js";
+import { JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
 import {
   type FaxAccount,
   type FaxAccountNumber,
@@ -78,6 +78,18 @@ import {
 type ListFaxAccountsQuery = NonNullable<
   paths["/v1/fax-accounts"]["get"]["parameters"]["query"]
 >;
+
+/**
+ * The two write documents and the attribute bag inside them, as the spec
+ * declares them.
+ *
+ * Local and unexported, like `ListFaxAccountsQuery` above: nothing generated
+ * crosses the public boundary. What they buy is that a member misspelled
+ * here is a compile error rather than a 422 read back out of a log.
+ */
+type CreateRequest = components["schemas"]["FaxAccountCreateRequest"];
+type UpdateRequest = components["schemas"]["FaxAccountUpdateRequest"];
+type WritableAttributes = components["schemas"]["FaxAccountWritableAttributes"];
 
 /**
  * The page size `numbers()` asks for. It is the API's published ceiling, so
@@ -106,6 +118,69 @@ export interface ListFaxAccountsOptions {
   before?: string;
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
+}
+
+/** What `faxAccounts.create()` accepts. */
+export interface CreateFaxAccountOptions {
+  /**
+   * The customer this account is FOR. Required, and fixed for the account's
+   * life — every fax it holds carries the customer it was sent or received
+   * for, so there is no way to move it. A customer id that is not yours
+   * answers 404 on the relationship pointer, the same as one that names
+   * nothing anywhere.
+   */
+  customer: string;
+  /** What a person calls this account. */
+  name: string;
+  /**
+   * The line printed across the top of every page, up to 64 characters —
+   * the fax protocol's own column, not a product choice. Pass `null` or an
+   * empty string for NO header line at all: the renderer skips the overlay,
+   * page count included.
+   */
+  headerText?: string | null;
+  /**
+   * The caller ID a send falls back to when it names none. It may be set
+   * before the number is routed — whether this account holds it is asked at
+   * the send, not here.
+   */
+  defaultFromE164?: string | null;
+  /**
+   * Delete this account's fax pages once they are older than this many days.
+   * **`null` turns the rule off** — the pages are kept for ever. Leave it
+   * out and your provider's default applies.
+   */
+  retentionDays?: number | null;
+  /**
+   * Keep only this many of the newest pages on the account. **`null` turns
+   * the rule off** — there is no page limit. Leave it out and your
+   * provider's default applies.
+   */
+  retentionPages?: number | null;
+}
+
+/**
+ * What `faxAccounts.update()` accepts — a SPARSE patch.
+ *
+ * Only the members you pass are sent, so changing a status leaves the
+ * retention rules exactly as they were. `undefined` is "not given"; `null`
+ * is a value that CLEARS a nullable field, which for the two retention
+ * members means turning that prune rule off.
+ *
+ * There is no `customer` here on purpose: an account is never moved between
+ * customers.
+ */
+export interface UpdateFaxAccountOptions {
+  name?: string;
+  headerText?: string | null;
+  defaultFromE164?: string | null;
+  retentionDays?: number | null;
+  retentionPages?: number | null;
+  /**
+   * `active`, or `suspended` to stop this account SENDING while it goes on
+   * receiving. Suspending deletes nothing.
+   */
+  status?: string;
 }
 
 /** The `client.faxAccounts` namespace. */
@@ -210,6 +285,103 @@ export class FaxAccounts {
       cursor = next;
     }
   }
+
+  /**
+   * Open a fax account for one of your customers.
+   *
+   * Leave a member out and the platform's own default applies — one year of
+   * retention and no page limit, at the time of writing. This client
+   * deliberately sends nothing for a member nobody named, so that policy
+   * stays the platform's rather than being frozen into an installed package.
+   *
+   * Numbers are not attached here: point a DID at the account through the
+   * routing API.
+   *
+   * Needs `fax-accounts:write`.
+   */
+  async create(options: CreateFaxAccountOptions): Promise<FaxAccount> {
+    const document: CreateRequest = {
+      data: {
+        type: "fax-accounts",
+        attributes: { ...writableAttributes(options), name: options.name },
+        relationships: {
+          customer: { data: { type: "customers", id: options.customer } },
+        },
+      },
+    };
+
+    const response = await this.client.request(
+      new Request(`${this.client.baseUrl}/v1/fax-accounts`, {
+        method: "POST",
+        headers: jsonApiHeaders(),
+        body: JSON.stringify(document),
+      }),
+    );
+
+    return faxAccountFromResource(dataObject(await response.json()));
+  }
+
+  /**
+   * Change a fax account's settings, or suspend it.
+   *
+   * A SPARSE PATCH: only the members you pass are sent. `null` clears a
+   * nullable field rather than meaning "no opinion".
+   *
+   * @throws Error when no member was named. An empty PATCH spends a round
+   *   trip and an audit entry to change nothing, and it is far more often a
+   *   form that came back empty than an intention.
+   *
+   * Needs `fax-accounts:write`.
+   */
+  async update(faxAccountId: string, options: UpdateFaxAccountOptions): Promise<FaxAccount> {
+    const attributes = writableAttributes(options);
+    if (Object.keys(attributes).length === 0) {
+      throw new Error(
+        "update() needs at least one field to change: name, headerText, defaultFromE164, " +
+          "retentionDays, retentionPages or status. Pass null to clear a nullable field — " +
+          "that counts as a change.",
+      );
+    }
+
+    const document: UpdateRequest = {
+      data: { type: "fax-accounts", id: faxAccountId, attributes },
+    };
+
+    const response = await this.client.request(
+      new Request(
+        `${this.client.baseUrl}/v1/fax-accounts/${encodeURIComponent(
+          faxAccountIdParam(faxAccountId),
+        )}`,
+        { method: "PATCH", headers: jsonApiHeaders(), body: JSON.stringify(document) },
+      ),
+    );
+
+    return faxAccountFromResource(dataObject(await response.json()));
+  }
+
+  /**
+   * Delete a fax account. The pages go; the records stay.
+   *
+   * This DESTROYS the stored pages of every fax on the account and cannot be
+   * undone — download anything you want to keep first. The account then
+   * leaves your listings and the people granted it lose access. The fax
+   * records themselves survive, because they are the billing and audit
+   * evidence, and nothing bills after this.
+   *
+   * It is REFUSED while any number still routes to the account: that is an
+   * `ApiError` whose `statusCode` is 409 and whose `code` is
+   * `fax_account_has_routed_numbers`. Move or release the numbers through
+   * the routing API, then delete. Branch on `code` rather than on the
+   * status — a fax that cannot be cancelled is a 409 too, and it carries no
+   * code at all.
+   *
+   * Needs `fax-accounts:write`.
+   */
+  async delete(faxAccountId: string): Promise<void> {
+    await transportOf(this.client)["/v1/fax-accounts/{faxAccount}"].DELETE({
+      params: { path: { faxAccount: faxAccountIdParam(faxAccountId) } },
+    });
+  }
 }
 
 /**
@@ -242,4 +414,63 @@ function dataObject(payload: unknown): RawJson {
   }
   const data = payload.data;
   return isRecord(data) ? data : {};
+}
+
+/**
+ * The `Accept` and `Content-Type` both fax-account writes send.
+ *
+ * `application/vnd.api+json` on BOTH, and the request half is the one that
+ * matters: a JSON:API resource route answers 415 to `application/json`,
+ * which is what a body sent with no explicit type gets.
+ */
+function jsonApiHeaders(): Headers {
+  return new Headers({ Accept: JSONAPI_MEDIA_TYPE, "Content-Type": JSONAPI_MEDIA_TYPE });
+}
+
+/**
+ * The attributes the caller actually named — `null` included.
+ *
+ * `undefined` is dropped and `null` is KEPT, because the two mean different
+ * things on the wire: an absent member leaves the server's value exactly as
+ * it was, while `null` clears a nullable field. They are separated HERE
+ * rather than left to `JSON.stringify` — which also drops `undefined` —
+ * because `update()` has to COUNT what was named in order to refuse an
+ * empty change, and a count taken after serialisation is a count of a
+ * string.
+ *
+ * `status` is widened to `string` on this package's own options and cast
+ * back here, for the reason `ListFaxAccountsOptions.status` is: a status the
+ * server adds tomorrow must be settable today, without waiting for a
+ * regenerate and a release.
+ */
+function writableAttributes(options: {
+  name?: string;
+  headerText?: string | null;
+  defaultFromE164?: string | null;
+  retentionDays?: number | null;
+  retentionPages?: number | null;
+  status?: string;
+}): WritableAttributes {
+  const attributes: WritableAttributes = {};
+
+  if (options.name !== undefined) {
+    attributes.name = options.name;
+  }
+  if (options.headerText !== undefined) {
+    attributes.headerText = options.headerText;
+  }
+  if (options.defaultFromE164 !== undefined) {
+    attributes.defaultFromE164 = options.defaultFromE164;
+  }
+  if (options.retentionDays !== undefined) {
+    attributes.retentionDays = options.retentionDays;
+  }
+  if (options.retentionPages !== undefined) {
+    attributes.retentionPages = options.retentionPages;
+  }
+  if (options.status !== undefined) {
+    attributes.status = options.status as WritableAttributes["status"];
+  }
+
+  return attributes;
 }
