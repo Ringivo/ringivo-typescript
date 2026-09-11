@@ -626,6 +626,295 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/sip-trunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List SIP trunks
+         * @description Every trunk your credential can reach. A customer-scoped credential sees its own customer's
+         *     trunks and no others.
+         */
+        get: operations["listSipTrunks"];
+        put?: never;
+        /**
+         * Create a SIP trunk
+         * @description A trunk is created FOR one of your customers, named in the `customer` relationship. A
+         *     customer id that is not yours answers **404** on that relationship pointer — the same answer
+         *     an id that names nothing anywhere gets.
+         *
+         *     `name`, `domainLabel`, `primaryRegion` and `mode` are required; a `register` trunk also needs
+         *     `username` and `password`. Everything else falls to the platform default, so a backend
+         *     provisioning a hundred trunks sends only the facts that differ.
+         *
+         *     `domainLabel` is unique across the whole platform and becomes part of the hostname the phone
+         *     system signs in to. Changing it later MOVES that hostname and ends every current
+         *     registration.
+         *
+         *     **A `static` trunk is refused here with a 409**, because it must name an enabled destination
+         *     and destinations are their own resource.
+         */
+        post: operations["createSipTrunk"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunks/{sipTrunk}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        /** Read one SIP trunk */
+        get: operations["getSipTrunk"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete a SIP trunk
+         * @description The trunk, its addresses and its destinations go permanently. The phone system stops being
+         *     able to sign in within seconds.
+         *
+         *     **Deleting is refused while any number routes to the trunk.** Move those numbers first
+         *     (`DELETE /v1/phone-numbers/{phoneNumber}/routing`), then delete. To stop calls without
+         *     deleting anything, PATCH `enabled: false`.
+         */
+        delete: operations["deleteSipTrunk"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a SIP trunk's settings
+         * @description A sparse PATCH of one attribute leaves every other field alone. Omitting `password` leaves the
+         *     stored credential as it is — it is never cleared by omission, because a trunk with no password
+         *     can neither register nor be challenged.
+         *
+         *     A trunk cannot be moved to another customer, and its addresses and destinations are not
+         *     edited here: naming `sipTrunkIps` or `sipTrunkTargets` is a 422 that says where they live.
+         */
+        patch: operations["updateSipTrunk"];
+        trace?: never;
+    };
+    "/v1/sip-trunks/{sipTrunk}/sip-trunk-ips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List the addresses one trunk accepts calls from
+         * @description Read-only. Adding and removing an address is `/v1/sip-trunk-ips`, because each is a row with
+         *     its own id.
+         */
+        get: operations["listSipTrunkAddressesForTrunk"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunks/{sipTrunk}/sip-trunk-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * List one trunk's destinations, in failover order
+         * @description Read-only, and ordered by `preference` ascending — the order the edge will actually try.
+         *     Adding and removing a destination is `/v1/sip-trunk-targets`.
+         */
+        get: operations["listSipTrunkDestinationsForTrunk"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunks/{sipTrunk}/reveal-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read a trunk's password back, once
+         * @description The only operation that returns a password. It is **audited**: the reseller sees who asked,
+         *     when, and from which address.
+         *
+         *     Send no body. The answer is the ordinary trunk document with `password` carrying the live
+         *     credential instead of `null`.
+         *
+         *     There is no read-back on `GET /v1/sip-trunks/{id}` and there never will be — a second,
+         *     un-audited path to a secret is the thing this endpoint exists instead of.
+         */
+        post: operations["revealSipTrunkPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunks/{sipTrunk}/regenerate-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a new password for a trunk
+         * @description Replaces the credential and answers the new one once. **The old password stops working
+         *     immediately**, so the phone system will fail to sign in until it is given the new one.
+         *
+         *     Send no body. Audited, exactly as the reveal is. If you would rather choose the password
+         *     yourself, PATCH `password` instead.
+         */
+        post: operations["regenerateSipTrunkPassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunk-ips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List allowed addresses */
+        get: operations["listSipTrunkAddresses"];
+        put?: never;
+        /**
+         * Add an allowed address
+         * @description `cidr` takes a bare IPv4 address or a CIDR block from /8 to /32; a bare address is stored as
+         *     its /32. A range that overlaps **another** trunk's is refused with a 422; a range that
+         *     overlaps one of this trunk's own is not an overlap.
+         */
+        post: operations["createSipTrunkAddress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunk-ips/{sipTrunkIp}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The allowed address's id. */
+                sipTrunkIp: components["parameters"]["SipTrunkIpId"];
+            };
+            cookie?: never;
+        };
+        /** Read one allowed address */
+        get: operations["getSipTrunkAddress"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove an allowed address
+         * @description The trunk stops accepting calls from that address. Removing the last address of a `static`
+         *     trunk leaves it unable to receive any call at all, and is not refused.
+         */
+        delete: operations["deleteSipTrunkAddress"];
+        options?: never;
+        head?: never;
+        /**
+         * Change an allowed address
+         * @description An address belongs to the trunk it was created for; moving one is a delete and a create,
+         *     because the overlap rule is decided per trunk.
+         */
+        patch: operations["updateSipTrunkAddress"];
+        trace?: never;
+    };
+    "/v1/sip-trunk-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List destinations
+         * @description Ordered by `preference` ascending — the order the edge will try them.
+         */
+        get: operations["listSipTrunkDestinations"];
+        put?: never;
+        /**
+         * Add a destination
+         * @description `host` is an IPv4 literal or a hostname. **A blank `port` is a meaning, not an omission**: it
+         *     resolves the host through DNS SRV, and naming a port disables that lookup.
+         */
+        post: operations["createSipTrunkDestination"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/sip-trunk-targets/{sipTrunkTarget}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The destination's id. */
+                sipTrunkTarget: components["parameters"]["SipTrunkTargetId"];
+            };
+            cookie?: never;
+        };
+        /** Read one destination */
+        get: operations["getSipTrunkDestination"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a destination
+         * @description Removing the last enabled destination of a `static` trunk leaves it with nowhere to send
+         *     calls. Park one with `enabled: false` instead when you mean a maintenance window.
+         */
+        delete: operations["deleteSipTrunkDestination"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a destination, or park it
+         * @description `enabled: false` keeps the row and takes it out of the failover set, which is how a
+         *     maintenance window is expressed. A destination cannot be moved to another trunk.
+         */
+        patch: operations["updateSipTrunkDestination"];
+        trace?: never;
+    };
     "/v1/webhook-endpoints": {
         parameters: {
             query?: never;
@@ -2179,7 +2468,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error";
+        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -4087,6 +4376,372 @@ export interface components {
                 attributes: components["schemas"]["TenantWritableAttributes"];
             };
         };
+        /**
+         * @description `register` — the phone system signs in to the trunk hostname and we deliver inbound calls
+         *     wherever it registered from, so it works behind NAT and on a dynamic address.
+         *     `static` — the phone system never signs in; you list the addresses it calls from and the
+         *     hosts we send its calls to.
+         * @enum {string}
+         */
+        SipTrunkMode: "static" | "register";
+        /**
+         * @description `replace` — one binding, replaced on every sign-in, which is what every mainstream phone
+         *     system does. `additive` — several bindings held at once, for a system that registers more
+         *     than one contact.
+         * @enum {string}
+         */
+        SipTrunkRegistrationMode: "replace" | "additive";
+        /**
+         * @description The dial-plan country a trunk's numbers are read against.
+         * @enum {string}
+         */
+        SipTrunkLocalization: "US" | "CA" | "MX" | "GB";
+        /**
+         * @description How the CALLING number is presented to the phone system.
+         * @enum {string}
+         */
+        SipTrunkAniFormat: "plus_e164" | "e164" | "national" | "plus_e164_national" | "e164_national";
+        /**
+         * @description How the CALLED number is presented to the phone system. `sip_username` sends the trunk's own
+         *     username instead of the number, and is refused on a `static` trunk.
+         * @enum {string}
+         */
+        SipTrunkDnisFormat: "plus_e164" | "e164" | "national" | "sip_username";
+        /**
+         * @description Which destinations the trunk may call. `us_canada` and `nanp` are the two guarded settings;
+         *     `permit_all` opens international dialling.
+         * @enum {string}
+         */
+        SipTrunkDialPolicy: "us_canada" | "nanp" | "permit_all";
+        /**
+         * @description `anchored` keeps the audio on our edge, which is what makes recording and mid-call features
+         *     possible. `direct` lets the audio flow end to end.
+         * @enum {string}
+         */
+        SipTrunkMediaMode: "anchored" | "direct";
+        /**
+         * @description The transport a destination is reached over.
+         * @enum {string}
+         */
+        SipTrunkTransport: "udp" | "tcp" | "tls";
+        /**
+         * @description Whether the phone system is currently signed in — a **recent observation**, not a record. The
+         *     edge is the authority; the console is told about a registration and cannot create, move or
+         *     revoke one.
+         *
+         *     **`null` on a `static` trunk**, which never registers and never will. Reading `not_registered`
+         *     there would be a fault report about a working trunk.
+         *
+         *     **STATED LIMIT.** This object reports the cache's answer alone. It carries **no `unknown`
+         *     state and no freshness member**, so a client reading `not_registered` while our feed is down
+         *     is reading a cache nobody has corrected. Adding a freshness member later is additive and
+         *     breaks no client; nothing in v1 carries one, and nothing here should be read as implying one.
+         * @example {
+         *       "state": "registered",
+         *       "contacts": 1,
+         *       "expires_at": "2026-09-10T18:31:00Z"
+         *     }
+         */
+        SipTrunkRegistration: {
+            /** @enum {string} */
+            state?: "registered" | "not_registered";
+            /**
+             * @description How many bindings the edge holds. Always an integer, `0` when nothing is registered, so a
+             *     client can add it up without a null check.
+             */
+            contacts?: number;
+            /**
+             * Format: date-time
+             * @description When the current binding lapses unless the phone system refreshes it.
+             */
+            expires_at?: string | null;
+        } | null;
+        SipTrunkAttributes: {
+            name?: string;
+            /**
+             * @description The hostname label the phone system signs in to — `<domainLabel>.trunk.signlar.com`.
+             *     Unique across the whole platform. Changing it MOVES that hostname and ends every current
+             *     registration.
+             */
+            domainLabel?: string;
+            /**
+             * @description Which region carries this trunk's edge.
+             * @enum {string}
+             */
+            primaryRegion?: "use1" | "usw1";
+            /**
+             * @description A disabled trunk refuses registration, answers inbound calls 480 and outbound 403. It is
+             *     how you stop calls without deleting anything.
+             */
+            enabled?: boolean;
+            mode?: components["schemas"]["SipTrunkMode"];
+            /**
+             * @description The SIP identity. Required on a `register` trunk; a `static` trunk may carry none. Two
+             *     trunks may hold the same username — the hostname is what selects the trunk.
+             */
+            username?: string | null;
+            /**
+             * @description Sent on create and update. **Every ordinary read answers `null`** — the member is always
+             *     present and never carries the stored credential, so a client can send the same document
+             *     shape back without stripping it.
+             *
+             *     The live value comes from `POST /v1/sip-trunks/{id}/reveal-password` and
+             *     `POST /v1/sip-trunks/{id}/regenerate-password` alone, which answer this same document
+             *     with the plaintext in this member. Both are audited. It is NOT marked `writeOnly`, and
+             *     that is deliberate: those two responses carry it, so a generated response model that
+             *     omitted it could not describe them.
+             */
+            password?: string | null;
+            registrationMode?: components["schemas"]["SipTrunkRegistrationMode"];
+            /** @description How long a binding lasts, in seconds, before the phone system must refresh it. */
+            registrationExpires?: number;
+            localization?: components["schemas"]["SipTrunkLocalization"];
+            aniFormat?: components["schemas"]["SipTrunkAniFormat"];
+            dnisFormat?: components["schemas"]["SipTrunkDnisFormat"];
+            dialPolicy?: components["schemas"]["SipTrunkDialPolicy"];
+            mediaMode?: components["schemas"]["SipTrunkMediaMode"];
+            /**
+             * @description The codecs the trunk offers, **in preference order**. The order is the field's meaning,
+             *     so nothing sorts or de-duplicates it.
+             */
+            codecs?: ("PCMU" | "PCMA" | "G722")[];
+            registration?: components["schemas"]["SipTrunkRegistration"];
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        SipTrunkRelationships: {
+            customer?: components["schemas"]["RelationshipToOne"];
+            callerIdOverride?: components["schemas"]["RelationshipToOne"];
+            emergencyCallerId?: components["schemas"]["RelationshipToOne"];
+            sipTrunkIps?: components["schemas"]["RelationshipToMany"];
+            sipTrunkTargets?: components["schemas"]["RelationshipToMany"];
+        };
+        SipTrunkResource: {
+            /** @enum {string} */
+            type: "sip-trunks";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["SipTrunkAttributes"];
+            relationships?: components["schemas"]["SipTrunkRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        SipTrunkDocumentResponse: {
+            data: components["schemas"]["SipTrunkResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        SipTrunkCollectionDocument: {
+            data: components["schemas"]["SipTrunkResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        SipTrunkWritableAttributes: {
+            name?: string;
+            domainLabel?: string;
+            /** @enum {string} */
+            primaryRegion?: "use1" | "usw1";
+            enabled?: boolean;
+            mode?: components["schemas"]["SipTrunkMode"];
+            username?: string | null;
+            password?: string | null;
+            registrationMode?: components["schemas"]["SipTrunkRegistrationMode"];
+            registrationExpires?: number;
+            localization?: components["schemas"]["SipTrunkLocalization"];
+            aniFormat?: components["schemas"]["SipTrunkAniFormat"];
+            dnisFormat?: components["schemas"]["SipTrunkDnisFormat"];
+            dialPolicy?: components["schemas"]["SipTrunkDialPolicy"];
+            mediaMode?: components["schemas"]["SipTrunkMediaMode"];
+            codecs?: ("PCMU" | "PCMA" | "G722")[];
+        };
+        SipTrunkCreateAttributes: {
+            name: string;
+            domainLabel: string;
+            /** @enum {string} */
+            primaryRegion: "use1" | "usw1";
+            enabled?: boolean;
+            mode: components["schemas"]["SipTrunkMode"];
+            username?: string | null;
+            password?: string | null;
+            registrationMode?: components["schemas"]["SipTrunkRegistrationMode"];
+            registrationExpires?: number;
+            localization?: components["schemas"]["SipTrunkLocalization"];
+            aniFormat?: components["schemas"]["SipTrunkAniFormat"];
+            dnisFormat?: components["schemas"]["SipTrunkDnisFormat"];
+            dialPolicy?: components["schemas"]["SipTrunkDialPolicy"];
+            mediaMode?: components["schemas"]["SipTrunkMediaMode"];
+            codecs?: ("PCMU" | "PCMA" | "G722")[];
+        };
+        SipTrunkCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "sip-trunks";
+                attributes: components["schemas"]["SipTrunkCreateAttributes"];
+                relationships: {
+                    customer: {
+                        data: components["schemas"]["ResourceIdentifier"];
+                    };
+                };
+            };
+        };
+        SipTrunkUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "sip-trunks";
+                /** Format: uuid */
+                id: string;
+                attributes: components["schemas"]["SipTrunkWritableAttributes"];
+            };
+        };
+        SipTrunkIpAttributes: {
+            /**
+             * @description An IPv4 address or a CIDR block from /8 to /32. A bare address is stored, and read back,
+             *     as its /32.
+             */
+            cidr?: string;
+            /** @description Your own note about the address — "Dallas office". */
+            description?: string | null;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        SipTrunkIpRelationships: {
+            sipTrunk?: components["schemas"]["RelationshipToOne"];
+        };
+        SipTrunkIpResource: {
+            /** @enum {string} */
+            type: "sip-trunk-ips";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["SipTrunkIpAttributes"];
+            relationships?: components["schemas"]["SipTrunkIpRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        SipTrunkIpDocumentResponse: {
+            data: components["schemas"]["SipTrunkIpResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        SipTrunkIpCollectionDocument: {
+            data: components["schemas"]["SipTrunkIpResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        SipTrunkIpWritableAttributes: {
+            cidr?: string;
+            description?: string | null;
+        };
+        SipTrunkIpCreateAttributes: {
+            cidr: string;
+            description?: string | null;
+        };
+        SipTrunkIpCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "sip-trunk-ips";
+                attributes: components["schemas"]["SipTrunkIpCreateAttributes"];
+                relationships: {
+                    sipTrunk: {
+                        data: components["schemas"]["ResourceIdentifier"];
+                    };
+                };
+            };
+        };
+        SipTrunkIpUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "sip-trunk-ips";
+                /** Format: uuid */
+                id: string;
+                attributes: components["schemas"]["SipTrunkIpWritableAttributes"];
+            };
+        };
+        SipTrunkTargetAttributes: {
+            /** @description An IPv4 literal or a hostname. */
+            host?: string;
+            /**
+             * @description **Blank is a meaning, not a missing value**: `null` resolves the host through DNS SRV, and
+             *     naming a port disables that lookup.
+             */
+            port?: number | null;
+            transport?: components["schemas"]["SipTrunkTransport"];
+            /**
+             * @description Ascending — the lowest is tried first, and destinations sharing a preference ring at the
+             *     same time.
+             */
+            preference?: number;
+            /**
+             * @description A parked destination stays in the list and out of the failover set, which is how a
+             *     maintenance window is expressed.
+             */
+            enabled?: boolean;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        SipTrunkTargetRelationships: {
+            sipTrunk?: components["schemas"]["RelationshipToOne"];
+        };
+        SipTrunkTargetResource: {
+            /** @enum {string} */
+            type: "sip-trunk-targets";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["SipTrunkTargetAttributes"];
+            relationships?: components["schemas"]["SipTrunkTargetRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        SipTrunkTargetDocumentResponse: {
+            data: components["schemas"]["SipTrunkTargetResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        SipTrunkTargetCollectionDocument: {
+            data: components["schemas"]["SipTrunkTargetResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        SipTrunkTargetWritableAttributes: {
+            host?: string;
+            port?: number | null;
+            transport?: components["schemas"]["SipTrunkTransport"];
+            preference?: number;
+            enabled?: boolean;
+        };
+        SipTrunkTargetCreateAttributes: {
+            host: string;
+            port?: number | null;
+            transport: components["schemas"]["SipTrunkTransport"];
+            preference: number;
+            enabled: boolean;
+        };
+        SipTrunkTargetCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "sip-trunk-targets";
+                attributes: components["schemas"]["SipTrunkTargetCreateAttributes"];
+                relationships: {
+                    sipTrunk: {
+                        data: components["schemas"]["ResourceIdentifier"];
+                    };
+                };
+            };
+        };
+        SipTrunkTargetUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "sip-trunk-targets";
+                /** Format: uuid */
+                id: string;
+                attributes: components["schemas"]["SipTrunkTargetWritableAttributes"];
+            };
+        };
     };
     responses: {
         /** @description No usable bearer token was presented. */
@@ -4208,6 +4863,12 @@ export interface components {
          * @example -createdAt
          */
         Sort: string;
+        /** @description The SIP trunk's id. */
+        SipTrunkId: string;
+        /** @description The allowed address's id. */
+        SipTrunkIpId: string;
+        /** @description The destination's id. */
+        SipTrunkTargetId: string;
     };
     requestBodies: never;
     headers: never;
@@ -5653,6 +6314,982 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listSipTrunks: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only the trunks of this customer. */
+                "filter[customer]"?: string;
+                "filter[mode]"?: components["schemas"]["SipTrunkMode"];
+                "filter[enabled]"?: boolean;
+                /**
+                 * @description The trunk's primary region. There is deliberately no `filter[tenant]`: your credential is
+                 *     already narrowed to one reseller, so such a filter could only name your own id.
+                 */
+                "filter[region]"?: "use1" | "usw1";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The SIP trunks. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "sip-trunks",
+                     *           "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                     *           "attributes": {
+                     *             "name": "Joe's Pizza PBX",
+                     *             "domainLabel": "joespizza",
+                     *             "primaryRegion": "use1",
+                     *             "enabled": true,
+                     *             "mode": "register",
+                     *             "username": "joespizza-7k2q9x",
+                     *             "password": null,
+                     *             "registrationMode": "replace",
+                     *             "registrationExpires": 300,
+                     *             "localization": "US",
+                     *             "aniFormat": "e164",
+                     *             "dnisFormat": "e164",
+                     *             "dialPolicy": "us_canada",
+                     *             "mediaMode": "anchored",
+                     *             "codecs": [
+                     *               "PCMU",
+                     *               "PCMA",
+                     *               "G722"
+                     *             ],
+                     *             "registration": {
+                     *               "state": "registered",
+                     *               "contacts": 1,
+                     *               "expires_at": "2026-09-10T18:31:00Z"
+                     *             },
+                     *             "createdAt": "2026-09-01T09:00:00.000000Z",
+                     *             "updatedAt": "2026-09-09T11:00:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["SipTrunkCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createSipTrunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "sip-trunks",
+                 *         "attributes": {
+                 *           "name": "Joe's Pizza PBX",
+                 *           "domainLabel": "joespizza",
+                 *           "primaryRegion": "use1",
+                 *           "mode": "register",
+                 *           "username": "joespizza-7k2q9x",
+                 *           "password": "a-long-generated-secret"
+                 *         },
+                 *         "relationships": {
+                 *           "customer": {
+                 *             "data": {
+                 *               "type": "customers",
+                 *               "id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081"
+                 *             }
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["SipTrunkCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created trunk. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description The `customer` relationship names a customer that does not exist for you. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "404",
+                     *           "title": "Not Found",
+                     *           "detail": "The related resource does not exist.",
+                     *           "source": {
+                     *             "pointer": "/data/relationships/customer"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description A static trunk was asked for and no destination could be named. The error carries
+             *     `code: sip_trunk_refused`. One code covers every state refusal this resource has, so the
+             *     actionable half is always `detail` — it is the only member that can carry a count or
+             *     name the thing in the way.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "code": "sip_trunk_refused",
+                     *           "title": "Conflict",
+                     *           "detail": "Add at least one destination before saving a static trunk."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getSipTrunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The SIP trunk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteSipTrunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description Numbers still route to this trunk. The error carries `code: sip_trunk_refused` — the same
+             *     code as the create's 409, with the count in `detail`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "code": "sip_trunk_refused",
+                     *           "title": "Conflict",
+                     *           "detail": "This trunk still routes 3 phone numbers. Move them first."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateSipTrunk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "sip-trunks",
+                 *         "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "attributes": {
+                 *           "dialPolicy": "nanp",
+                 *           "enabled": false
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["SipTrunkUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated trunk. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listSipTrunkAddressesForTrunk: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+            };
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trunk's allowed addresses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkIpCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listSipTrunkDestinationsForTrunk: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+            };
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trunk's destinations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkTargetCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    revealSipTrunkPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trunk, carrying its password. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "sip-trunks",
+                     *         "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                     *         "attributes": {
+                     *           "password": "a-long-generated-secret"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["SipTrunkDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    regenerateSipTrunkPassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The SIP trunk's id. */
+                sipTrunk: components["parameters"]["SipTrunkId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The trunk, carrying its new password. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listSipTrunkAddresses: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only the addresses of this trunk. */
+                "filter[sipTrunk]"?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The allowed addresses. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "sip-trunk-ips",
+                     *           "id": "0198c4a1-6f70-7192-c394-5e6f70819203",
+                     *           "attributes": {
+                     *             "cidr": "203.0.113.0/24",
+                     *             "description": "Dallas office",
+                     *             "createdAt": "2026-09-01T09:05:00.000000Z",
+                     *             "updatedAt": "2026-09-01T09:05:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["SipTrunkIpCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createSipTrunkAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "sip-trunk-ips",
+                 *         "attributes": {
+                 *           "cidr": "203.0.113.0/24",
+                 *           "description": "Dallas office"
+                 *         },
+                 *         "relationships": {
+                 *           "sipTrunk": {
+                 *             "data": {
+                 *               "type": "sip-trunks",
+                 *               "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70"
+                 *             }
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["SipTrunkIpCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created address. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkIpDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description The `sipTrunk` relationship names a trunk that does not exist for you. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "404",
+                     *           "title": "Not Found",
+                     *           "detail": "The related resource does not exist.",
+                     *           "source": {
+                     *             "pointer": "/data/relationships/sipTrunk"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getSipTrunkAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The allowed address's id. */
+                sipTrunkIp: components["parameters"]["SipTrunkIpId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The address. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkIpDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteSipTrunkAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The allowed address's id. */
+                sipTrunkIp: components["parameters"]["SipTrunkIpId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateSipTrunkAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The allowed address's id. */
+                sipTrunkIp: components["parameters"]["SipTrunkIpId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "sip-trunk-ips",
+                 *         "id": "0198c4a1-6f70-7192-c394-5e6f70819203",
+                 *         "attributes": {
+                 *           "cidr": "203.0.113.0/24",
+                 *           "description": "Dallas office (new circuit)"
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["SipTrunkIpUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated address. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkIpDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listSipTrunkDestinations: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /** @description Only the destinations of this trunk. */
+                "filter[sipTrunk]"?: string;
+                "filter[enabled]"?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The destinations. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "sip-trunk-targets",
+                     *           "id": "0198c4a1-7081-72a3-d4a5-6f7081920314",
+                     *           "attributes": {
+                     *             "host": "pbx.joespizza.example",
+                     *             "port": null,
+                     *             "transport": "tcp",
+                     *             "preference": 10,
+                     *             "enabled": true,
+                     *             "createdAt": "2026-09-01T09:06:00.000000Z",
+                     *             "updatedAt": "2026-09-01T09:06:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["SipTrunkTargetCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createSipTrunkDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "sip-trunk-targets",
+                 *         "attributes": {
+                 *           "host": "pbx.joespizza.example",
+                 *           "port": null,
+                 *           "transport": "tcp",
+                 *           "preference": 10,
+                 *           "enabled": true
+                 *         },
+                 *         "relationships": {
+                 *           "sipTrunk": {
+                 *             "data": {
+                 *               "type": "sip-trunks",
+                 *               "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70"
+                 *             }
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["SipTrunkTargetCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The created destination. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkTargetDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description The `sipTrunk` relationship names a trunk that does not exist for you. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "404",
+                     *           "title": "Not Found",
+                     *           "detail": "The related resource does not exist.",
+                     *           "source": {
+                     *             "pointer": "/data/relationships/sipTrunk"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getSipTrunkDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The destination's id. */
+                sipTrunkTarget: components["parameters"]["SipTrunkTargetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The destination. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkTargetDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteSipTrunkDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The destination's id. */
+                sipTrunkTarget: components["parameters"]["SipTrunkTargetId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    updateSipTrunkDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The destination's id. */
+                sipTrunkTarget: components["parameters"]["SipTrunkTargetId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "sip-trunk-targets",
+                 *         "id": "0198c4a1-7081-72a3-d4a5-6f7081920314",
+                 *         "attributes": {
+                 *           "host": "pbx.joespizza.example",
+                 *           "port": 5060,
+                 *           "transport": "tcp",
+                 *           "preference": 20,
+                 *           "enabled": false
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["SipTrunkTargetUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The updated destination. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["SipTrunkTargetDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
             429: components["responses"]["RateLimited"];
         };
     };

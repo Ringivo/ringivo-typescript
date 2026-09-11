@@ -212,6 +212,39 @@ tags:
       `onboardingRequirements` carries the list, and every write on this surface is refused with a
       403 while it is non-empty.
 
+  - name: SIP trunks
+    description: |
+      A customer's phone system connected to Telimatic over SIP — one object per trunk, carrying the
+      credential that system signs in with and the way calls are formatted in both directions.
+
+      **A trunk is either `register` or `static`, and the two are configured differently.** A
+      `register` trunk signs in to `<domainLabel>.trunk.signlar.com` with `username` and `password`,
+      and we deliver inbound calls to wherever it registered from. A `static` trunk never signs in:
+      you list the addresses it may call from (`/v1/sip-trunk-ips`) and the hosts we send its calls
+      to (`/v1/sip-trunk-targets`).
+
+      **A static trunk cannot be created in one call.** `POST /v1/sip-trunks` refuses a `static`
+      trunk that names no enabled destination, and destinations are their own resource, so a create
+      document has no way to name one. Create the trunk in `register` mode and change it, or accept
+      the 409 and create it once its destinations exist.
+
+      **The password is write-only.** Send one on create or update; no read ever returns one. Read it
+      back with `POST /v1/sip-trunks/{id}/reveal-password`, which is audited.
+  - name: SIP trunk addresses
+    description: |
+      The addresses a trunk accepts calls from without a password — one row per address or CIDR
+      block, under one trunk.
+
+      **A range may not overlap another trunk's.** The edge identifies a trunk by the domain in the
+      request and only then checks the address, so an overlap is refused when you write it rather
+      than resolved at call time.
+  - name: SIP trunk destinations
+    description: |
+      Where a static trunk's calls are sent — one row per host, in the order the edge will try them.
+
+      **`preference` ascending is tried first**, and equal preferences ring at the same time. A blank
+      `port` resolves the host through DNS SRV; an explicit port disables that lookup.
+
 paths:
   /oauth/token:
     post:
@@ -1771,6 +1804,786 @@ paths:
       responses:
         '204':
           description: Withdrawn.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunks:
+    get:
+      tags: [SIP trunks]
+      operationId: listSipTrunks
+      summary: List SIP trunks
+      description: |
+        Every trunk your credential can reach. A customer-scoped credential sees its own customer's
+        trunks and no others.
+      security:
+        - bearerAuth: [sip-trunks:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[customer]
+          in: query
+          required: false
+          description: Only the trunks of this customer.
+          schema: { type: string, format: uuid }
+        - name: filter[mode]
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/SipTrunkMode'
+        - name: filter[enabled]
+          in: query
+          required: false
+          schema: { type: boolean }
+        - name: filter[region]
+          in: query
+          required: false
+          description: |
+            The trunk's primary region. There is deliberately no `filter[tenant]`: your credential is
+            already narrowed to one reseller, so such a filter could only name your own id.
+          schema: { type: string, enum: [use1, usw1] }
+      responses:
+        '200':
+          description: The SIP trunks.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkCollectionDocument'
+              example:
+                data:
+                  - type: sip-trunks
+                    id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                    attributes:
+                      name: Joe's Pizza PBX
+                      domainLabel: joespizza
+                      primaryRegion: use1
+                      enabled: true
+                      mode: register
+                      username: joespizza-7k2q9x
+                      password: null
+                      registrationMode: replace
+                      registrationExpires: 300
+                      localization: US
+                      aniFormat: e164
+                      dnisFormat: e164
+                      dialPolicy: us_canada
+                      mediaMode: anchored
+                      codecs: [PCMU, PCMA, G722]
+                      registration:
+                        state: registered
+                        contacts: 1
+                        expires_at: '2026-09-10T18:31:00Z'
+                      createdAt: '2026-09-01T09:00:00.000000Z'
+                      updatedAt: '2026-09-09T11:00:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [SIP trunks]
+      operationId: createSipTrunk
+      summary: Create a SIP trunk
+      description: |
+        A trunk is created FOR one of your customers, named in the `customer` relationship. A
+        customer id that is not yours answers **404** on that relationship pointer — the same answer
+        an id that names nothing anywhere gets.
+
+        `name`, `domainLabel`, `primaryRegion` and `mode` are required; a `register` trunk also needs
+        `username` and `password`. Everything else falls to the platform default, so a backend
+        provisioning a hundred trunks sends only the facts that differ.
+
+        `domainLabel` is unique across the whole platform and becomes part of the hostname the phone
+        system signs in to. Changing it later MOVES that hostname and ends every current
+        registration.
+
+        **A `static` trunk is refused here with a 409**, because it must name an enabled destination
+        and destinations are their own resource.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/SipTrunkCreateRequest'
+            example:
+              data:
+                type: sip-trunks
+                attributes:
+                  name: Joe's Pizza PBX
+                  domainLabel: joespizza
+                  primaryRegion: use1
+                  mode: register
+                  username: joespizza-7k2q9x
+                  password: a-long-generated-secret
+                relationships:
+                  customer:
+                    data:
+                      type: customers
+                      id: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
+      responses:
+        '201':
+          description: The created trunk.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The `customer` relationship names a customer that does not exist for you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '404'
+                    title: Not Found
+                    detail: The related resource does not exist.
+                    source:
+                      pointer: /data/relationships/customer
+        '409':
+          description: |
+            A static trunk was asked for and no destination could be named. The error carries
+            `code: sip_trunk_refused`. One code covers every state refusal this resource has, so the
+            actionable half is always `detail` — it is the only member that can carry a count or
+            name the thing in the way.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    code: sip_trunk_refused
+                    title: Conflict
+                    detail: Add at least one destination before saving a static trunk.
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunks/{sipTrunk}:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkId'
+    get:
+      tags: [SIP trunks]
+      operationId: getSipTrunk
+      summary: Read one SIP trunk
+      security:
+        - bearerAuth: [sip-trunks:read]
+      responses:
+        '200':
+          description: The SIP trunk.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [SIP trunks]
+      operationId: updateSipTrunk
+      summary: Change a SIP trunk's settings
+      description: |
+        A sparse PATCH of one attribute leaves every other field alone. Omitting `password` leaves the
+        stored credential as it is — it is never cleared by omission, because a trunk with no password
+        can neither register nor be challenged.
+
+        A trunk cannot be moved to another customer, and its addresses and destinations are not
+        edited here: naming `sipTrunkIps` or `sipTrunkTargets` is a 422 that says where they live.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/SipTrunkUpdateRequest'
+            example:
+              data:
+                type: sip-trunks
+                id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                attributes:
+                  dialPolicy: nanp
+                  enabled: false
+      responses:
+        '200':
+          description: The updated trunk.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [SIP trunks]
+      operationId: deleteSipTrunk
+      summary: Delete a SIP trunk
+      description: |
+        The trunk, its addresses and its destinations go permanently. The phone system stops being
+        able to sign in within seconds.
+
+        **Deleting is refused while any number routes to the trunk.** Move those numbers first
+        (`DELETE /v1/phone-numbers/{phoneNumber}/routing`), then delete. To stop calls without
+        deleting anything, PATCH `enabled: false`.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      responses:
+        '204':
+          description: Deleted.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            Numbers still route to this trunk. The error carries `code: sip_trunk_refused` — the same
+            code as the create's 409, with the count in `detail`.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    code: sip_trunk_refused
+                    title: Conflict
+                    detail: This trunk still routes 3 phone numbers. Move them first.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunks/{sipTrunk}/sip-trunk-ips:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkId'
+    get:
+      tags: [SIP trunks]
+      operationId: listSipTrunkAddressesForTrunk
+      summary: List the addresses one trunk accepts calls from
+      description: |
+        Read-only. Adding and removing an address is `/v1/sip-trunk-ips`, because each is a row with
+        its own id.
+      security:
+        - bearerAuth: [sip-trunks:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+      responses:
+        '200':
+          description: The trunk's allowed addresses.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkIpCollectionDocument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunks/{sipTrunk}/sip-trunk-targets:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkId'
+    get:
+      tags: [SIP trunks]
+      operationId: listSipTrunkDestinationsForTrunk
+      summary: List one trunk's destinations, in failover order
+      description: |
+        Read-only, and ordered by `preference` ascending — the order the edge will actually try.
+        Adding and removing a destination is `/v1/sip-trunk-targets`.
+      security:
+        - bearerAuth: [sip-trunks:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+      responses:
+        '200':
+          description: The trunk's destinations.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkTargetCollectionDocument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunks/{sipTrunk}/reveal-password:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkId'
+    post:
+      tags: [SIP trunks]
+      operationId: revealSipTrunkPassword
+      summary: Read a trunk's password back, once
+      description: |
+        The only operation that returns a password. It is **audited**: the reseller sees who asked,
+        when, and from which address.
+
+        Send no body. The answer is the ordinary trunk document with `password` carrying the live
+        credential instead of `null`.
+
+        There is no read-back on `GET /v1/sip-trunks/{id}` and there never will be — a second,
+        un-audited path to a secret is the thing this endpoint exists instead of.
+      security:
+        - bearerAuth: [sip-trunks:admin]
+      responses:
+        '200':
+          description: The trunk, carrying its password.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkDocumentResponse'
+              example:
+                data:
+                  type: sip-trunks
+                  id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+                  attributes:
+                    password: a-long-generated-secret
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunks/{sipTrunk}/regenerate-password:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkId'
+    post:
+      tags: [SIP trunks]
+      operationId: regenerateSipTrunkPassword
+      summary: Mint a new password for a trunk
+      description: |
+        Replaces the credential and answers the new one once. **The old password stops working
+        immediately**, so the phone system will fail to sign in until it is given the new one.
+
+        Send no body. Audited, exactly as the reveal is. If you would rather choose the password
+        yourself, PATCH `password` instead.
+      security:
+        - bearerAuth: [sip-trunks:admin]
+      responses:
+        '200':
+          description: The trunk, carrying its new password.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunk-ips:
+    get:
+      tags: [SIP trunk addresses]
+      operationId: listSipTrunkAddresses
+      summary: List allowed addresses
+      security:
+        - bearerAuth: [sip-trunks:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[sipTrunk]
+          in: query
+          required: false
+          description: Only the addresses of this trunk.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The allowed addresses.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkIpCollectionDocument'
+              example:
+                data:
+                  - type: sip-trunk-ips
+                    id: 0198c4a1-6f70-7192-c394-5e6f70819203
+                    attributes:
+                      cidr: 203.0.113.0/24
+                      description: Dallas office
+                      createdAt: '2026-09-01T09:05:00.000000Z'
+                      updatedAt: '2026-09-01T09:05:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [SIP trunk addresses]
+      operationId: createSipTrunkAddress
+      summary: Add an allowed address
+      description: |
+        `cidr` takes a bare IPv4 address or a CIDR block from /8 to /32; a bare address is stored as
+        its /32. A range that overlaps **another** trunk's is refused with a 422; a range that
+        overlaps one of this trunk's own is not an overlap.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/SipTrunkIpCreateRequest'
+            example:
+              data:
+                type: sip-trunk-ips
+                attributes:
+                  cidr: 203.0.113.0/24
+                  description: Dallas office
+                relationships:
+                  sipTrunk:
+                    data:
+                      type: sip-trunks
+                      id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+      responses:
+        '201':
+          description: The created address.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkIpDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The `sipTrunk` relationship names a trunk that does not exist for you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '404'
+                    title: Not Found
+                    detail: The related resource does not exist.
+                    source:
+                      pointer: /data/relationships/sipTrunk
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunk-ips/{sipTrunkIp}:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkIpId'
+    get:
+      tags: [SIP trunk addresses]
+      operationId: getSipTrunkAddress
+      summary: Read one allowed address
+      security:
+        - bearerAuth: [sip-trunks:read]
+      responses:
+        '200':
+          description: The address.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkIpDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [SIP trunk addresses]
+      operationId: updateSipTrunkAddress
+      summary: Change an allowed address
+      description: |
+        An address belongs to the trunk it was created for; moving one is a delete and a create,
+        because the overlap rule is decided per trunk.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/SipTrunkIpUpdateRequest'
+            example:
+              data:
+                type: sip-trunk-ips
+                id: 0198c4a1-6f70-7192-c394-5e6f70819203
+                attributes:
+                  cidr: 203.0.113.0/24
+                  description: Dallas office (new circuit)
+      responses:
+        '200':
+          description: The updated address.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkIpDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [SIP trunk addresses]
+      operationId: deleteSipTrunkAddress
+      summary: Remove an allowed address
+      description: |
+        The trunk stops accepting calls from that address. Removing the last address of a `static`
+        trunk leaves it unable to receive any call at all, and is not refused.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunk-targets:
+    get:
+      tags: [SIP trunk destinations]
+      operationId: listSipTrunkDestinations
+      summary: List destinations
+      description: Ordered by `preference` ascending — the order the edge will try them.
+      security:
+        - bearerAuth: [sip-trunks:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[sipTrunk]
+          in: query
+          required: false
+          description: Only the destinations of this trunk.
+          schema: { type: string, format: uuid }
+        - name: filter[enabled]
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: The destinations.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkTargetCollectionDocument'
+              example:
+                data:
+                  - type: sip-trunk-targets
+                    id: 0198c4a1-7081-72a3-d4a5-6f7081920314
+                    attributes:
+                      host: pbx.joespizza.example
+                      port: null
+                      transport: tcp
+                      preference: 10
+                      enabled: true
+                      createdAt: '2026-09-01T09:06:00.000000Z'
+                      updatedAt: '2026-09-01T09:06:00.000000Z'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [SIP trunk destinations]
+      operationId: createSipTrunkDestination
+      summary: Add a destination
+      description: |
+        `host` is an IPv4 literal or a hostname. **A blank `port` is a meaning, not an omission**: it
+        resolves the host through DNS SRV, and naming a port disables that lookup.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/SipTrunkTargetCreateRequest'
+            example:
+              data:
+                type: sip-trunk-targets
+                attributes:
+                  host: pbx.joespizza.example
+                  port: null
+                  transport: tcp
+                  preference: 10
+                  enabled: true
+                relationships:
+                  sipTrunk:
+                    data:
+                      type: sip-trunks
+                      id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+      responses:
+        '201':
+          description: The created destination.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkTargetDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The `sipTrunk` relationship names a trunk that does not exist for you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '404'
+                    title: Not Found
+                    detail: The related resource does not exist.
+                    source:
+                      pointer: /data/relationships/sipTrunk
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/sip-trunk-targets/{sipTrunkTarget}:
+    parameters:
+      - $ref: '#/components/parameters/SipTrunkTargetId'
+    get:
+      tags: [SIP trunk destinations]
+      operationId: getSipTrunkDestination
+      summary: Read one destination
+      security:
+        - bearerAuth: [sip-trunks:read]
+      responses:
+        '200':
+          description: The destination.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkTargetDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [SIP trunk destinations]
+      operationId: updateSipTrunkDestination
+      summary: Change a destination, or park it
+      description: |
+        `enabled: false` keeps the row and takes it out of the failover set, which is how a
+        maintenance window is expressed. A destination cannot be moved to another trunk.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/SipTrunkTargetUpdateRequest'
+            example:
+              data:
+                type: sip-trunk-targets
+                id: 0198c4a1-7081-72a3-d4a5-6f7081920314
+                attributes:
+                  host: pbx.joespizza.example
+                  port: 5060
+                  transport: tcp
+                  preference: 20
+                  enabled: false
+      responses:
+        '200':
+          description: The updated destination.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/SipTrunkTargetDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [SIP trunk destinations]
+      operationId: deleteSipTrunkDestination
+      summary: Remove a destination
+      description: |
+        Removing the last enabled destination of a `static` trunk leaves it with nowhere to send
+        calls. Park one with `enabled: false` instead when you mean a maintenance window.
+      security:
+        - bearerAuth: [sip-trunks:write]
+      responses:
+        '204':
+          description: Removed.
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -4970,6 +5783,25 @@ components:
       schema: { type: string }
       example: '-createdAt'
 
+    SipTrunkId:
+      name: sipTrunk
+      in: path
+      required: true
+      description: The SIP trunk's id.
+      schema: { type: string, format: uuid }
+    SipTrunkIpId:
+      name: sipTrunkIp
+      in: path
+      required: true
+      description: The allowed address's id.
+      schema: { type: string, format: uuid }
+    SipTrunkTargetId:
+      name: sipTrunkTarget
+      in: path
+      required: true
+      description: The destination's id.
+      schema: { type: string, format: uuid }
+
   responses:
     Unauthenticated:
       description: No usable bearer token was presented.
@@ -5319,6 +6151,7 @@ components:
         - not_found
         - forbidden
         - internal_error
+        - sip_trunk_refused
     ErrorDocument:
       type: object
       required: [errors]
@@ -7829,3 +8662,519 @@ components:
             id: { type: string, format: uuid }
             attributes:
               $ref: '#/components/schemas/TenantWritableAttributes'
+
+    # -- sip-trunks --------------------------------------------------------------------------------
+    SipTrunkMode:
+      type: string
+      description: |
+        `register` — the phone system signs in to the trunk hostname and we deliver inbound calls
+        wherever it registered from, so it works behind NAT and on a dynamic address.
+        `static` — the phone system never signs in; you list the addresses it calls from and the
+        hosts we send its calls to.
+      enum: [static, register]
+    SipTrunkRegistrationMode:
+      type: string
+      description: |
+        `replace` — one binding, replaced on every sign-in, which is what every mainstream phone
+        system does. `additive` — several bindings held at once, for a system that registers more
+        than one contact.
+      enum: [replace, additive]
+    SipTrunkLocalization:
+      type: string
+      description: The dial-plan country a trunk's numbers are read against.
+      enum: [US, CA, MX, GB]
+    SipTrunkAniFormat:
+      type: string
+      description: How the CALLING number is presented to the phone system.
+      enum: [plus_e164, e164, national, plus_e164_national, e164_national]
+    SipTrunkDnisFormat:
+      type: string
+      description: |
+        How the CALLED number is presented to the phone system. `sip_username` sends the trunk's own
+        username instead of the number, and is refused on a `static` trunk.
+      enum: [plus_e164, e164, national, sip_username]
+    SipTrunkDialPolicy:
+      type: string
+      description: |
+        Which destinations the trunk may call. `us_canada` and `nanp` are the two guarded settings;
+        `permit_all` opens international dialling.
+      enum: [us_canada, nanp, permit_all]
+    SipTrunkMediaMode:
+      type: string
+      description: |
+        `anchored` keeps the audio on our edge, which is what makes recording and mid-call features
+        possible. `direct` lets the audio flow end to end.
+      enum: [anchored, direct]
+    SipTrunkTransport:
+      type: string
+      description: The transport a destination is reached over.
+      enum: [udp, tcp, tls]
+    SipTrunkRegistration:
+      type: [object, 'null']
+      readOnly: true
+      description: |
+        Whether the phone system is currently signed in — a **recent observation**, not a record. The
+        edge is the authority; the console is told about a registration and cannot create, move or
+        revoke one.
+
+        **`null` on a `static` trunk**, which never registers and never will. Reading `not_registered`
+        there would be a fault report about a working trunk.
+
+        **STATED LIMIT.** This object reports the cache's answer alone. It carries **no `unknown`
+        state and no freshness member**, so a client reading `not_registered` while our feed is down
+        is reading a cache nobody has corrected. Adding a freshness member later is additive and
+        breaks no client; nothing in v1 carries one, and nothing here should be read as implying one.
+      properties:
+        state:
+          type: string
+          enum: [registered, not_registered]
+        contacts:
+          type: integer
+          description: |
+            How many bindings the edge holds. Always an integer, `0` when nothing is registered, so a
+            client can add it up without a null check.
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the current binding lapses unless the phone system refreshes it.
+      example:
+        state: registered
+        contacts: 1
+        expires_at: '2026-09-10T18:31:00Z'
+    SipTrunkAttributes:
+      type: object
+      properties:
+        name: { type: string, maxLength: 64 }
+        domainLabel:
+          type: string
+          description: |
+            The hostname label the phone system signs in to — `<domainLabel>.trunk.signlar.com`.
+            Unique across the whole platform. Changing it MOVES that hostname and ends every current
+            registration.
+          pattern: '^[a-z][a-z0-9-]{2,62}$'
+        primaryRegion:
+          type: string
+          description: Which region carries this trunk's edge.
+          enum: [use1, usw1]
+        enabled:
+          type: boolean
+          description: |
+            A disabled trunk refuses registration, answers inbound calls 480 and outbound 403. It is
+            how you stop calls without deleting anything.
+        mode:
+          $ref: '#/components/schemas/SipTrunkMode'
+        username:
+          type: [string, 'null']
+          description: |
+            The SIP identity. Required on a `register` trunk; a `static` trunk may carry none. Two
+            trunks may hold the same username — the hostname is what selects the trunk.
+        password:
+          type: [string, 'null']
+          minLength: 8
+          description: |
+            Sent on create and update. **Every ordinary read answers `null`** — the member is always
+            present and never carries the stored credential, so a client can send the same document
+            shape back without stripping it.
+
+            The live value comes from `POST /v1/sip-trunks/{id}/reveal-password` and
+            `POST /v1/sip-trunks/{id}/regenerate-password` alone, which answer this same document
+            with the plaintext in this member. Both are audited. It is NOT marked `writeOnly`, and
+            that is deliberate: those two responses carry it, so a generated response model that
+            omitted it could not describe them.
+        registrationMode:
+          $ref: '#/components/schemas/SipTrunkRegistrationMode'
+        registrationExpires:
+          type: integer
+          minimum: 60
+          maximum: 300
+          description: How long a binding lasts, in seconds, before the phone system must refresh it.
+        localization:
+          $ref: '#/components/schemas/SipTrunkLocalization'
+        aniFormat:
+          $ref: '#/components/schemas/SipTrunkAniFormat'
+        dnisFormat:
+          $ref: '#/components/schemas/SipTrunkDnisFormat'
+        dialPolicy:
+          $ref: '#/components/schemas/SipTrunkDialPolicy'
+        mediaMode:
+          $ref: '#/components/schemas/SipTrunkMediaMode'
+        codecs:
+          type: array
+          minItems: 1
+          description: |
+            The codecs the trunk offers, **in preference order**. The order is the field's meaning,
+            so nothing sorts or de-duplicates it.
+          items:
+            type: string
+            enum: [PCMU, PCMA, G722]
+        registration:
+          $ref: '#/components/schemas/SipTrunkRegistration'
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    SipTrunkRelationships:
+      type: object
+      properties:
+        customer:
+          $ref: '#/components/schemas/RelationshipToOne'
+        callerIdOverride:
+          $ref: '#/components/schemas/RelationshipToOne'
+        emergencyCallerId:
+          $ref: '#/components/schemas/RelationshipToOne'
+        sipTrunkIps:
+          $ref: '#/components/schemas/RelationshipToMany'
+        sipTrunkTargets:
+          $ref: '#/components/schemas/RelationshipToMany'
+    SipTrunkResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [sip-trunks] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/SipTrunkAttributes'
+        relationships:
+          $ref: '#/components/schemas/SipTrunkRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    SipTrunkDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/SipTrunkResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    SipTrunkCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SipTrunkResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    SipTrunkWritableAttributes:
+      type: object
+      properties:
+        name: { type: string, maxLength: 64 }
+        domainLabel: { type: string, pattern: '^[a-z][a-z0-9-]{2,62}$' }
+        primaryRegion: { type: string, enum: [use1, usw1] }
+        enabled: { type: boolean }
+        mode:
+          $ref: '#/components/schemas/SipTrunkMode'
+        username: { type: [string, 'null'] }
+        password: { type: [string, 'null'], minLength: 8 }
+        registrationMode:
+          $ref: '#/components/schemas/SipTrunkRegistrationMode'
+        registrationExpires: { type: integer, minimum: 60, maximum: 300 }
+        localization:
+          $ref: '#/components/schemas/SipTrunkLocalization'
+        aniFormat:
+          $ref: '#/components/schemas/SipTrunkAniFormat'
+        dnisFormat:
+          $ref: '#/components/schemas/SipTrunkDnisFormat'
+        dialPolicy:
+          $ref: '#/components/schemas/SipTrunkDialPolicy'
+        mediaMode:
+          $ref: '#/components/schemas/SipTrunkMediaMode'
+        codecs:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [PCMU, PCMA, G722] }
+    # A FLAT OBJECT, NOT AN `allOf` OVER THE WRITABLE SCHEMA: a TypedDict cannot re-require an
+    # inherited key; both generators want a flat object here.
+    SipTrunkCreateAttributes:
+      type: object
+      required: [name, domainLabel, primaryRegion, mode]
+      properties:
+        name: { type: string, maxLength: 64 }
+        domainLabel: { type: string, pattern: '^[a-z][a-z0-9-]{2,62}$' }
+        primaryRegion: { type: string, enum: [use1, usw1] }
+        enabled: { type: boolean }
+        mode:
+          $ref: '#/components/schemas/SipTrunkMode'
+        username: { type: [string, 'null'] }
+        password: { type: [string, 'null'], minLength: 8 }
+        registrationMode:
+          $ref: '#/components/schemas/SipTrunkRegistrationMode'
+        registrationExpires: { type: integer, minimum: 60, maximum: 300 }
+        localization:
+          $ref: '#/components/schemas/SipTrunkLocalization'
+        aniFormat:
+          $ref: '#/components/schemas/SipTrunkAniFormat'
+        dnisFormat:
+          $ref: '#/components/schemas/SipTrunkDnisFormat'
+        dialPolicy:
+          $ref: '#/components/schemas/SipTrunkDialPolicy'
+        mediaMode:
+          $ref: '#/components/schemas/SipTrunkMediaMode'
+        codecs:
+          type: array
+          minItems: 1
+          items: { type: string, enum: [PCMU, PCMA, G722] }
+    SipTrunkCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes, relationships]
+          properties:
+            type: { type: string, enum: [sip-trunks] }
+            attributes:
+              $ref: '#/components/schemas/SipTrunkCreateAttributes'
+            relationships:
+              type: object
+              required: [customer]
+              properties:
+                customer:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+    SipTrunkUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [sip-trunks] }
+            id: { type: string, format: uuid }
+            attributes:
+              $ref: '#/components/schemas/SipTrunkWritableAttributes'
+
+    # -- sip-trunk-ips -----------------------------------------------------------------------------
+    SipTrunkIpAttributes:
+      type: object
+      properties:
+        cidr:
+          type: string
+          description: |
+            An IPv4 address or a CIDR block from /8 to /32. A bare address is stored, and read back,
+            as its /32.
+        description:
+          type: [string, 'null']
+          maxLength: 64
+          description: Your own note about the address — "Dallas office".
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    SipTrunkIpRelationships:
+      type: object
+      properties:
+        sipTrunk:
+          $ref: '#/components/schemas/RelationshipToOne'
+    SipTrunkIpResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [sip-trunk-ips] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/SipTrunkIpAttributes'
+        relationships:
+          $ref: '#/components/schemas/SipTrunkIpRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    SipTrunkIpDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/SipTrunkIpResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    SipTrunkIpCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SipTrunkIpResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    SipTrunkIpWritableAttributes:
+      type: object
+      properties:
+        cidr: { type: string }
+        description: { type: [string, 'null'], maxLength: 64 }
+    SipTrunkIpCreateAttributes:
+      type: object
+      required: [cidr]
+      properties:
+        cidr: { type: string }
+        description: { type: [string, 'null'], maxLength: 64 }
+    SipTrunkIpCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes, relationships]
+          properties:
+            type: { type: string, enum: [sip-trunk-ips] }
+            attributes:
+              $ref: '#/components/schemas/SipTrunkIpCreateAttributes'
+            relationships:
+              type: object
+              required: [sipTrunk]
+              properties:
+                sipTrunk:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+    SipTrunkIpUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [sip-trunk-ips] }
+            id: { type: string, format: uuid }
+            attributes:
+              $ref: '#/components/schemas/SipTrunkIpWritableAttributes'
+
+    # -- sip-trunk-targets -------------------------------------------------------------------------
+    SipTrunkTargetAttributes:
+      type: object
+      properties:
+        host:
+          type: string
+          maxLength: 253
+          description: An IPv4 literal or a hostname.
+        port:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 65535
+          description: |
+            **Blank is a meaning, not a missing value**: `null` resolves the host through DNS SRV, and
+            naming a port disables that lookup.
+        transport:
+          $ref: '#/components/schemas/SipTrunkTransport'
+        preference:
+          type: integer
+          minimum: 0
+          maximum: 1000
+          description: |
+            Ascending — the lowest is tried first, and destinations sharing a preference ring at the
+            same time.
+        enabled:
+          type: boolean
+          description: |
+            A parked destination stays in the list and out of the failover set, which is how a
+            maintenance window is expressed.
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    SipTrunkTargetRelationships:
+      type: object
+      properties:
+        sipTrunk:
+          $ref: '#/components/schemas/RelationshipToOne'
+    SipTrunkTargetResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [sip-trunk-targets] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/SipTrunkTargetAttributes'
+        relationships:
+          $ref: '#/components/schemas/SipTrunkTargetRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    SipTrunkTargetDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/SipTrunkTargetResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    SipTrunkTargetCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SipTrunkTargetResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    SipTrunkTargetWritableAttributes:
+      type: object
+      properties:
+        host: { type: string, maxLength: 253 }
+        port: { type: [integer, 'null'], minimum: 1, maximum: 65535 }
+        transport:
+          $ref: '#/components/schemas/SipTrunkTransport'
+        preference: { type: integer, minimum: 0, maximum: 1000 }
+        enabled: { type: boolean }
+    SipTrunkTargetCreateAttributes:
+      type: object
+      required: [host, transport, preference, enabled]
+      properties:
+        host: { type: string, maxLength: 253 }
+        port: { type: [integer, 'null'], minimum: 1, maximum: 65535 }
+        transport:
+          $ref: '#/components/schemas/SipTrunkTransport'
+        preference: { type: integer, minimum: 0, maximum: 1000 }
+        enabled: { type: boolean }
+    SipTrunkTargetCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes, relationships]
+          properties:
+            type: { type: string, enum: [sip-trunk-targets] }
+            attributes:
+              $ref: '#/components/schemas/SipTrunkTargetCreateAttributes'
+            relationships:
+              type: object
+              required: [sipTrunk]
+              properties:
+                sipTrunk:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+    SipTrunkTargetUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [sip-trunk-targets] }
+            id: { type: string, format: uuid }
+            attributes:
+              $ref: '#/components/schemas/SipTrunkTargetWritableAttributes'
