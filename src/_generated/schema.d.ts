@@ -4446,8 +4446,9 @@ export interface components {
             /** @enum {string} */
             state?: "registered" | "not_registered";
             /**
-             * @description How many bindings the edge holds. Always an integer, `0` when nothing is registered, so a
-             *     client can add it up without a null check.
+             * @description How many bindings the edges hold, summed — a trunk may be signed in against more than one
+             *     access edge at a time, and this is the total. Always an integer, `0` when nothing is
+             *     registered, so a client can add it up without a null check.
              */
             contacts?: number;
             /**
