@@ -1449,16 +1449,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/phone-numbers/{phoneNumber}/routing": {
+    "/v1/phone-numbers/{phoneNumber}/customer": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
             cookie?: never;
         };
         get?: never;
         put?: never;
-        post?: never;
+        /**
+         * Give a number to one of your customers
+         * @description The number leaves your own pool and becomes that customer's. Nothing is ordered and no
+         *     carrier is told — this is your inventory bookkeeping, and it is true the moment the call
+         *     returns.
+         *
+         *     **Assignment is what makes routing legal.** A number nobody holds cannot be pointed
+         *     anywhere, so this is the first of the two writes that put a number into service.
+         *
+         *     **No number moves from one customer to another in one call.** Re-homing is four steps, in
+         *     this order: remove the routing, take the number off its customer, assign it to the new one,
+         *     route it again. The interruption in the middle is real, so the API makes you spell it out.
+         *
+         *     The body is flat JSON carrying `customer_id`. Only a customer of yours resolves; any other
+         *     id answers **404**, exactly as an id that names nothing does.
+         *
+         *     **A customer-scoped credential cannot assign.** Which customer holds which number is a
+         *     reseller decision, so a token narrowed to one customer is refused with a **403** even when it
+         *     carries `numbers:assign`.
+         */
+        post: operations["assignPhoneNumberToCustomer"];
+        /**
+         * Take a number back into your own pool
+         * @description The number returns to your own pool. It is NOT released: the row survives, you still hold the
+         *     number, and the carrier is never told.
+         *
+         *     No customer is named, because none is needed — the number carries its own owner, so this
+         *     takes it off whoever holds it.
+         *
+         *     **Three states refuse it, and each names the one step that clears the block**: the number
+         *     stands inside its customer's phone system, it still routes somewhere, or it has an
+         *     emergency-service registration. The phone system is answered FIRST of the three, because
+         *     removing the routing — what the routed sentence asks for — is itself refused while the number
+         *     stands in a phone system.
+         */
+        delete: operations["unassignPhoneNumberFromCustomer"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/phone-numbers/{phoneNumber}/routing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Point a number at a destination
+         * @description The number starts ringing somewhere. It is routed the moment this returns, the edge picks the
+         *     change up on its next reconcile, and no carrier is involved at all.
+         *
+         *     **The number must already belong to a customer, and the destination is always that customer's
+         *     own.** No field here can name anybody else's: a `pbx` route is derived from the number's own
+         *     customer, and a `fax_account` or `sip_trunk` id is looked up within that same customer — so
+         *     another customer's id is refused as an id that names nothing.
+         *
+         *     `target_type` chooses the KIND of destination, and defaults to `pbx`:
+         *
+         *     | `target_type` | Where the calls go | What else the body carries |
+         *     |---|---|---|
+         *     | `pbx` (the default) | The customer's phone system | nothing — a customer has exactly one |
+         *     | `fax` | One of the customer's fax accounts | `fax_account`, that account's id |
+         *     | `sip_trunk` | One of the customer's SIP trunks | `sip_trunk`, that trunk's id |
+         *
+         *     **The id field is required for its own kind and refused for any other**, rather than ignored:
+         *     a body carrying `fax_account` and no `target_type` would otherwise be told its PBX route
+         *     succeeded.
+         *
+         *     **The body is flat JSON, and a JSON:API document is refused with a 400.** A wrapped document
+         *     carries no top-level `target_type`, so reading it flat would answer 204 to a caller who asked
+         *     for a fax route and give them a PBX one. To route to the customer's phone system, send no body
+         *     at all.
+         *
+         *     **Re-routing is two calls**: remove the routing, then route again. A number that already
+         *     routes is refused, because the interruption between the two is real.
+         *
+         *     **A customer-scoped credential may route a number that is already its own customer's** — the
+         *     one write on this resource such a token can make, and the reason `numbers:route` is a separate
+         *     scope from `numbers:assign`.
+         */
+        post: operations["routePhoneNumber"];
         /**
          * Stop a number pointing anywhere
          * @description The number stops routing. It is NOT released and NOT taken off its customer — the customer
@@ -2985,6 +3075,45 @@ export interface components {
             links?: components["schemas"]["CollectionLinks"];
             meta?: components["schemas"]["DocumentMeta"];
         };
+        /**
+         * @description The body of an assignment — FLAT JSON rather than a JSON:API document, because the verb moves
+         *     a number rather than patching a resource. The field is spelled the way it is sent,
+         *     `snake_case`, and a refusal's `source.pointer` names it the same way.
+         */
+        PhoneNumberAssignRequest: {
+            /**
+             * Format: uuid
+             * @description The customer to give the number to. One of yours: any other id answers **404**, the same
+             *     answer an id that names nothing gets.
+             */
+            customer_id: string;
+        };
+        /**
+         * @description The body of a route — FLAT JSON, like the assignment above, and every member is optional: no
+         *     body at all points the number at its customer's phone system. A `data` member is refused with
+         *     a **400** rather than half-obeyed.
+         */
+        PhoneNumberRouteRequest: {
+            /**
+             * @description Which KIND of destination the number points at. Absent means `pbx`.
+             * @default pbx
+             * @enum {string}
+             */
+            target_type: "pbx" | "fax" | "sip_trunk";
+            /**
+             * Format: uuid
+             * @description The fax account to point the number at. **Required when `target_type` is `fax`, and
+             *     refused with any other kind** — a customer may hold several accounts, so a fax route has
+             *     to be told which one.
+             */
+            fax_account?: string;
+            /**
+             * Format: uuid
+             * @description The SIP trunk to point the number at. **Required when `target_type` is `sip_trunk`, and
+             *     refused with any other kind.**
+             */
+            sip_trunk?: string;
+        };
         WebhookEndpointAttributes: {
             scopeType?: components["schemas"]["WebhookScopeType"];
             /**
@@ -3059,16 +3188,20 @@ export interface components {
                 id: string;
                 /**
                  * @description A PATCH is sparse: send only the members you are changing. An omitted member keeps
-                 *     its stored value. `scopeType` and `scopeId` may be echoed back unchanged; a
-                 *     different value is a 422.
+                 *     its stored value.
                  */
                 attributes: {
                     /** Format: uri */
                     url?: string;
                     events?: components["schemas"]["WebhookEventType"][] | null;
                     active?: boolean;
-                } & {
-                    [key: string]: unknown;
+                    /** @description May be sent back unchanged; a different value is a 422 — a scope cannot change. */
+                    scopeType?: components["schemas"]["WebhookScopeType"];
+                    /**
+                     * Format: uuid
+                     * @description May be sent back unchanged; a different value is a 422 — a scope cannot change.
+                     */
+                    scopeId?: string;
                 };
             };
         };
@@ -8669,6 +8802,266 @@ export interface operations {
                      *           "detail": "The request to text-enable +13215550101 (0198c4a1-8f70-7081-b283-4d5e6f708201) failed too recently to try again. A new request can be made from 2026-09-03T11:20:00+00:00; staff can retry sooner from the backoffice.",
                      *           "meta": {
                      *             "retryAllowedAt": "2026-09-03T11:20:00.000000Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    assignPhoneNumberToCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PhoneNumberAssignRequest"];
+            };
+        };
+        responses: {
+            /** @description The number is that customer's. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description Nothing of yours has that id — the number in the path, or the customer the body named. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "404",
+                     *           "title": "Customer not found",
+                     *           "detail": "No customer of yours has that id."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The number already belongs to a customer (`Already assigned`), or its status is neither
+             *     `pending` nor `active` (`Not assignable`). `title` tells the two apart.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Already assigned",
+                     *           "detail": "+14075550100 is already assigned to a customer. Take it off that customer first, then assign it here."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description `customer_id` is missing, or is not a uuid. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "The customer id field is required.",
+                     *           "source": {
+                     *             "pointer": "/customer_id"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    unassignPhoneNumberFromCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number is back in your own pool. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The number belongs to nobody (`Not assigned`), or a state refuses the removal:
+             *     `Still in the PBX`, `Still routed`, `Still registered for e911`. `title` says which, and
+             *     `detail` names the step that clears it.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Still routed",
+                     *           "detail": "+14075550100 still routes to something. Remove its routing first, then take it off its customer."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    routePhoneNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "target_type": "fax",
+                 *       "fax_account": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70"
+                 *     }
+                 */
+                "application/json": components["schemas"]["PhoneNumberRouteRequest"];
+            };
+        };
+        responses: {
+            /** @description The number routes to that destination. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /**
+             * @description The body was a JSON:API document. Send `target_type` at the top level of a flat JSON body,
+             *     or send no body at all.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "400",
+                     *           "title": "Unexpected document",
+                     *           "detail": "This endpoint takes a flat JSON body, not a JSON:API document: send target_type at the top level, or send no body at all to route to the customer’s PBX."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The number's own state refuses the route, and `title` says which. `Not routable` covers
+             *     four states, each with its own sentence: the number belongs to nobody, its status is
+             *     neither `pending` nor `active`, the customer has no phone system to route to, or that
+             *     phone system is still being created. `Already routed` is cleared by removing the routing
+             *     first.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Not routable",
+                     *           "detail": "+14075550100 is not assigned to a customer. Assign it to a customer first, then route it."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description A field you sent is wrong, and `source.pointer` names it: `target_type` is not one of the
+             *     three values; `fax_account` or `sip_trunk` is missing for its own kind, or was sent with
+             *     another kind; the id names no destination of that customer's; or the destination refuses
+             *     the attach — a suspended fax account, a disabled SIP trunk.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "That fax account is suspended. Reinstate it first, then route the number to it.",
+                     *           "source": {
+                     *             "pointer": "/fax_account"
                      *           }
                      *         }
                      *       ]
