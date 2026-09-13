@@ -76,43 +76,28 @@ type CreateRequest = components["schemas"]["WebhookEndpointCreateRequest"];
 type CreateAttributes = CreateRequest["data"]["attributes"];
 
 /**
- * The update document, with `url` made OPTIONAL — a local alias over the
- * generated request type.
+ * The update document and its attribute bag, as the spec declares them —
+ * spec-typed directly, the same way `CreateRequest` above is.
  *
- * KNOWN SPEC DEFECT, and the only reason this alias exists: the spec marks
- * `url` as required inside `WebhookEndpointUpdateRequest`, so the generated
- * type demands it on every PATCH. The SERVER does not: it merges the request
- * over the stored attributes before validating, exactly as it does for fax
- * accounts, whose sparse update this one mirrors. A spec correction is in
- * flight; when the next `scripts/generate.sh` sync lands with `url` no longer
- * required, THIS ALIAS BECOMES REDUNDANT and `UpdateRequest` should go back
- * to naming the generated type directly.
+ * A local alias with `url` made OPTIONAL used to stand here: the vendored
+ * spec wrongly marked `url` as required inside `WebhookEndpointUpdateRequest`,
+ * so the generated type demanded it on every PATCH even though the server
+ * accepts a sparse one. That spec defect was corrected upstream (console
+ * side) and the sync landed on `main` as 1913c4b on 2026-09-13, so the
+ * generated type is accurate again and the loosening is gone.
  *
- * `Partial` over the generated attributes rather than `@ts-expect-error` at
- * the call site, because a suppression would blind the whole document
- * assignment and not only the one member. That was measured rather than
- * assumed — a throwaway probe of these four cases, on the synced tree of
- * 2026-09-13 (spec rev 4031548), reported errors on three of them and
- * accepted the second:
+ * Measured rather than assumed: a throwaway probe against this type reported
+ * no error for a PATCH naming no `url`, and:
  *
- *     src/__probe.ts(11,47): error TS2322: Type '{ active: false; }' is not
- *       assignable to ... Property 'url' is missing ... but required
- *     src/__probe.ts(21,61): error TS2322: Type 'string' is not assignable
+ *     src/__probe.ts(12,61): error TS2322: Type 'string' is not assignable
  *       to type 'boolean | undefined'.
- *     src/__probe.ts(26,61): error TS2322: Type 'number' is not assignable
- *       to type '("fax.received" | ...)[]'.
+ *     src/__probe.ts(17,70): error TS2322: Type 'number' is not assignable
+ *       to type '"fax.received" | ... | "port_order.status_changed"'.
  *
- * — the generated type refusing a PATCH with no `url` (the defect), the alias
- * accepting the same document, and the alias STILL catching a wrong `active`
- * and a wrong `events`. So the loosening is the one member it names.
+ * for a wrong `active` (a string) and a wrong `events` (numbers).
  */
-type GeneratedUpdateRequest = components["schemas"]["WebhookEndpointUpdateRequest"];
-type UpdateAttributes = Partial<GeneratedUpdateRequest["data"]["attributes"]>;
-type UpdateRequest = Omit<GeneratedUpdateRequest, "data"> & {
-  data: Omit<GeneratedUpdateRequest["data"], "attributes"> & {
-    attributes: UpdateAttributes;
-  };
-};
+type UpdateRequest = components["schemas"]["WebhookEndpointUpdateRequest"];
+type UpdateAttributes = UpdateRequest["data"]["attributes"];
 
 /** What `webhookEndpoints.list()` accepts. Every member narrows the list. */
 export interface ListWebhookEndpointsOptions {
