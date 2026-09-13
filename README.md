@@ -2,7 +2,8 @@
 
 The TypeScript and JavaScript client for the Ringivo fax API: send a fax,
 read one, list them, cancel one, fetch its pages, manage your customers' fax
-accounts, and verify the webhooks that tell you what happened.
+accounts, register the webhooks that tell you what happened — and verify them
+when they arrive.
 
 ```sh
 npm install ringivo
@@ -72,9 +73,10 @@ scope you asked for is dropped, so that nothing at all is left, the mint
 refuses rather than handing you a token no endpoint accepts.
 
 The scopes this client's calls need are `fax:read` and `fax:write` for
-faxes, and `fax-accounts:write` for opening, changing or deleting a fax
+faxes, `fax-accounts:write` for opening, changing or deleting a fax
 account — a reseller-tier scope, so a credential issued for one customer
-cannot hold it however it is asked for. A client that provisions accounts
+cannot hold it however it is asked for — and `webhooks:read` / `webhooks:write`
+for webhook endpoints and their deliveries. A client that provisions accounts
 and then reads them asks for both:
 
 ```ts
@@ -280,6 +282,122 @@ try {
 Branch on `code`, not on the 409: a fax that cannot be cancelled is a 409
 too, and it carries no code at all.
 
+## Webhook endpoints
+
+A webhook endpoint is a URL of yours plus what it hears about. Registering
+one, changing it, switching it off and rotating its secret is
+`client.webhookEndpoints`.
+
+Reads need `webhooks:read` and writes need `webhooks:write`. A `fax:*` token
+reaches the **fax-account-scoped** endpoints alone: `fax:write` may register
+one, and a customer- or tenant-scoped endpoint is absent from a `fax:read`
+listing and answers 404 to a `fax:*` read.
+
+### Register one, and store the secret
+
+```ts
+const endpoint = await client.webhookEndpoints.create({
+  url: "https://hooks.acme-vet.example/faxes",
+  scopeType: "fax_account",
+  scopeId: account.id,
+  events: ["fax.received"],
+});
+
+await vault.put("ringivo-webhook-secret", endpoint.secret); // the only time you see it
+```
+
+**The secret is in that response and nowhere else.** Store it before you do
+anything else: every other read answers `secret: null`, because the platform
+keeps no readable copy. `verifyWebhook()` is what you spend it on.
+
+`scopeType` is `tenant`, `customer` or `fax_account`, and `scopeId` is the id
+of that one thing. Neither can be changed afterwards — the delivery history is
+the record of what that scope was told, so a different scope is a new
+endpoint. A `fax:write` token may only say `fax_account`; naming a `customer`
+or `tenant` scope with it is a 422.
+
+The URL must be `https` on a public host. A hostname that does not resolve yet
+is accepted on purpose, so you can register before you publish DNS.
+
+### Adding events to an endpoint you already have
+
+This is the one that catches people. Register for `fax.received` alone and
+that is all you will ever hear about — the outbound lifecycle events never
+arrive, and nothing fails to tell you so. Add them:
+
+```ts
+await client.webhookEndpoints.update(endpoint.id, {
+  events: ["fax.received", "fax.delivered", "fax.partial", "fax.failed"],
+});
+```
+
+**The list REPLACES the old one**, so name every event you want, not only the
+new ones. `null` or `[]` mean *every event in scope* — which is also the
+simplest way to stop maintaining the list at all:
+
+```ts
+await client.webhookEndpoints.update(endpoint.id, { events: null }); // everything
+```
+
+`update()` is a sparse PATCH, like `faxAccounts.update()`: it sends only the
+members you pass, so changing the events leaves the URL and the switch exactly
+as they were. An empty options object throws.
+
+### Switching one off
+
+```ts
+await client.webhookEndpoints.update(endpoint.id, { active: false });
+```
+
+The fan-out stops and everything else stays: the secret, the URL, the event
+list and the delivery history. `delete()` removes the endpoint instead — the
+fan-out stops at once, and the deliveries survive, which is what answers "why
+did our integration stop hearing about faxes?".
+
+### Rotating the secret
+
+```ts
+const rotated = await client.webhookEndpoints.rotateSecret(endpoint.id);
+
+await vault.put("ringivo-webhook-secret", rotated.secret);
+console.log(rotated.secretPreviousExpiresAt); // roll your copy before this
+```
+
+A rotation starts a clock rather than cutting you off. **The previous secret
+goes on signing for 24 hours**, and `secretPreviousExpiresAt` is the deadline;
+during that window a delivery carries two signatures and `verifyWebhook()`
+accepts either. So a rotation costs you no deliveries as long as your own copy
+is replaced before the deadline.
+
+### What we could not deliver
+
+`client.webhookDeliveries` is evidence of what went wrong, not a history. A
+delivery that reaches you leaves no row at all: one appears when an attempt
+fails, moves along the retry ladder, and is removed the moment a later attempt
+succeeds.
+
+```ts
+const missed = await client.webhookDeliveries.list({ status: "dead" });
+for (const delivery of missed.deliveries) {
+  console.log(delivery.eventType, delivery.eventId, delivery.statusCode, delivery.error);
+}
+```
+
+**`status: "dead"` is the query this collection exists for.** Delivery is
+at-least-once with a dead-letter, so "we tried and gave up" is a state that is
+reached without your server ever hearing about it — this is where you learn
+what an outage cost you. `pending` is everything still on the ladder. There is
+no `delivered`, and asking for one is a 400.
+
+Narrow it with `endpoint`, `eventType` and the page params, and read one row
+with `webhookDeliveries.get(id)`. The body we POSTed is never published here —
+only its `payloadSha256`, so an integrator who kept what they received can
+prove it is what we sent. For proof that one event arrived, use your own
+receipt: every POST carries `Ringivo-Event-Id`.
+
+Reads need `webhooks:read`. A delivery borrows its endpoint's reach, so
+`fax:read` lists only the deliveries of fax-account-scoped endpoints.
+
 ## Verify a webhook
 
 Every delivery carries a `Ringivo-Signature` header. Check it before you
@@ -410,13 +528,23 @@ decision and not a library's.
 | `client.faxAccounts.create({ customer, name, headerText?, defaultFromE164?, retentionDays?, retentionPages? })` | `fax-accounts:write` | Open an account for a customer. |
 | `client.faxAccounts.update(faxAccountId, { … })` | `fax-accounts:write` | A sparse PATCH: only what you pass. |
 | `client.faxAccounts.delete(faxAccountId)` | `fax-accounts:write` | Delete the account and its pages. 409 while numbers route to it. |
+| `client.webhookEndpoints.list({ scopeType?, scopeId?, active?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookEndpointPage`: `endpoints` plus `nextCursor`. `fax:read` sees fax-account scopes only. |
+| `client.webhookEndpoints.get(webhookEndpointId)` | `webhooks:read` | One `WebhookEndpoint`. Its `secret` is always `null` here. |
+| `client.webhookEndpoints.create({ url, scopeType, scopeId, events?, active? })` | `webhooks:write` | Register one. **The only response carrying the secret.** `fax:write` may register a `fax_account` scope only. |
+| `client.webhookEndpoints.update(webhookEndpointId, { url?, events?, active? })` | `webhooks:write` | A sparse PATCH: only what you pass. The event list replaces the old one. |
+| `client.webhookEndpoints.delete(webhookEndpointId)` | `webhooks:write` | Remove it. The fan-out stops; the deliveries survive. |
+| `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
+| `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
+| `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
 | `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 
 `Fax`, `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxDocument`,
-`FaxPage` and `MediaLink` are frozen plain objects, and each keeps the JSON
-it was built from in `.raw` — so a member the API adds after this release
-reaches you without a new SDK. A member the API did not send reads `null`.
+`FaxPage`, `MediaLink`, `WebhookDelivery`, `WebhookDeliveryPage`,
+`WebhookEndpoint` and `WebhookEndpointPage` are frozen plain objects, and each
+keeps the JSON it was built from in `.raw` — so a member the API adds after
+this release reaches you without a new SDK. A member the API did not send reads
+`null`.
 
 The whole endpoint surface is typed from the OpenAPI document at
 `src/_generated/schema.d.ts`. Those types are private: they are regenerated

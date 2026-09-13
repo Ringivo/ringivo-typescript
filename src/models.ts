@@ -136,6 +136,22 @@ function boolean(source: RawJson, key: string): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
+/**
+ * A list of strings off one attribute, or null.
+ *
+ * Null for an ABSENT member and for an explicit `null`, like every other
+ * reader here — the two are told apart in `raw`. A non-string item is dropped
+ * rather than passed on: the list is handed to callers as `readonly string[]`,
+ * and one stray number in it would be a value no caller's type admits.
+ */
+function textList(source: RawJson, key: string): readonly string[] | null {
+  const value = source[key];
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return Object.freeze(value.filter((item): item is string => typeof item === "string"));
+}
+
 function nested(source: RawJson, key: string): RawJson | null {
   const value = source[key];
   return isRecord(value) ? value : null;
@@ -393,6 +409,174 @@ export function faxPageFromDocument(document: RawJson): FaxPage {
 
   return Object.freeze({
     faxes: Object.freeze(faxes),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/**
+ * One webhook endpoint: where we POST, what it hears about, and its switch.
+ *
+ * `secret` IS THE SIGNING SECRET, and it is non-null in exactly two places:
+ * the `webhookEndpoints.create()` that registered the endpoint and the
+ * `rotateSecret()` that minted a new one. Every other read is `null` —
+ * the platform keeps no readable copy, so that null is an honest statement
+ * and not a missing field. Store it when you first see it.
+ *
+ * `events` is the list the endpoint asked for, published back verbatim.
+ * **`null` means every event in scope** — and so does an empty list, which
+ * the platform keeps as `[]` rather than normalising, so a caller who sent
+ * one can tell their write was understood.
+ *
+ * `secretPreviousExpiresAt` is the deadline of a rotation's 24-hour grace
+ * window: until then the PREVIOUS secret still signs, and a delivery carries
+ * two signatures. It is null outside a rotation.
+ *
+ * `scopeType` and `scopeId` say what the endpoint hears about and never
+ * change: the delivery history is the record of what THAT scope was told.
+ */
+export interface WebhookEndpoint {
+  readonly id: string;
+  readonly scopeType: string | null;
+  readonly scopeId: string | null;
+  readonly url: string | null;
+  readonly events: readonly string[] | null;
+  readonly active: boolean | null;
+  readonly secret: string | null;
+  readonly secretPreviousExpiresAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `webhookEndpoints.list()`, newest first.
+ *
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` — never
+ * one this client built — and it is null on the last page. `nextUrl` mirrors
+ * `links.next`, which is absent rather than null at the end.
+ */
+export interface WebhookEndpointPage {
+  readonly endpoints: readonly WebhookEndpoint[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One failed delivery attempt — evidence, not a history.
+ *
+ * A delivery that lands leaves no row at all, so every object here is
+ * something still owed to you (`status: "pending"`, still on the retry
+ * ladder) or something given up on (`status: "dead"`). There is no
+ * `delivered`.
+ *
+ * There is deliberately no `deliveredAt` on this model. The API still
+ * publishes the attribute so that a client generated against an older spec
+ * goes on parsing, and it is ALWAYS null — nothing sets it any more. A member
+ * that can only ever be null is a member a caller would read as a status and
+ * be wrong about, so it stays in `raw` and out of here; `status` is the
+ * status.
+ *
+ * `endpointId` comes from the `endpoint` relationship's linkage, and it is
+ * null when the server answered that relationship with `links` alone — which
+ * is legal and says nothing about the endpoint.
+ *
+ * `payloadSha256` is the digest of the exact bytes we signed; the body itself
+ * is never published here. `statusCode` is what your server answered, null
+ * when we never reached it, and `error` is why we could not.
+ */
+export interface WebhookDelivery {
+  readonly id: string;
+  readonly endpointId: string | null;
+  readonly eventId: string | null;
+  readonly eventType: string | null;
+  readonly payloadSha256: string | null;
+  readonly status: string | null;
+  readonly attemptNo: number | null;
+  readonly statusCode: number | null;
+  readonly durationMs: number | null;
+  readonly error: string | null;
+  readonly nextAttemptAt: Date | null;
+  readonly deadAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `webhookDeliveries.list()`, newest first. */
+export interface WebhookDeliveryPage {
+  readonly deliveries: readonly WebhookDelivery[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — every webhook-endpoint call. */
+export function webhookEndpointFromResource(resource: RawJson): WebhookEndpoint {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    scopeType: text(attributes, "scopeType"),
+    scopeId: text(attributes, "scopeId"),
+    url: text(attributes, "url"),
+    events: textList(attributes, "events"),
+    active: boolean(attributes, "active"),
+    secret: text(attributes, "secret"),
+    secretPreviousExpiresAt: instant(attributes.secretPreviousExpiresAt),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function webhookEndpointPageFromDocument(document: RawJson): WebhookEndpointPage {
+  const data = document.data;
+  const endpoints = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map(webhookEndpointFromResource);
+
+  return Object.freeze({
+    endpoints: Object.freeze(endpoints),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/** Build from a JSON:API resource object — every webhook-delivery call. */
+export function webhookDeliveryFromResource(resource: RawJson): WebhookDelivery {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    endpointId: relationshipId(resource, "endpoint"),
+    eventId: text(attributes, "eventId"),
+    eventType: text(attributes, "eventType"),
+    payloadSha256: text(attributes, "payloadSha256"),
+    status: text(attributes, "status"),
+    attemptNo: integer(attributes, "attemptNo"),
+    statusCode: integer(attributes, "statusCode"),
+    durationMs: integer(attributes, "durationMs"),
+    error: text(attributes, "error"),
+    nextAttemptAt: instant(attributes.nextAttemptAt),
+    deadAt: instant(attributes.deadAt),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliveryPage {
+  const data = document.data;
+  const deliveries = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map(webhookDeliveryFromResource);
+
+  return Object.freeze({
+    deliveries: Object.freeze(deliveries),
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,

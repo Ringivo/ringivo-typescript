@@ -55,6 +55,8 @@ interface Surface {
     baseUrl: string;
     faxes: object;
     faxAccounts: object;
+    webhookEndpoints: object;
+    webhookDeliveries: object;
     request: unknown;
   };
   VERSION: string;
@@ -125,6 +127,42 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["create", "delete", "get", "list", "numbers", "update"]);
+  });
+
+  it("exposes the whole webhook-endpoint surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["webhooks:read"],
+    });
+
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.webhookEndpoints))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["create", "delete", "get", "list", "rotateSecret", "update"]);
+  });
+
+  it("exposes the whole webhook-delivery surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["webhooks:read"],
+    });
+
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.webhookDeliveries))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["get", "list"]);
   });
 
   it("verifies the server's own vector, and refuses a tampered body", async () => {
