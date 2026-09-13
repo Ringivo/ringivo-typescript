@@ -3057,10 +3057,14 @@ export interface components {
                 type: "webhook-endpoints";
                 /** Format: uuid */
                 id: string;
-                /** @description `scopeType` and `scopeId` may be echoed back unchanged; a different value is a 422. */
+                /**
+                 * @description A PATCH is sparse: send only the members you are changing. An omitted member keeps
+                 *     its stored value. `scopeType` and `scopeId` may be echoed back unchanged; a
+                 *     different value is a 422.
+                 */
                 attributes: {
                     /** Format: uri */
-                    url: string;
+                    url?: string;
                     events?: components["schemas"]["WebhookEventType"][] | null;
                     active?: boolean;
                 } & {
