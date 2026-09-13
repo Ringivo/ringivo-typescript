@@ -3,7 +3,8 @@
  *
  * `Ringivo` owns three things: the base URL (there is no default — see
  * below), one authenticated request path, and the resource namespaces hung
- * off it (`client.faxes`, `client.faxAccounts`).
+ * off it (`client.faxes`, `client.faxAccounts`, `client.webhookEndpoints`,
+ * `client.webhookDeliveries`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -44,6 +45,8 @@ import { throwForResponse } from "./errors.js";
 import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
 import { VERSION } from "./version.js";
+import { WebhookDeliveries } from "./webhookDeliveries.js";
+import { WebhookEndpoints } from "./webhookEndpoints.js";
 
 /** What the JSON:API resource endpoints send and accept. */
 export const JSONAPI_MEDIA_TYPE = "application/vnd.api+json";
@@ -86,6 +89,11 @@ export interface RingivoOptions {
    * changing or deleting a fax account needs `fax-accounts:write` as well —
    * a reseller-tier scope, so a credential issued for one customer cannot
    * hold it however it is asked for.
+   *
+   * Webhook endpoints and their deliveries need `webhooks:read` and
+   * `webhooks:write`. A `fax:*` token reaches the `fax_account`-scoped
+   * endpoints alone: it may register one, and a customer- or tenant-scoped
+   * endpoint is absent from its lists and answers 404 to its reads.
    */
   scopes: readonly string[];
   /**
@@ -130,6 +138,14 @@ export class Ringivo {
 
   /** Open a customer's fax account, read it, change it, delete it. */
   readonly faxAccounts: FaxAccounts;
+
+  /**
+   * Register a webhook endpoint, change one, remove one, rotate its secret.
+   */
+  readonly webhookEndpoints: WebhookEndpoints;
+
+  /** Read what we could not deliver to your endpoints. */
+  readonly webhookDeliveries: WebhookDeliveries;
 
   private readonly auth: ClientCredentialsAuth;
 
@@ -209,6 +225,8 @@ export class Ringivo {
 
     this.faxes = new Faxes(this);
     this.faxAccounts = new FaxAccounts(this);
+    this.webhookEndpoints = new WebhookEndpoints(this);
+    this.webhookDeliveries = new WebhookDeliveries(this);
   }
 
   toString(): string {
@@ -227,8 +245,9 @@ export class Ringivo {
    * still reachable with your credential, your timeout, your User-Agent and
    * the same typed errors:
    *
+   *     // Who can see a fax account's faxes — one row per (user, account).
    *     const response = await client.request(
-   *       new Request(`${client.baseUrl}/v1/webhook-endpoints`, {
+   *       new Request(`${client.baseUrl}/v1/fax-account-users`, {
    *         headers: { Accept: "application/vnd.api+json" },
    *       }),
    *     );

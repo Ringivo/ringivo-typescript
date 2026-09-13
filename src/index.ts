@@ -25,6 +25,12 @@
  * a customer, change its settings, delete it, and read the numbers routed to
  * it. Reads need `fax:read`; every write needs `fax-accounts:write`.
  *
+ * Webhooks are `client.webhookEndpoints` — register one and store the secret
+ * the create hands back, add events to it, switch it off, rotate its secret —
+ * and `client.webhookDeliveries` for what we could not deliver. Both need
+ * `webhooks:read`/`webhooks:write`, and a `fax:*` token reaches the
+ * `fax_account`-scoped endpoints alone.
+ *
  * Webhook receivers want `verifyWebhook()`, which needs no client and no
  * network.
  */
@@ -58,7 +64,19 @@ export type {
   FaxDocument,
   FaxPage,
   MediaLink,
+  WebhookDelivery,
+  WebhookDeliveryPage,
+  WebhookEndpoint,
+  WebhookEndpointPage,
 } from "./models.js";
 export { VERSION } from "./version.js";
+export { WebhookDeliveries } from "./webhookDeliveries.js";
+export type { ListWebhookDeliveriesOptions } from "./webhookDeliveries.js";
+export { WebhookEndpoints } from "./webhookEndpoints.js";
+export type {
+  CreateWebhookEndpointOptions,
+  ListWebhookEndpointsOptions,
+  UpdateWebhookEndpointOptions,
+} from "./webhookEndpoints.js";
 export { DEFAULT_TOLERANCE_SECONDS, SIGNATURE_HEADER, verifyWebhook } from "./webhooks.js";
 export type { VerifyWebhookOptions } from "./webhooks.js";
