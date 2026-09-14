@@ -3,8 +3,8 @@
  *
  * `Ringivo` owns three things: the base URL (there is no default — see
  * below), one authenticated request path, and the resource namespaces hung
- * off it (`client.faxes`, `client.faxAccounts`, `client.webhookEndpoints`,
- * `client.webhookDeliveries`).
+ * off it (`client.faxes`, `client.faxAccounts`, `client.faxAccountUsers`,
+ * `client.webhookEndpoints`, `client.webhookDeliveries`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -42,6 +42,7 @@ import { type PathBasedClient, createPathBasedClient } from "openapi-fetch";
 import type { paths } from "./_generated/schema.js";
 import { ClientCredentialsAuth, USER_AGENT } from "./auth.js";
 import { throwForResponse } from "./errors.js";
+import { FaxAccountUsers } from "./faxAccountUsers.js";
 import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
 import { VERSION } from "./version.js";
@@ -139,6 +140,9 @@ export class Ringivo {
   /** Open a customer's fax account, read it, change it, delete it. */
   readonly faxAccounts: FaxAccounts;
 
+  /** Who can see a fax account's faxes: list, read, grant, revoke. */
+  readonly faxAccountUsers: FaxAccountUsers;
+
   /**
    * Register a webhook endpoint, change one, remove one, rotate its secret.
    */
@@ -225,6 +229,7 @@ export class Ringivo {
 
     this.faxes = new Faxes(this);
     this.faxAccounts = new FaxAccounts(this);
+    this.faxAccountUsers = new FaxAccountUsers(this);
     this.webhookEndpoints = new WebhookEndpoints(this);
     this.webhookDeliveries = new WebhookDeliveries(this);
   }
@@ -245,9 +250,10 @@ export class Ringivo {
    * still reachable with your credential, your timeout, your User-Agent and
    * the same typed errors:
    *
-   *     // Who can see a fax account's faxes — one row per (user, account).
+   *     // Every SIP trunk your credential can reach. This client wraps the
+   *     // fax surface; trunks are not part of it.
    *     const response = await client.request(
-   *       new Request(`${client.baseUrl}/v1/fax-account-users`, {
+   *       new Request(`${client.baseUrl}/v1/sip-trunks`, {
    *         headers: { Accept: "application/vnd.api+json" },
    *       }),
    *     );
