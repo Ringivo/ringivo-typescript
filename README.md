@@ -2,8 +2,8 @@
 
 The TypeScript and JavaScript client for the Ringivo fax API: send a fax,
 read one, list them, cancel one, fetch its pages, manage your customers' fax
-accounts, register the webhooks that tell you what happened — and verify them
-when they arrive.
+accounts, say who may read them, register the webhooks that tell you what
+happened — and verify them when they arrive.
 
 ```sh
 npm install ringivo
@@ -74,10 +74,11 @@ refuses rather than handing you a token no endpoint accepts.
 
 The scopes this client's calls need are `fax:read` and `fax:write` for
 faxes, `fax-accounts:write` for opening, changing or deleting a fax
-account — a reseller-tier scope, so a credential issued for one customer
-cannot hold it however it is asked for — and `webhooks:read` / `webhooks:write`
-for webhook endpoints and their deliveries. A client that provisions accounts
-and then reads them asks for both:
+account and for granting or withdrawing access to one — a reseller-tier
+scope, so a credential issued for one customer cannot hold it however it is
+asked for — and `webhooks:read` / `webhooks:write` for webhook endpoints and
+their deliveries. A client that provisions accounts and then reads them asks
+for both:
 
 ```ts
 const provisioning = new Ringivo({
@@ -281,6 +282,45 @@ try {
 
 Branch on `code`, not on the 409: a fax that cannot be cancelled is a 409
 too, and it carries no code at all.
+
+## Who can see an account's faxes
+
+A **grant** is one row: this person may read this account's faxes. They are
+`client.faxAccountUsers`, and the question they answer is "who can see
+this?" — which is why every row carries the grantee's `userEmail` and not
+only an id.
+
+```ts
+const faxAccount = "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70";
+
+const grant = await client.faxAccountUsers.create({
+  faxAccount,
+  user: "0198c4a1-7081-72a3-d4a5-6f7081920314",
+});
+
+const page = await client.faxAccountUsers.list({ faxAccount });
+for (const one of page.grants) {
+  console.log(one.userEmail, one.userId);
+}
+
+await client.faxAccountUsers.delete(grant.id); // withdraw it
+```
+
+Reading grants needs `fax:read`; granting and withdrawing need
+`fax-accounts:write`.
+
+**A grant is not what lets somebody administer the account.** Administering
+one is decided by the person's role, and reading its CONTENT is decided by a
+grant, so the two answer different questions — a manager who can rename an
+account may hold no grant on it. That is also why `create()` may name an
+account you hold no grant on yourself: somebody has to add the first member.
+
+**There is nothing on a grant to change**, so there is no `update()`.
+Withdraw one by deleting it, and `delete()` takes the GRANT's own id — the
+`id` of a row from `list()`, not the account's and not the person's.
+Withdrawing removes the grant and nothing else: the account, its numbers and
+every fax on it are untouched, and a person who reaches the account some
+other way goes on reaching it.
 
 ## Webhook endpoints
 
@@ -528,6 +568,10 @@ decision and not a library's.
 | `client.faxAccounts.create({ customer, name, headerText?, defaultFromE164?, retentionDays?, retentionPages? })` | `fax-accounts:write` | Open an account for a customer. |
 | `client.faxAccounts.update(faxAccountId, { … })` | `fax-accounts:write` | A sparse PATCH: only what you pass. |
 | `client.faxAccounts.delete(faxAccountId)` | `fax-accounts:write` | Delete the account and its pages. 409 while numbers route to it. |
+| `client.faxAccountUsers.list({ faxAccount?, user?, after?, before?, pageSize? })` | `fax:read` | A `FaxAccountUserPage`: `grants` plus `nextCursor`. Filter by the account, by the person, or by neither. |
+| `client.faxAccountUsers.get(faxAccountUserId)` | `fax:read` | One `FaxAccountUser` — the grant's own id, not the account's or the person's. |
+| `client.faxAccountUsers.create({ faxAccount, user })` | `fax-accounts:write` | Grant one person access to one account's faxes. |
+| `client.faxAccountUsers.delete(faxAccountUserId)` | `fax-accounts:write` | Withdraw a grant. Nothing else changes. |
 | `client.webhookEndpoints.list({ scopeType?, scopeId?, active?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookEndpointPage`: `endpoints` plus `nextCursor`. `fax:read` sees fax-account scopes only. |
 | `client.webhookEndpoints.get(webhookEndpointId)` | `webhooks:read` | One `WebhookEndpoint`. Its `secret` is always `null` here. |
 | `client.webhookEndpoints.create({ url, scopeType, scopeId, events?, active? })` | `webhooks:write` | Register one. **The only response carrying the secret.** `fax:write` may register a `fax_account` scope only. |
@@ -539,12 +583,12 @@ decision and not a library's.
 | `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 
-`Fax`, `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxDocument`,
-`FaxPage`, `MediaLink`, `WebhookDelivery`, `WebhookDeliveryPage`,
-`WebhookEndpoint` and `WebhookEndpointPage` are frozen plain objects, and each
-keeps the JSON it was built from in `.raw` — so a member the API adds after
-this release reaches you without a new SDK. A member the API did not send reads
-`null`.
+`Fax`, `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
+`FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`,
+`WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
+`WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
+built from in `.raw` — so a member the API adds after this release reaches you
+without a new SDK. A member the API did not send reads `null`.
 
 The whole endpoint surface is typed from the OpenAPI document at
 `src/_generated/schema.d.ts`. Those types are private: they are regenerated
