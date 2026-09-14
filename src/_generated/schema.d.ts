@@ -2323,6 +2323,111 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "message.received": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A text or picture message arrived for one of your numbers
+         * @description Fired when somebody texts a number you have enabled for messaging. This is the push half of
+         *     `GET /v1/inbound-messages` — `data.id` is that collection's id, so refetch the message there
+         *     when you want it back.
+         *
+         *     **Media is described, never carried.** Each part names its content type, its filename when
+         *     it had one, the vendor's encoding and its decoded size. There is no image and no URL: we do
+         *     not keep the bytes, so ask your messaging provider for the file. A text message carries an
+         *     empty `media` list rather than an absent key.
+         *
+         *     **Scope: `tenant` and `customer`, never `fax_account`.** A message belongs to a number,
+         *     which belongs to a customer, which belongs to you — so a tenant-scoped endpoint and a
+         *     customer-scoped one both hear it, and an endpoint attached to a fax account never does.
+         *     `data.customer_id` is null while the number sits unassigned in your own pool, and only your
+         *     tenant-scoped endpoints are called for that one.
+         *
+         *     `occurred_at` is the instant the message was sent — the same value as `data.received_at` —
+         *     and never the moment we reached you.
+         */
+        post: operations["onMessageReceived"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "port_order.bill_extraction_settled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * The reading of an uploaded bill finished, whichever way it ended
+         * @description Fired when the reading of a bill you uploaded stops being pending. It is the END of that
+         *     wait and the only event the wait has — uploading the bill queues the reading and fires
+         *     nothing.
+         *
+         *     `data.status` is one of three words. `done` — a model answered and your blank columns were
+         *     filled. `skipped` — the order left `draft` before the answer arrived, so nothing was
+         *     applied. `failed` — nobody could read it, which blocks nothing; you type the fields.
+         *     `pending` belongs to the shared vocabulary and never reaches you here, because it is the
+         *     start of the wait rather than its end.
+         *
+         *     **Three keys, and never a field the bill said.** Not the legal name, not the account number,
+         *     and above all not the port-out PIN. Read `GET /v1/port-orders/{portOrder}` for what the
+         *     model named — `billExtraction` carries the reading — with your own credential, which is
+         *     where authorization runs.
+         *
+         *     **Scope: `tenant` only.** A port order belongs to no customer and no fax account, so only a
+         *     tenant-scoped endpoint ever receives this, and registering one needs `webhooks:*` per the
+         *     scope note on these operations. An endpoint on either narrower scope may subscribe to the
+         *     name and is then never called.
+         */
+        post: operations["onPortOrderBillExtractionSettled"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "port_order.status_changed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A port order moved from one status to another
+         * @description Fired when an existing order changes status, with both ends of the move in the body. A
+         *     CREATED ORDER FIRES NOTHING: there is no `from` to name.
+         *
+         *     **Four keys, and never the contents of the order.** No customer name, no numbers, no
+         *     port-out PIN. Read `GET /v1/port-orders/{portOrder}` with your own credential when you want
+         *     them; that request is where the values live and where authorization runs.
+         *
+         *     **Scope: `tenant` only**, exactly as `port_order.bill_extraction_settled` and for the same
+         *     reason — a port order belongs to no customer and no fax account.
+         *
+         *     Both ends are frozen at the moment of the move. An order that moved twice before we reached
+         *     you sends two events, each describing its own move, and the two may arrive in either order.
+         */
+        post: operations["onPortOrderStatusChanged"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface components {
     schemas: {
@@ -3399,6 +3504,83 @@ export interface components {
         };
         FaxReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["FaxReceivedEventData"];
+        };
+        /**
+         * @description A SNAPSHOT of the message as it arrived. An inbound message is a receipt and barely changes,
+         *     but the rule is the one every event on this channel follows: a retry six hours later carries
+         *     the values the event was built with.
+         *
+         *     **No media bytes and no URL.** The parts are described and nothing more — we do not retain
+         *     the file, so there is nothing here to fetch it with either.
+         */
+        MessageReceivedEventData: {
+            /**
+             * Format: uuid
+             * @description The message's id in `GET /v1/inbound-messages`.
+             */
+            id?: string;
+            /** Format: uuid */
+            tenant_id?: string;
+            /**
+             * Format: uuid
+             * @description The customer who holds the number. Null while the number sits unassigned in your pool.
+             */
+            customer_id?: string | null;
+            kind?: components["schemas"]["InboundMessageKind"];
+            /**
+             * @description The sending number, in E.164.
+             * @example +13025556789
+             */
+            from?: string;
+            /**
+             * @description Your number, in E.164.
+             * @example +14075550100
+             */
+            to?: string;
+            /** @description The text. Null for a picture message with no caption. */
+            body?: string | null;
+            /** @description The described parts of a picture message. An empty list for a text message. */
+            media?: components["schemas"]["InboundMessageMediaPart"][];
+            /**
+             * Format: date-time
+             * @description When the message was sent. The envelope's `occurred_at` is this same instant.
+             */
+            received_at?: string;
+        };
+        /**
+         * @description Both ends of one move, frozen when it happened. Nothing about the order's contents is here —
+         *     read the order itself for those.
+         */
+        PortOrderStatusChangedEventData: {
+            /** Format: uuid */
+            port_order_id?: string;
+            /** Format: uuid */
+            tenant_id?: string;
+            /** @description Where the order stood before the move. */
+            from?: components["schemas"]["PortOrderStatus"];
+            /** @description Where it stands now. */
+            to?: components["schemas"]["PortOrderStatus"];
+        };
+        /** @description How a bill reading ended, and nothing the bill said. Read the order for the values. */
+        PortOrderBillExtractionSettledEventData: {
+            /** Format: uuid */
+            port_order_id?: string;
+            /** Format: uuid */
+            tenant_id?: string;
+            /**
+             * @description The settled state, frozen at the event: `done`, `skipped` or `failed`. Never `pending` —
+             *     that is the start of the wait this event ends.
+             */
+            status?: components["schemas"]["PortOrderBillExtractionStatus"];
+        };
+        MessageReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["MessageReceivedEventData"];
+        };
+        PortOrderStatusChangedEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["PortOrderStatusChangedEventData"];
+        };
+        PortOrderBillExtractionSettledEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["PortOrderBillExtractionSettledEventData"];
         };
         NumberLookupRequest: {
             /**
@@ -10865,6 +11047,122 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["FaxEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onMessageReceived: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-e7b3-7a41-9c62-5f0d8a1b2c3d",
+                 *       "type": "message.received",
+                 *       "occurred_at": "2026-08-16T11:14:07+00:00",
+                 *       "data": {
+                 *         "id": "0198c4a1-6f70-7182-b394-4d5e6f708192",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "kind": "mms",
+                 *         "from": "+13025556789",
+                 *         "to": "+14075550100",
+                 *         "body": "Here is the referral form.",
+                 *         "media": [
+                 *           {
+                 *             "content_type": "image/jpeg",
+                 *             "filename": "photo.jpg",
+                 *             "encoding": "base64",
+                 *             "bytes": 40213
+                 *           }
+                 *         ],
+                 *         "received_at": "2026-08-16T11:14:07+00:00"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["MessageReceivedEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onPortOrderBillExtractionSettled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-c8d9-7b06-9e14-7b2c3d4e5f60",
+                 *       "type": "port_order.bill_extraction_settled",
+                 *       "occurred_at": "2026-08-16T09:41:12+00:00",
+                 *       "data": {
+                 *         "port_order_id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "status": "done"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["PortOrderBillExtractionSettledEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onPortOrderStatusChanged: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e5f",
+                 *       "type": "port_order.status_changed",
+                 *       "occurred_at": "2026-08-16T17:20:44+00:00",
+                 *       "data": {
+                 *         "port_order_id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "from": "awaiting_review",
+                 *         "to": "submitted"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["PortOrderStatusChangedEvent"];
             };
         };
         responses: {
