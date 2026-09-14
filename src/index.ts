@@ -25,6 +25,9 @@
  * a customer, change its settings, delete it, and read the numbers routed to
  * it. Reads need `fax:read`; every write needs `fax-accounts:write`.
  *
+ * Who may READ one account's faxes is `client.faxAccountUsers` — one row per
+ * (user, account) pair. Listing and reading a grant need `fax:read`.
+ *
  * Webhooks are `client.webhookEndpoints` — register one and store the secret
  * the create hands back, add events to it, switch it off, rotate its secret —
  * and `client.webhookDeliveries` for what we could not deliver. Both need
@@ -43,6 +46,8 @@ export {
   SignatureVerificationError,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
+export { FaxAccountUsers } from "./faxAccountUsers.js";
+export type { ListFaxAccountUsersOptions } from "./faxAccountUsers.js";
 export { FaxAccounts } from "./faxAccounts.js";
 export type {
   CreateFaxAccountOptions,
