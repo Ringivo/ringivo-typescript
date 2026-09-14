@@ -950,6 +950,13 @@ export interface paths {
          *     `scopeType`/`scopeId` say what the endpoint hears about, and neither can be changed
          *     afterwards: the delivery history is the record of what THAT scope was told.
          *
+         *     `filter` narrows delivery BELOW that scope, matched against the body's `data` object — a
+         *     customer-scoped endpoint can ask for one fax account with
+         *     `fax_account_id:<id>`. Its SYNTAX is checked here and a 422 names the character that could
+         *     not be read; its FIELD NAMES are not checked against anything, so a filter naming a field
+         *     the body does not carry is valid and matches nothing. The grammar is on the `filter`
+         *     attribute.
+         *
          *     **Scope:** `fax:write` may register only a `fax_account`-scoped endpoint; naming a
          *     `customer` or `tenant` scope with a `fax:*` token is refused with a 422, and needs
          *     `webhooks:write`.
@@ -995,8 +1002,11 @@ export interface paths {
         head?: never;
         /**
          * Change a webhook endpoint's URL, events or switch
-         * @description `url`, `events` and `active` are editable. `scopeType` and `scopeId` are not — a caller who
-         *     wants a different scope removes this endpoint and registers another.
+         * @description `url`, `events`, `filter` and `active` are editable. `scopeType` and `scopeId` are not — a
+         *     caller who wants a different scope removes this endpoint and registers another.
+         *
+         *     **Sending `filter: null` clears it**, after which the endpoint hears everything its scope and
+         *     `events` match again.
          *
          *     **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
          *     tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
@@ -3254,6 +3264,45 @@ export interface components {
             url?: string | null;
             /** @description Null or `[]` both mean "every event in scope". */
             events?: components["schemas"]["WebhookEventType"][] | null;
+            /**
+             * @description An expression that narrows delivery BELOW this endpoint's scope, matched against the
+             *     body's `data` object. **Null means no narrowing** — every event the scope and `events`
+             *     already match is delivered, which is how an endpoint behaves when you omit this.
+             *
+             *     A term is `field:value`, where `field` is a dot path into `data` (`a.b.c`). A path the
+             *     body does not carry, or one whose value is `null`, makes the term false.
+             *
+             *     | Form | Meaning |
+             *     |---|---|
+             *     | `field:value` | exact, case-sensitive |
+             *     | `field:abc*` | the value starts with `abc` |
+             *     | `field:*` | the body carries this path and it is not null |
+             *     | `field:<v` `field:<=v` `field:>v` `field:>=v` | ordered comparison |
+             *
+             *     A comparison is numeric only when the body's value is a JSON **number** and the literal
+             *     parses as a number; otherwise it compares the value's string form byte by byte. So a
+             *     field carrying `"10"` as a string is NOT greater than `2`. A boolean compares against the
+             *     tokens `true` and `false`. A value that is neither a scalar nor null (an array, an
+             *     object) matches `field:*` and nothing else.
+             *
+             *     Values are bare tokens, or double-quoted strings in which `\"` is a quote and `\\` is a
+             *     backslash — quote anything carrying a space or a parenthesis. Inside quotes a `*` is a
+             *     literal `*`.
+             *
+             *     Terms combine with `AND`, `OR` and parentheses, all case-insensitive. **`OR` binds more
+             *     tightly than `AND`**, so `a:1 OR b:2 AND c:3` means `(a:1 OR b:2) AND c:3` — parenthesise
+             *     when you want the other reading. Two adjacent terms with no keyword are an `AND`.
+             *     Negation is `NOT x` or a leading `-`, which mean the same thing.
+             *
+             *     The SYNTAX is checked when you register or edit the endpoint, and a 422 names the
+             *     character it could not read. **The FIELD NAMES are not checked against anything.** A
+             *     filter naming a field the body does not carry is valid and matches nothing, so the
+             *     endpoint receives silence — check your field names against the event's documented body.
+             * @example fax_account_id:019a3c4d5e6f70819293a4b5c6d7e8f9
+             * @example status:failed OR status:partial
+             * @example -direction:outbound
+             */
+            filter?: string | null;
             active?: boolean | null;
             /**
              * @description The signing secret, `whsec_`-prefixed. **Non-null only in the response to the create or
@@ -3305,6 +3354,13 @@ export interface components {
                     /** Format: uuid */
                     scopeId: string;
                     events?: components["schemas"]["WebhookEventType"][] | null;
+                    /**
+                     * @description Narrows delivery below the scope. Omit it, or send null, to receive everything
+                     *     the scope and `events` match. Grammar and the field-name caveat: see `filter` on
+                     *     the endpoint resource.
+                     * @example status:failed OR status:partial
+                     */
+                    filter?: string | null;
                     active?: boolean;
                 };
             };
@@ -3323,6 +3379,11 @@ export interface components {
                     /** Format: uri */
                     url?: string;
                     events?: components["schemas"]["WebhookEventType"][] | null;
+                    /**
+                     * @description Replaced wholesale by what you send. **Send null to clear it**, after which the
+                     *     endpoint hears everything its scope and `events` match again.
+                     */
+                    filter?: string | null;
                     active?: boolean;
                     /** @description May be sent back unchanged; a different value is a 422 — a scope cannot change. */
                     scopeType?: components["schemas"]["WebhookScopeType"];
@@ -7701,6 +7762,7 @@ export interface operations {
                      *               "fax.received",
                      *               "fax.delivered"
                      *             ],
+                     *             "filter": "status:failed OR status:partial",
                      *             "active": true,
                      *             "secret": null,
                      *             "secretPreviousExpiresAt": null,
@@ -7740,7 +7802,8 @@ export interface operations {
                  *           "events": [
                  *             "fax.received",
                  *             "fax.delivered"
-                 *           ]
+                 *           ],
+                 *           "filter": "status:failed OR status:partial"
                  *         }
                  *       }
                  *     }
@@ -7768,6 +7831,7 @@ export interface operations {
                      *             "fax.received",
                      *             "fax.delivered"
                      *           ],
+                     *           "filter": "status:failed OR status:partial",
                      *           "active": true,
                      *           "secret": "whsec_Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZmdo",
                      *           "secretPreviousExpiresAt": null,
@@ -7783,10 +7847,12 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             /**
-             * @description The URL, the event list or the scope was refused. A scope you may not use and a scope
-             *     that does not exist are refused with the SAME message, on purpose — telling them apart
-             *     would make this field a way to discover which ids are real. Supplying your own `secret`
-             *     is refused here too.
+             * @description The URL, the event list, the filter or the scope was refused. A scope you may not use
+             *     and a scope that does not exist are refused with the SAME message, on purpose — telling
+             *     them apart would make this field a way to discover which ids are real. A filter is
+             *     refused for its LENGTH or for a syntax error naming the character it stopped at — never
+             *     for naming a field, which is not checked. Supplying your own `secret` is refused here
+             *     too.
              */
             422: {
                 headers: {
@@ -7830,6 +7896,7 @@ export interface operations {
                      *             "fax.received",
                      *             "fax.delivered"
                      *           ],
+                     *           "filter": "status:failed OR status:partial",
                      *           "active": true,
                      *           "secret": null,
                      *           "secretPreviousExpiresAt": null,
@@ -7896,6 +7963,7 @@ export interface operations {
                  *             "fax.received",
                  *             "fax.delivered"
                  *           ],
+                 *           "filter": "status:failed",
                  *           "active": false
                  *         }
                  *       }
@@ -7952,6 +8020,7 @@ export interface operations {
                      *             "fax.received",
                      *             "fax.delivered"
                      *           ],
+                     *           "filter": "status:failed OR status:partial",
                      *           "active": true,
                      *           "secret": "whsec_bmV3c2VjcmV0dmFsdWUwMTIzNDU2Nzg5YWJjZGVm",
                      *           "secretPreviousExpiresAt": "2026-08-17T08:00:00.000000Z",
