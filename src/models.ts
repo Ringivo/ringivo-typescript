@@ -340,6 +340,55 @@ export interface FaxAccountNumber {
   readonly raw: RawJson;
 }
 
+/**
+ * One grant: this person may read this fax account's faxes.
+ *
+ * A grant is a pair of foreign keys and a fact — it exists or it does not.
+ * There is nothing on it to change, which is why the API publishes no
+ * update route and this package no `update()`.
+ *
+ * It is NOT what lets somebody administer the account. Administering one is
+ * permission-gated on the person's role; reading its CONTENT is gated on a
+ * grant. So the two answer different questions, and a manager who can
+ * rename an account may hold no grant on it at all.
+ *
+ * `userEmail` is the whole reason a grant list is worth reading: the
+ * question is "who can see this?", and a page of ids answers nothing.
+ *
+ * `faxAccountId` and `userId` come from the relationship linkages, so both
+ * read null when the server answered a relationship with `links` alone —
+ * which is legal JSON:API and says nothing about the grant. `raw` still
+ * carries whatever did arrive.
+ */
+export interface FaxAccountUser {
+  readonly id: string;
+  readonly userEmail: string | null;
+  readonly faxAccountId: string | null;
+  readonly userId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `faxAccountUsers.list()`, newest first.
+ *
+ * The rows are called `grants` rather than `users`, because that is what
+ * they are: `grants[0].userId` is the person and `grants[0].id` is the
+ * grant, and naming the page after the person would make those two look
+ * like the same id.
+ *
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` —
+ * never one this client built — and it is null on the last page. `nextUrl`
+ * mirrors `links.next`, which is absent rather than null at the end.
+ */
+export interface FaxAccountUserPage {
+  readonly grants: readonly FaxAccountUser[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
 /** Build from a JSON:API resource object — every fax-account call. */
 export function faxAccountFromResource(resource: RawJson): FaxAccount {
   const attributes = nested(resource, "attributes") ?? {};
@@ -390,6 +439,33 @@ export function faxAccountPageFromDocument(document: RawJson): FaxAccountPage {
 export function faxAccountNumbersFromDocument(document: RawJson): readonly FaxAccountNumber[] {
   const data = document.data;
   return (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountNumberFromResource);
+}
+
+/** Build from a JSON:API resource object — every fax-account-user call. */
+export function faxAccountUserFromResource(resource: RawJson): FaxAccountUser {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    userEmail: text(attributes, "userEmail"),
+    faxAccountId: relationshipId(resource, "faxAccount"),
+    userId: relationshipId(resource, "user"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function faxAccountUserPageFromDocument(document: RawJson): FaxAccountUserPage {
+  const data = document.data;
+  const grants = (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountUserFromResource);
+
+  return Object.freeze({
+    grants: Object.freeze(grants),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
 }
 
 /**

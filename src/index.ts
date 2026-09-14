@@ -61,6 +61,8 @@ export type {
   FaxAccount,
   FaxAccountNumber,
   FaxAccountPage,
+  FaxAccountUser,
+  FaxAccountUserPage,
   FaxDocument,
   FaxPage,
   MediaLink,
