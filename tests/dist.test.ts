@@ -55,6 +55,7 @@ interface Surface {
     baseUrl: string;
     faxes: object;
     faxAccounts: object;
+    faxAccountUsers: object;
     webhookEndpoints: object;
     webhookDeliveries: object;
     request: unknown;
@@ -127,6 +128,24 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["create", "delete", "get", "list", "numbers", "update"]);
+  });
+
+  it("exposes the whole fax-account-user surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["fax:read"],
+    });
+
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.faxAccountUsers))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["create", "delete", "get", "list"]);
   });
 
   it("exposes the whole webhook-endpoint surface", async () => {

@@ -221,11 +221,11 @@ describe("get", () => {
     expect(calls.last.url.pathname).toBe("/v1/fax-account-users/..%2Ffaxes%2Fsecret");
   });
 
-  it("refuses an empty grant id rather than reading the LIST as one grant", async () => {
-    // `/v1/fax-account-users/` + "" is `/v1/fax-account-users`, which is a
-    // real route that answers 200 with a page. Without this refusal a
-    // `get("")` would resolve, and the caller would read the collection
-    // document's first row as the grant they asked for.
+  it("refuses an empty grant id rather than sending the collection path", async () => {
+    // An empty id collapses the resource path onto the COLLECTION path,
+    // which is a different request from the one that was asked for. The
+    // assertion is that NOTHING went out: the count, not the server's
+    // answer, is the part this package controls.
     const calls = new Calls();
     server.use(
       http.get(GRANTS_URL, async ({ request }) => {
@@ -255,6 +255,133 @@ describe("get", () => {
     await expect(client().faxAccountUsers.get(GRANT_ID)).rejects.toMatchObject({
       statusCode: 404,
       code: "not_found",
+    });
+  });
+});
+
+describe("create", () => {
+  it("posts a JSON:API document naming both relationships", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(GRANTS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: grantResource() }, { status: 201 });
+      }),
+    );
+
+    const grant = await client().faxAccountUsers.create({
+      faxAccount: ACCOUNT_ID,
+      user: USER_ID,
+    });
+
+    const body = JSON.parse(calls.last.body) as {
+      data: {
+        type: string;
+        attributes?: unknown;
+        relationships: {
+          faxAccount: { data: { type: string; id: string } };
+          user: { data: { type: string; id: string } };
+        };
+      };
+    };
+
+    // The content type is the assertion that matters. This surface answers
+    // 415 to `application/json`, which is what a body sent with no explicit
+    // type gets.
+    expect(calls.last.request.headers.get("Content-Type")).toBe(JSONAPI);
+    expect(calls.last.request.headers.get("Accept")).toBe(JSONAPI);
+    expect(body.data.type).toBe("fax-account-users");
+    // The two linkages carry the RESOURCE TYPES the spec names, and they
+    // are not the same word as the relationship: the `user` relationship
+    // points at a `users` resource, and `faxAccount` at `fax-accounts`.
+    expect(body.data.relationships.faxAccount.data).toEqual({
+      type: "fax-accounts",
+      id: ACCOUNT_ID,
+    });
+    expect(body.data.relationships.user.data).toEqual({ type: "users", id: USER_ID });
+    // A grant carries no attributes on the way in. `userEmail` is the
+    // server's to publish, and a client that sent one would be asking to
+    // rename somebody.
+    expect("attributes" in body.data).toBe(false);
+    expect(grant.id).toBe(GRANT_ID);
+    expect(grant.userEmail).toBe("records@acme-vet.example");
+  });
+
+  it("carries the bearer token, like every other call", async () => {
+    // The hand-built request is the one place a write could accidentally
+    // leave the auth flow. It does not: `client.request()` is what sends it.
+    const calls = new Calls();
+    server.use(
+      http.post(GRANTS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: grantResource() }, { status: 201 });
+      }),
+    );
+
+    await client().faxAccountUsers.create({ faxAccount: ACCOUNT_ID, user: USER_ID });
+
+    expect(calls.last.request.headers.get("Authorization")).toBe("Bearer tok");
+  });
+
+  it("answers on the relationship pointer for a user that is not yours", async () => {
+    server.use(
+      http.post(GRANTS_URL, () =>
+        HttpResponse.json(
+          {
+            errors: [
+              {
+                status: "404",
+                title: "Not Found",
+                detail: "The related resource does not exist.",
+                source: { pointer: "/data/relationships/user" },
+              },
+            ],
+          },
+          { status: 404 },
+        ),
+      ),
+    );
+
+    await expect(
+      client().faxAccountUsers.create({ faxAccount: ACCOUNT_ID, user: USER_ID }),
+    ).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe("delete", () => {
+  it("sends DELETE to the grant's own path and resolves with nothing", async () => {
+    const calls = new Calls();
+    server.use(
+      http.delete(GRANT_URL, async ({ request }) => {
+        await calls.record(request);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    await expect(client().faxAccountUsers.delete(GRANT_ID)).resolves.toBeUndefined();
+    expect(calls.last.request.method).toBe("DELETE");
+    expect(calls.last.url.pathname).toBe(`/v1/fax-account-users/${GRANT_ID}`);
+  });
+
+  it("refuses an empty grant id rather than sending DELETE at the collection", async () => {
+    await expect(client().faxAccountUsers.delete("")).rejects.toThrow(
+      /a fax account user id is required/,
+    );
+  });
+
+  it("raises a typed 404 for a grant that is already gone", async () => {
+    server.use(
+      http.delete(GRANT_URL, () =>
+        HttpResponse.json(
+          { errors: [{ status: "404", code: "not_found", title: "Not found", detail: "No." }] },
+          { status: 404 },
+        ),
+      ),
+    );
+
+    await expect(client().faxAccountUsers.delete(GRANT_ID)).rejects.toBeInstanceOf(ApiError);
+    await expect(client().faxAccountUsers.delete(GRANT_ID)).rejects.toMatchObject({
+      statusCode: 404,
     });
   });
 });

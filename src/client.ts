@@ -140,7 +140,7 @@ export class Ringivo {
   /** Open a customer's fax account, read it, change it, delete it. */
   readonly faxAccounts: FaxAccounts;
 
-  /** Who can see a fax account's faxes: list the grants, read one. */
+  /** Who can see a fax account's faxes: list, read, grant, revoke. */
   readonly faxAccountUsers: FaxAccountUsers;
 
   /**
@@ -250,9 +250,10 @@ export class Ringivo {
    * still reachable with your credential, your timeout, your User-Agent and
    * the same typed errors:
    *
-   *     // Who can see a fax account's faxes — one row per (user, account).
+   *     // Every SIP trunk your credential can reach. This client wraps the
+   *     // fax surface; trunks are not part of it.
    *     const response = await client.request(
-   *       new Request(`${client.baseUrl}/v1/fax-account-users`, {
+   *       new Request(`${client.baseUrl}/v1/sip-trunks`, {
    *         headers: { Accept: "application/vnd.api+json" },
    *       }),
    *     );
