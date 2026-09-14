@@ -2889,7 +2889,18 @@ export interface components {
             updatedAt?: string | null;
         };
         FaxAccountRelationships: {
-            customer?: components["schemas"]["RelationshipToOne"];
+            /**
+             * @description The customer this account belongs to — an identifier, and nothing else. It does NOT
+             *     follow the usual `RelationshipToOne` shape, and the difference is deliberate: this API
+             *     serves no `customer` sub-resource of a fax account, so the `self` and `related` URLs
+             *     that shape carries would both answer 404, and a link that 404s is worse than no link.
+             *     In exchange `data` is ALWAYS present rather than only on a resolved read — the id is
+             *     how you learn which customer an account belongs to. An account is created for one
+             *     customer and never moves.
+             */
+            customer?: {
+                data: components["schemas"]["ResourceIdentifier"];
+            };
             numbers?: components["schemas"]["RelationshipToMany"];
         };
         FaxAccountResource: {
