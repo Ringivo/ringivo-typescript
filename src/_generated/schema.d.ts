@@ -2977,9 +2977,22 @@ export interface components {
             /** Format: uuid */
             id: string;
             attributes?: components["schemas"]["FaxAccountUserAttributes"];
+            /**
+             * @description The two ends of the grant. NEITHER follows the usual `RelationshipToOne` shape, and the
+             *     difference is deliberate: this API serves no sub-resource of a grant, so the `self` and
+             *     `related` URLs that shape carries would all answer 404, and a link that 404s is worse
+             *     than no link. In exchange each `data` is ALWAYS present rather than only on a resolved
+             *     read — a grant IS its pair of ids, so a document carrying neither would carry nothing.
+             */
             relationships?: {
-                faxAccount?: components["schemas"]["RelationshipToOne"];
-                user?: components["schemas"]["RelationshipToOne"];
+                /** @description The fax account whose content this grant opens. */
+                faxAccount?: {
+                    data: components["schemas"]["ResourceIdentifier"];
+                };
+                /** @description The person it opens it to. Their email is in `attributes.userEmail`. */
+                user?: {
+                    data: components["schemas"]["ResourceIdentifier"];
+                };
             };
             links?: components["schemas"]["ResourceLinks"];
             meta?: components["schemas"]["ResourceMeta"];

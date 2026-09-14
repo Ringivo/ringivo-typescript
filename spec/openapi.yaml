@@ -6960,11 +6960,27 @@ components:
           $ref: '#/components/schemas/FaxAccountUserAttributes'
         relationships:
           type: object
+          description: |
+            The two ends of the grant. NEITHER follows the usual `RelationshipToOne` shape, and the
+            difference is deliberate: this API serves no sub-resource of a grant, so the `self` and
+            `related` URLs that shape carries would all answer 404, and a link that 404s is worse
+            than no link. In exchange each `data` is ALWAYS present rather than only on a resolved
+            read — a grant IS its pair of ids, so a document carrying neither would carry nothing.
           properties:
             faxAccount:
-              $ref: '#/components/schemas/RelationshipToOne'
+              type: object
+              required: [data]
+              description: The fax account whose content this grant opens.
+              properties:
+                data:
+                  $ref: '#/components/schemas/ResourceIdentifier'
             user:
-              $ref: '#/components/schemas/RelationshipToOne'
+              type: object
+              required: [data]
+              description: The person it opens it to. Their email is in `attributes.userEmail`.
+              properties:
+                data:
+                  $ref: '#/components/schemas/ResourceIdentifier'
         links:
           $ref: '#/components/schemas/ResourceLinks'
         meta:
