@@ -522,7 +522,6 @@ const page = await client.pbx.callRecords.list({
   startedAfter: "2026-09-01T00:00:00Z",
   startedBefore: "2026-09-30T23:59:59Z",
   direction: "inbound",
-  disposition: "missed",
 });
 
 for (const call of page.callRecords) {
@@ -539,9 +538,9 @@ everything. A range wider than 13 months is refused with a 400.
 `get()`.** That asymmetry is its own portal's, not ours. Pass
 `includeHidden: true` to put them back into a listing.
 
-`direction` is `inbound`, `outbound` or `on-net` and `disposition` is
-`answered` or `missed`; a word outside those is a 400 rather than an empty
-page. On a record you read back, though, both are plain strings — the switch
+`direction` is `inbound`, `outbound` or `on-net`; a word outside those is a
+400 rather than an empty page. On a record you read back, though, `direction`
+and `disposition` are both plain strings — the switch
 records one integer carrying the pair, and one it has no word for arrives as
 its own digits. Compare against the values you know rather than assuming
 there are no others.
@@ -598,9 +597,9 @@ which of their registrations to place it from.
 
 **The 202 is not a call that happened.** It comes back the moment the
 platform has accepted the request, so `status` is `requested` and nothing on
-it says how the call went. `call.id` is the id the request was placed under.
-This release does not link it to the call record that appears afterwards;
-find that record by the subscriber and the time.
+it says how the call went. `call.id` is the id the request was placed under,
+and it finds the call record once the call has ended — see
+[Finding the call a click-to-dial became](#finding-the-call-a-click-to-dial-became).
 
 **There is no cancel, and this is not undoable.** Once the request is
 accepted, the call is out of your hands.
@@ -622,6 +621,25 @@ dialled.
 IDs as E.164 **without** the plus and answers with the spelling the called
 party will see, so a `+1…` comes back as `1…`. It is `null` when the
 subscriber's own caller ID was used.
+
+### Finding the call a click-to-dial became
+
+```ts
+const call = await client.pbx.users.call(personId, { destination: "+13025556789" });
+
+// Later, once the call has ended:
+const records = await client.pbx.callRecords.list({ callId: call.id });
+for (const record of records.callRecords) {
+  console.log(record.disposition, record.talkTime);
+}
+```
+
+`callId` takes the `id` that `users.call()` returned. The record appears once
+the call has ended, so an empty page right after the call means "not yet".
+One call writes two records: the phone system rings the subscriber first,
+then dials out. The list returns the visible dial-out record; add
+`includeHidden: true` to get the hidden ring leg as well. A call record's own
+`id` comes from the phone system's row, so it never equals `call.id`.
 
 ### Scopes, and what a read can reach
 
@@ -738,7 +756,7 @@ decision and not a library's.
 | `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
-| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, disposition?, user?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. |
+| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, user?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `callId` finds what a click-to-dial became. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.users.list({ customer?, user?, search?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxUserPage`: `users` plus `nextCursor`. `user` is the exact extension; `search` is the directory box. |
 | `client.pbx.users.get(pbxUserId)` | `pbx-users:read` | One `PbxUser`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |

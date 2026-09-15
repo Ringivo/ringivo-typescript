@@ -813,8 +813,8 @@ export interface PbxDevicePage {
  * publishes unmodified. An integer this API has no word for is served as its
  * own digits rather than as null — a vocabulary that grows at the switch's
  * end never erases a call — so these are `string`, not the narrow set the
- * FILTERS accept. Compare against the words you know and treat anything else
- * as unrecognised rather than assuming it cannot happen.
+ * `direction` FILTER accepts. Compare against the words you know and treat
+ * anything else as unrecognised rather than assuming it cannot happen.
  *
  * `hasRecording` says a recording is HELD for this call. Fetching the audio
  * is a later release; this one only answers the question.
@@ -879,11 +879,12 @@ export interface CallRecordPage {
  * nothing on this object says how the call went. That story is a
  * `CallRecord`, minutes later.
  *
- * **`id` is the id the request was placed under, and this release does not
- * link it to that record.** A `CallRecord`'s own id is computed from the
- * vendor row it was read out of, and no attribute on it publishes this one,
- * so there is no join to make here however much the two ids look alike.
- * Find the record by the subscriber and the time instead.
+ * **`id` is the id the request was placed under, and it finds that record.**
+ * Pass it to `pbx.callRecords.list({ callId: call.id })`: the record appears
+ * once the call has ended, and by default the list returns the visible
+ * dial-out record — the hidden leg that rang the subscriber comes back only
+ * with `includeHidden: true`. A `CallRecord`'s own id is computed from the
+ * vendor row it was read out of, so it never equals this one.
  *
  * **There is no idempotency key on the way in.** Asking twice is two calls
  * to a real person, so a `PbxCall` you never received is not a request to

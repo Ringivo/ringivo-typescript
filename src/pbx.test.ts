@@ -178,8 +178,8 @@ describe("callRecords.list", () => {
       startedAfter: "2026-09-01T00:00:00Z",
       startedBefore: "2026-09-30T23:59:59Z",
       direction: "inbound",
-      disposition: "answered",
       user: PBX_USER_ID,
+      callId: CALL_ID,
       includeHidden: true,
       pageSize: 100,
       after: "0198c4a1-cursor",
@@ -191,8 +191,8 @@ describe("callRecords.list", () => {
     expect(params.get("filter[started-after]")).toBe("2026-09-01T00:00:00Z");
     expect(params.get("filter[started-before]")).toBe("2026-09-30T23:59:59Z");
     expect(params.get("filter[direction]")).toBe("inbound");
-    expect(params.get("filter[disposition]")).toBe("answered");
     expect(params.get("filter[user]")).toBe(PBX_USER_ID);
+    expect(params.get("filter[call-id]")).toBe(CALL_ID);
     expect(params.get("filter[include-hidden]")).toBe("true");
     expect(params.get("page[size]")).toBe("100");
     expect(params.get("page[after]")).toBe("0198c4a1-cursor");
@@ -233,6 +233,62 @@ describe("callRecords.list", () => {
     // The DENOMINATOR: the call happened, and its query is empty.
     expect(calls.count).toBe(1);
     expect([...calls.last.url.searchParams.keys()]).toEqual([]);
+  });
+
+  it("sends no disposition filter, which the API refuses with a 400", async () => {
+    // `filter[disposition]` was withdrawn from the API, and a list that still
+    // sent it would be refused outright. The option is gone from the type —
+    // the directive below fails `tsc --noEmit` the day it comes back — and
+    // this assertion is the runtime half: a JavaScript caller who still
+    // passes it must not reach the wire with it.
+    const calls = new Calls();
+    server.use(
+      http.get(CALL_RECORDS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    // @ts-expect-error disposition is no longer a call-record filter
+    await client().pbx.callRecords.list({ disposition: "missed", direction: "inbound" });
+
+    // The DENOMINATOR: the request went out and carried the filter that IS
+    // still supported.
+    expect(calls.count).toBe(1);
+    expect(calls.last.url.searchParams.get("filter[direction]")).toBe("inbound");
+    expect(calls.last.url.searchParams.has("filter[disposition]")).toBe(false);
+  });
+
+  it("finds a click-to-dial call's records by the id call() answered", async () => {
+    // The join this release adds: the `id` of the 202 goes back out,
+    // unchanged, as `filter[call-id]`.
+    const calls = new Calls();
+    server.use(
+      http.post(PLACE_CALL_URL, () =>
+        HttpResponse.json(
+          {
+            data: {
+              type: "calls",
+              id: CALL_ID,
+              attributes: { destination: "+13025556789", status: "requested" },
+            },
+          },
+          { status: 202 },
+        ),
+      ),
+      http.get(CALL_RECORDS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [callRecordResource({ hidden: false })] });
+      }),
+    );
+
+    const ringivo = client();
+    const call = await ringivo.pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
+    const page = await ringivo.pbx.callRecords.list({ callId: call.id });
+
+    expect(calls.count).toBe(1);
+    expect([...calls.last.url.searchParams.entries()]).toEqual([["filter[call-id]", CALL_ID]]);
+    expect(page.callRecords).toHaveLength(1);
   });
 
   it("walks backward from a cursor", async () => {

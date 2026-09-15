@@ -88,13 +88,24 @@ export interface ListCallRecordsOptions {
    * API has no word for — the two differ deliberately.
    */
   direction?: "inbound" | "outbound" | "on-net";
-  /** Whether anybody answered. Narrow for the same reason as `direction`. */
-  disposition?: "answered" | "missed";
   /**
    * Calls with this PBX **user id** on either leg — placed by them or taken
    * by them. The id of a `pbx.users` row, never an extension.
    */
   user?: string;
+  /**
+   * The records of ONE click-to-dial call: pass the `id` that
+   * `pbx.users.call()` returned.
+   *
+   * The call record appears once the call has ended, so an empty page soon
+   * after the call means "not yet" rather than "never". One call writes two
+   * records — the phone system rings the subscriber first, then dials out —
+   * and by default the list returns the visible dial-out record. The hidden
+   * leg that rang the subscriber comes back only with `includeHidden: true`.
+   *
+   * An id that names no call answers an empty page, not an error.
+   */
+  callId?: string;
   /**
    * Also return the records the phone system marks hidden.
    *
@@ -232,6 +243,9 @@ export class CallRecords {
    *
    * Hidden records are left out here and served by `get()`.
    *
+   * `callId` finds what a click-to-dial became: pass the `id` that
+   * `pbx.users.call()` returned, once the call has ended.
+   *
    * Needs `pbx-call-records:read`.
    */
   async list(options: ListCallRecordsOptions = {}): Promise<CallRecordPage> {
@@ -245,8 +259,8 @@ export class CallRecords {
           "filter[started-after]": options.startedAfter,
           "filter[started-before]": options.startedBefore,
           "filter[direction]": options.direction,
-          "filter[disposition]": options.disposition,
           "filter[user]": options.user,
+          "filter[call-id]": options.callId,
           "filter[include-hidden]": options.includeHidden,
         },
       },
@@ -328,10 +342,10 @@ export class PbxUsers {
    * **THE 202 IS NOT A CALL THAT HAPPENED.** It comes back the moment the
    * platform has accepted the request, so the `PbxCall` you get says
    * `status: "requested"` and nothing about how the call went. Its `id` is
-   * the id the request was placed under. **This release does not link it to
-   * the call record that appears afterwards** — a `CallRecord`'s own id is
-   * computed from the vendor row, and no attribute on it publishes this one
-   * — so find that record by the subscriber and the time.
+   * the id the request was placed under, and it is how you find what the
+   * call became: `pbx.callRecords.list({ callId: call.id })` returns its
+   * record once the call has ended. A `CallRecord`'s own id comes from the
+   * vendor row, so the two ids differ.
    *
    * **This is not undoable.** There is no cancel: once the request is
    * accepted, the call is out of your hands.
