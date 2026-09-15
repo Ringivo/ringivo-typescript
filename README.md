@@ -543,9 +543,12 @@ for (const person of people.users) {
   console.log(person.user, person.displayName, person.email);
 }
 
-const phones = await client.pbx.devices.list({ user: people.users[0].id, registered: true });
-for (const phone of phones.devices) {
-  console.log(phone.aor, phone.userAgent, phone.registrationExpiresAt);
+const [person] = people.users;
+if (person) {
+  const phones = await client.pbx.devices.list({ user: person.id, registered: true });
+  for (const phone of phones.devices) {
+    console.log(phone.aor, phone.userAgent, phone.registrationExpiresAt);
+  }
 }
 ```
 
