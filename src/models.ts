@@ -175,6 +175,31 @@ function relationshipId(resource: RawJson, name: string): string | null {
 }
 
 /**
+ * The ids inside a to-many relationship's linkage, or null.
+ *
+ * The same rule as `relationshipId` above, for the plural case: null reads
+ * "the server did not send the linkage", never "there are none" — and an
+ * EMPTY ARRAY is the answer that does mean none, so the two stay apart. A
+ * member of the array with no `id` is dropped rather than passed on as an
+ * empty string, because the list is handed to callers as `readonly string[]`.
+ */
+function relationshipIds(resource: RawJson, name: string): readonly string[] | null {
+  const relationships = nested(resource, "relationships");
+  const relation = relationships ? nested(relationships, name) : null;
+  const data = relation ? relation.data : undefined;
+  if (!Array.isArray(data)) {
+    return null;
+  }
+
+  return Object.freeze(
+    data
+      .filter(isRecord)
+      .map((identifier) => text(identifier, "id"))
+      .filter((id): id is string => id !== null),
+  );
+}
+
+/**
  * An ISO-8601 instant as the API writes it, or null.
  *
  * The API writes both `...T11:02:31.000000Z` and `...T11:02:31+00:00`, and
@@ -657,6 +682,358 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
+  });
+}
+
+/**
+ * One subscriber on a customer's phone system.
+ *
+ * -- WHY THE TIMESTAMPS HERE ARE STRINGS ------------------------------------
+ * `createdAt` and `updatedAt` are `string`, not `Date`, and they are the only
+ * two in this package that are. They come straight out of the phone system,
+ * which has never published the format it writes them in, so the API serves
+ * them UNPARSED and this client hands them on the same way. A mis-parse would
+ * be silent — a date a year out reads exactly like a date that is right — and
+ * a string a caller can see is better than a `Date` they cannot check. Parse
+ * them yourself if you know your switch's format.
+ *
+ * `presence` is the phone system's own word, verbatim. There is deliberately
+ * no derived `online` flag: the vocabulary is longer than two states, and
+ * which of its words mean "available" is your decision rather than ours.
+ *
+ * `customerId` and `deviceIds` come from the relationship linkages, so both
+ * read null when the server answered a relationship with `links` alone. An
+ * EMPTY `deviceIds` array is different: it means this subscriber has no
+ * registration at all.
+ */
+export interface PbxUser {
+  readonly id: string;
+  /** The extension. */
+  readonly user: string | null;
+  readonly domain: string | null;
+  readonly displayName: string | null;
+  readonly firstName: string | null;
+  readonly lastName: string | null;
+  readonly email: string | null;
+  /** The phone system's own permission tier for this person. */
+  readonly scope: string | null;
+  readonly group: string | null;
+  readonly site: string | null;
+  readonly presence: string | null;
+  readonly callerIdNumber: string | null;
+  readonly callerIdName: string | null;
+  readonly timeZone: string | null;
+  /** As the phone system stores it — TEXT, not RFC 3339. See above. */
+  readonly createdAt: string | null;
+  /** As the phone system stores it — TEXT, not RFC 3339. See above. */
+  readonly updatedAt: string | null;
+  readonly customerId: string | null;
+  readonly deviceIds: readonly string[] | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `pbx.users.list()`, by extension.
+ *
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` — never
+ * one this client built — and it is null on the last page. `nextUrl` mirrors
+ * `links.next`, which is absent rather than null at the end.
+ */
+export interface PbxUserPage {
+  readonly users: readonly PbxUser[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One REGISTRATION, not one handset.
+ *
+ * The row exists because something sent a SIP REGISTER, and it disappears
+ * when nothing does. So a phone that is unplugged leaves no device here, and
+ * a phone that registered twice leaves two.
+ *
+ * `registered` is derived by the server — is `registrationExpiresAt` still in
+ * the future? — which is why it is worth reading rather than recomputing:
+ * the three timestamps on this model are the phone system's own TEXT and
+ * carry no zone, exactly as on `PbxUser`.
+ *
+ * `pbxUserId` is the `pbx.users` resource this registration belongs to. It is
+ * spelled `pbx-user` on the wire rather than `user`, because `user` is
+ * already an ATTRIBUTE here — the extension — and JSON:API forbids the two
+ * from sharing a name.
+ */
+export interface PbxDevice {
+  readonly id: string;
+  /** The address of record that registered. */
+  readonly aor: string | null;
+  /** The subscriber's extension. */
+  readonly user: string | null;
+  readonly domain: string | null;
+  readonly mode: string | null;
+  /** What the phone said it is. */
+  readonly userAgent: string | null;
+  readonly contact: string | null;
+  readonly transport: string | null;
+  /** The address the registration arrived from. */
+  readonly receivedFrom: string | null;
+  /** As the phone system stores it — TEXT, not RFC 3339. */
+  readonly registeredAt: string | null;
+  /** As the phone system stores it — TEXT, not RFC 3339. */
+  readonly registrationExpiresAt: string | null;
+  /** Derived by the server: has the registration not expired? */
+  readonly registered: boolean | null;
+  readonly autoAnswer: boolean | null;
+  /** As the phone system stores it — TEXT, not RFC 3339. */
+  readonly createdAt: string | null;
+  readonly customerId: string | null;
+  readonly pbxUserId: string | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `pbx.devices.list()`, by address of record. */
+export interface PbxDevicePage {
+  readonly devices: readonly PbxDevice[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One call, as the phone system recorded it.
+ *
+ * -- THESE THREE INSTANTS ARE REAL DATES ------------------------------------
+ * Unlike `PbxUser` and `PbxDevice`, whose timestamps are the switch's own
+ * text, `startedAt`, `answeredAt` and `releasedAt` are RFC 3339 in UTC: the
+ * switch stores them as Unix epochs, which is the one timestamp shape that
+ * carries no zone ambiguity. So they are `Date`s here.
+ *
+ * -- direction AND disposition ARE WIDE ON PURPOSE --------------------------
+ * Both are read off ONE integer the switch records, which `vendorType`
+ * publishes unmodified. An integer this API has no word for is served as its
+ * own digits rather than as null — a vocabulary that grows at the switch's
+ * end never erases a call — so these are `string`, not the narrow set the
+ * FILTERS accept. Compare against the words you know and treat anything else
+ * as unrecognised rather than assuming it cannot happen.
+ *
+ * `hasRecording` says a recording is HELD for this call. Fetching the audio
+ * is a later release; this one only answers the question.
+ *
+ * `fromPbxUserId` and `toPbxUserId` are the `pbx.users` resources on the two
+ * legs, when the extensions resolve on the call's own domain. Null when they
+ * do not — an outside caller has no extension — and also null when the server
+ * answered the relationship with `links` alone.
+ */
+export interface CallRecord {
+  readonly id: string;
+  readonly direction: string | null;
+  readonly disposition: string | null;
+  /** The phone system's own integer, unmodified. */
+  readonly vendorType: number | null;
+  readonly domain: string | null;
+  /** The extension that placed the call, empty when an outside caller did. */
+  readonly fromUser: string | null;
+  readonly fromUri: string | null;
+  readonly fromName: string | null;
+  readonly toUser: string | null;
+  readonly toUri: string | null;
+  /** What was actually dialled. */
+  readonly dialed: string | null;
+  /** The extension that acted on somebody else's behalf, if any. */
+  readonly byUser: string | null;
+  /** The extension that took the call. */
+  readonly termUser: string | null;
+  readonly startedAt: Date | null;
+  /** Null when nobody answered. */
+  readonly answeredAt: Date | null;
+  readonly releasedAt: Date | null;
+  /** Seconds, end to end. */
+  readonly duration: number | null;
+  /** Seconds anybody was actually talking. */
+  readonly talkTime: number | null;
+  readonly tag: string | null;
+  /** Does the phone system hide this record from its own call log? */
+  readonly hidden: boolean | null;
+  readonly hasRecording: boolean | null;
+  /** The phone system's own id for the call, for support conversations. */
+  readonly vendorId: string | null;
+  readonly customerId: string | null;
+  readonly fromPbxUserId: string | null;
+  readonly toPbxUserId: string | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `pbx.callRecords.list()`, newest first. */
+export interface CallRecordPage {
+  readonly callRecords: readonly CallRecord[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * A call this client ASKED FOR — the answer to `pbx.users.call()`.
+ *
+ * It is an intent, not a call that happened. The server answers **202** the
+ * moment it has told the switch to place it, so `status` is `requested` here
+ * and nothing on this object says whether a phone rang, whether anybody
+ * answered, or how long they talked. That story is a `CallRecord`, minutes
+ * later, and `id` is what joins the two: it is the id the console minted for
+ * the call before sending it, and the switch carries it.
+ *
+ * `device` is the `pbx.devices` id the call is originated from, echoed back
+ * when you named one — it is an ATTRIBUTE rather than a relationship, the
+ * same as it is on the way in.
+ *
+ * `requestedAt` is null if the server sends a value this client cannot read
+ * as an instant; `raw` keeps what arrived either way.
+ */
+export interface PbxCall {
+  readonly id: string;
+  readonly destination: string | null;
+  readonly callerId: string | null;
+  readonly autoAnswer: boolean | null;
+  readonly device: string | null;
+  readonly status: string | null;
+  readonly requestedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — every PBX-user call. */
+export function pbxUserFromResource(resource: RawJson): PbxUser {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    user: text(attributes, "user"),
+    domain: text(attributes, "domain"),
+    displayName: text(attributes, "display-name"),
+    firstName: text(attributes, "first-name"),
+    lastName: text(attributes, "last-name"),
+    email: text(attributes, "email"),
+    scope: text(attributes, "scope"),
+    group: text(attributes, "group"),
+    site: text(attributes, "site"),
+    presence: text(attributes, "presence"),
+    callerIdNumber: text(attributes, "caller-id-number"),
+    callerIdName: text(attributes, "caller-id-name"),
+    timeZone: text(attributes, "time-zone"),
+    createdAt: text(attributes, "created-at"),
+    updatedAt: text(attributes, "updated-at"),
+    customerId: relationshipId(resource, "customer"),
+    deviceIds: relationshipIds(resource, "devices"),
+    raw: resource,
+  });
+}
+
+export function pbxUserPageFromDocument(document: RawJson): PbxUserPage {
+  const data = document.data;
+  const users = (Array.isArray(data) ? data : []).filter(isRecord).map(pbxUserFromResource);
+
+  return Object.freeze({
+    users: Object.freeze(users),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/** Build from a JSON:API resource object — every PBX-device call. */
+export function pbxDeviceFromResource(resource: RawJson): PbxDevice {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    aor: text(attributes, "aor"),
+    user: text(attributes, "user"),
+    domain: text(attributes, "domain"),
+    mode: text(attributes, "mode"),
+    userAgent: text(attributes, "user-agent"),
+    contact: text(attributes, "contact"),
+    transport: text(attributes, "transport"),
+    receivedFrom: text(attributes, "received-from"),
+    registeredAt: text(attributes, "registered-at"),
+    registrationExpiresAt: text(attributes, "registration-expires-at"),
+    registered: boolean(attributes, "registered"),
+    autoAnswer: boolean(attributes, "auto-answer"),
+    createdAt: text(attributes, "created-at"),
+    customerId: relationshipId(resource, "customer"),
+    pbxUserId: relationshipId(resource, "pbx-user"),
+    raw: resource,
+  });
+}
+
+export function pbxDevicePageFromDocument(document: RawJson): PbxDevicePage {
+  const data = document.data;
+  const devices = (Array.isArray(data) ? data : []).filter(isRecord).map(pbxDeviceFromResource);
+
+  return Object.freeze({
+    devices: Object.freeze(devices),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/** Build from a JSON:API resource object — every call-record call. */
+export function callRecordFromResource(resource: RawJson): CallRecord {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    direction: text(attributes, "direction"),
+    disposition: text(attributes, "disposition"),
+    vendorType: integer(attributes, "vendor-type"),
+    domain: text(attributes, "domain"),
+    fromUser: text(attributes, "from-user"),
+    fromUri: text(attributes, "from-uri"),
+    fromName: text(attributes, "from-name"),
+    toUser: text(attributes, "to-user"),
+    toUri: text(attributes, "to-uri"),
+    dialed: text(attributes, "dialed"),
+    byUser: text(attributes, "by-user"),
+    termUser: text(attributes, "term-user"),
+    startedAt: instant(attributes["started-at"]),
+    answeredAt: instant(attributes["answered-at"]),
+    releasedAt: instant(attributes["released-at"]),
+    duration: integer(attributes, "duration"),
+    talkTime: integer(attributes, "talk-time"),
+    tag: text(attributes, "tag"),
+    hidden: boolean(attributes, "hidden"),
+    hasRecording: boolean(attributes, "has-recording"),
+    vendorId: text(attributes, "vendor-id"),
+    customerId: relationshipId(resource, "customer"),
+    fromPbxUserId: relationshipId(resource, "from-pbx-user"),
+    toPbxUserId: relationshipId(resource, "to-pbx-user"),
+    raw: resource,
+  });
+}
+
+export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
+  const data = document.data;
+  const callRecords = (Array.isArray(data) ? data : []).filter(isRecord).map(callRecordFromResource);
+
+  return Object.freeze({
+    callRecords: Object.freeze(callRecords),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/** Build from the JSON:API resource the 202 carries — `pbx.users.call()`. */
+export function pbxCallFromResource(resource: RawJson): PbxCall {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    destination: text(attributes, "destination"),
+    callerId: text(attributes, "caller-id"),
+    autoAnswer: boolean(attributes, "auto-answer"),
+    device: text(attributes, "device"),
+    status: text(attributes, "status"),
+    requestedAt: instant(attributes["requested-at"]),
+    raw: resource,
   });
 }
 

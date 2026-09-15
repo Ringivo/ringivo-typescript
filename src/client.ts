@@ -4,7 +4,7 @@
  * `Ringivo` owns three things: the base URL (there is no default — see
  * below), one authenticated request path, and the resource namespaces hung
  * off it (`client.faxes`, `client.faxAccounts`, `client.faxAccountUsers`,
- * `client.webhookEndpoints`, `client.webhookDeliveries`).
+ * `client.webhookEndpoints`, `client.webhookDeliveries`, `client.pbx`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -45,6 +45,7 @@ import { throwForResponse } from "./errors.js";
 import { FaxAccountUsers } from "./faxAccountUsers.js";
 import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
+import { Pbx } from "./pbx.js";
 import { VERSION } from "./version.js";
 import { WebhookDeliveries } from "./webhookDeliveries.js";
 import { WebhookEndpoints } from "./webhookEndpoints.js";
@@ -95,6 +96,10 @@ export interface RingivoOptions {
    * `webhooks:write`. A `fax:*` token reaches the `fax_account`-scoped
    * endpoints alone: it may register one, and a customer- or tenant-scoped
    * endpoint is absent from its lists and answers 404 to its reads.
+   *
+   * The phone-system surface needs `pbx-call-records:read` for the call log,
+   * `pbx-users:read` for the subscribers AND their devices — one scope covers
+   * both — and `pbx-calls:write` for click-to-dial.
    */
   scopes: readonly string[];
   /**
@@ -150,6 +155,12 @@ export class Ringivo {
 
   /** Read what we could not deliver to your endpoints. */
   readonly webhookDeliveries: WebhookDeliveries;
+
+  /**
+   * Your customers' phone systems: `pbx.callRecords`, `pbx.users`,
+   * `pbx.devices`, and `pbx.users.call()` for click-to-dial.
+   */
+  readonly pbx: Pbx;
 
   private readonly auth: ClientCredentialsAuth;
 
@@ -232,6 +243,7 @@ export class Ringivo {
     this.faxAccountUsers = new FaxAccountUsers(this);
     this.webhookEndpoints = new WebhookEndpoints(this);
     this.webhookDeliveries = new WebhookDeliveries(this);
+    this.pbx = new Pbx(this);
   }
 
   toString(): string {

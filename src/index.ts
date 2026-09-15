@@ -35,6 +35,12 @@
  * `webhooks:read`/`webhooks:write`, and a `fax:*` token reaches the
  * `fax_account`-scoped endpoints alone.
  *
+ * Your customers' phone systems are `client.pbx` — `pbx.callRecords` for the
+ * call log, `pbx.users` for the subscribers, `pbx.devices` for what their
+ * phones have registered, and `pbx.users.call()` to ask one of those phones
+ * to dial out. Reading needs `pbx-call-records:read` and `pbx-users:read`;
+ * click-to-dial needs `pbx-calls:write`.
+ *
  * Webhook receivers want `verifyWebhook()`, which needs no client and no
  * network.
  */
@@ -66,6 +72,8 @@ export type {
   FaxUpload,
 } from "./faxes.js";
 export type {
+  CallRecord,
+  CallRecordPage,
   Fax,
   FaxAccount,
   FaxAccountNumber,
@@ -75,11 +83,23 @@ export type {
   FaxDocument,
   FaxPage,
   MediaLink,
+  PbxCall,
+  PbxDevice,
+  PbxDevicePage,
+  PbxUser,
+  PbxUserPage,
   WebhookDelivery,
   WebhookDeliveryPage,
   WebhookEndpoint,
   WebhookEndpointPage,
 } from "./models.js";
+export { CallRecords, Pbx, PbxDevices, PbxUsers } from "./pbx.js";
+export type {
+  ListCallRecordsOptions,
+  ListPbxDevicesOptions,
+  ListPbxUsersOptions,
+  PlaceCallOptions,
+} from "./pbx.js";
 export { VERSION } from "./version.js";
 export { WebhookDeliveries } from "./webhookDeliveries.js";
 export type { ListWebhookDeliveriesOptions } from "./webhookDeliveries.js";
