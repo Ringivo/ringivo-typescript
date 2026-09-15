@@ -875,11 +875,14 @@ export interface CallRecordPage {
  * A call this client ASKED FOR — the answer to `pbx.users.call()`.
  *
  * It is an intent, not a call that happened. The server answers **202** the
- * moment it has told the switch to place it, so `status` is `requested` here
- * and nothing on this object says whether a phone rang, whether anybody
- * answered, or how long they talked. That story is a `CallRecord`, minutes
- * later, and `id` is what joins the two: it is the id the console minted for
- * the call before sending it, and the switch carries it.
+ * moment it has accepted the request, so `status` is `requested` here and
+ * nothing on this object says how the call went. That story is a
+ * `CallRecord`, minutes later, and `id` is what ties the two together: it is
+ * the id the call is placed under, carried through to its record.
+ *
+ * **There is no idempotency key on the way in.** Asking twice is two calls
+ * to a real person, so a `PbxCall` you never received is not a request to
+ * repeat blindly.
  *
  * `device` is the `pbx.devices` id the call is originated from, echoed back
  * when you named one — it is an ATTRIBUTE rather than a relationship, the

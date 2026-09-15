@@ -5,8 +5,8 @@
  * -- ONE NAMESPACE, THREE COLLECTIONS AND AN ACTION -------------------------
  * `client.pbx.users` are the subscribers, `client.pbx.devices` the SIP
  * registrations they made, and `client.pbx.callRecords` the call log.
- * `client.pbx.users.call()` is the only write on the whole surface: it asks
- * the switch to ring somebody's phone and dial out from it.
+ * `client.pbx.users.call()` is the only write on the whole surface: it has a
+ * subscriber's phone place a call, so the call goes out as them.
  *
  * They sit under `client.pbx` rather than at the top level because `users`
  * and `devices` are words this API uses elsewhere for other things — a
@@ -180,18 +180,20 @@ export interface PlaceCallOptions {
   /** The number to show the far end, E.164. Your provider's default if omitted. */
   callerId?: string;
   /**
-   * Answer the originating leg without the person picking up the handset.
-   * `false` unless you say otherwise — their phone rings first.
+   * Ask the subscriber's device to answer automatically, where it supports
+   * that. `false` unless you say otherwise.
    */
   autoAnswer?: boolean;
   /**
-   * Which of the user's registrations to call from, by its `pbx.devices` id.
+   * Which of the subscriber's registrations to place the call from, by its
+   * `pbx.devices` id.
    *
-   * **It must be one of THIS user's devices.** A device id belonging to
-   * somebody else is refused with a 422 pointing at
-   * `/data/attributes/device`, rather than ringing a stranger's phone with
-   * this user's caller ID on it. Omit it and the switch rings what it
-   * normally would.
+   * **The device must be that subscriber's own** — one that is not is
+   * refused with a 422 pointing at `/data/attributes/device`, whether it
+   * belongs to somebody else or does not exist. The two are deliberately
+   * one answer: a device id is a client-supplied name for hardware on a
+   * shared platform, and telling the two apart would say whose it is. Omit
+   * it and the platform chooses.
    */
   device?: string;
 }
@@ -319,25 +321,31 @@ export class PbxUsers {
   }
 
   /**
-   * Ask this subscriber's phone to call somebody — click-to-dial.
+   * Have this subscriber's phone place a call — click-to-dial.
    *
-   * Their phone rings first; when they pick it up the switch dials
-   * `destination` and joins the two. Pass `autoAnswer: true` to skip their
-   * half of that, if their handset supports it.
+   * The platform has that subscriber's phone place the call to
+   * `destination`, so the call goes out as them rather than as you.
    *
    * **THE 202 IS NOT A CALL THAT HAPPENED.** It comes back the moment the
-   * switch has been told, so the `PbxCall` you get says `status: "requested"`
-   * and nothing about whether a phone rang or anybody answered. Its `id` is
+   * platform has accepted the request, so the `PbxCall` you get says
+   * `status: "requested"` and nothing about how the call went. Its `id` is
    * the id the call is placed under, so the `CallRecord` that appears
-   * afterwards carries the same one — that is how you find out how it went.
+   * afterwards carries the same one — that is how you find out.
    *
-   * **This is not undoable.** There is no cancel: by the time a refusal could
-   * be sent, a phone is ringing and somebody is picking it up.
+   * **This is not undoable.** There is no cancel: once the request is
+   * accepted, the call is out of your hands.
+   *
+   * **DO NOT RETRY THIS BLINDLY — there is no idempotency key, and a retry
+   * is a second phone call to a real person.** Unlike `faxes.send()`, which
+   * carries an `Idempotency-Key` and replays rather than resends, nothing
+   * here deduplicates: a request you send twice because you never saw the
+   * first response is two calls.
    *
    * A subscriber outside your customers' domains answers **404**, not 403.
-   * A `device` that is not this user's own is a **422** pointing at
-   * `/data/attributes/device`. A switch that refuses the origination is a
-   * **502** carrying its own status in `meta`.
+   * A `device` that is not this subscriber's own is a **422** pointing at
+   * `/data/attributes/device`, whether it belongs to somebody else or does
+   * not exist. A platform that refuses the origination is a **502** carrying
+   * its own status in `meta`.
    *
    * Needs `pbx-calls:write`.
    */

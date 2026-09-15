@@ -580,22 +580,26 @@ const call = await client.pbx.users.call(personId, {
 console.log(call.id, call.status); // 0198c4a1-… requested
 ```
 
-Their phone rings; when they answer it, the switch dials `destination` and
-joins the two. `autoAnswer: true` skips their half of that, if the handset
-supports it, and `device` picks which of their registrations to call from.
+The platform has that subscriber's phone place the call to `destination`, so
+the call goes out as them rather than as you. `autoAnswer: true` asks their
+device to answer automatically where it supports that, and `device` says
+which of their registrations to place it from.
 
-**The 202 is not a call that happened.** It comes back the moment the switch
-has been told, so `status` is `requested` and nothing on it says whether a
-phone rang or anybody answered. `call.id` is the id the call is placed
-under, so the call record that appears afterwards carries the same one —
-that is how you find out how it went.
+**The 202 is not a call that happened.** It comes back the moment the
+platform has accepted the request, so `status` is `requested` and nothing on
+it says how the call went. `call.id` is the id the call is placed under, so
+the call record that appears afterwards carries the same one — that is how
+you find out.
 
-**There is no cancel, and this is not undoable.** By the time a withdrawal
-could be sent, a phone is ringing and somebody is picking it up.
+**There is no cancel, and this is not undoable.** Once the request is
+accepted, the call is out of your hands.
 
-A `device` that is not that user's own is a 422 pointing at
-`/data/attributes/device`, rather than ringing a stranger's phone with your
-user's caller ID on it. A switch that refuses the origination is a 502
+**Do not retry this blindly — there is no idempotency key, and a retry is a
+second phone call to a real person.**
+
+The device must be that subscriber's own — one that is not is refused with a
+422, whether it belongs to somebody else or does not exist. The pointer is
+`/data/attributes/device`. A platform that refuses the origination is a 502
 carrying its own status in `meta`.
 
 ### Scopes, and what a read can reach
@@ -717,7 +721,7 @@ decision and not a library's.
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.users.list({ customer?, user?, search?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxUserPage`: `users` plus `nextCursor`. `user` is the exact extension; `search` is the directory box. |
 | `client.pbx.users.get(pbxUserId)` | `pbx-users:read` | One `PbxUser`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
-| `client.pbx.users.call(pbxUserId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Ring their phone and dial out. Resolves to a `PbxCall` — an intent, not a call that happened. |
+| `client.pbx.users.call(pbxUserId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
 | `client.pbx.devices.list({ customer?, user?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `user` is a users id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
