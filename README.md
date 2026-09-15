@@ -3,9 +3,9 @@
 The TypeScript and JavaScript client for the Ringivo API: send a fax, read
 one, list them, cancel one, fetch its pages, manage your customers' fax
 accounts, say who may read them, register the webhooks that tell you what
-happened — and verify them when they arrive. It also reads your customers'
-phone systems: their call records, who holds which extension, what their
-phones have registered, and click-to-dial.
+happened — and verify them when they arrive. It also lists your customers
+and reads their phone systems: their call records, who holds which
+extension, what their phones have registered, and click-to-dial.
 
 ```sh
 npm install ringivo
@@ -22,8 +22,8 @@ first ships a change to `client.webhookEndpoints`: `create()` now **requires**
 endpoint that named no events would be subscribed to every event type the
 platform ever adds. Both are compile errors rather than 422s, so a typed
 caller finds out at build time; see [Webhook endpoints](#webhook-endpoints).
-Nothing else in 0.8.0 changes an existing call — the rest is the new
-`client.pbx` surface.
+Nothing else in 0.8.0 changes an existing call — the rest is new: the
+`client.pbx` surface and `client.customers`.
 
 ## Before you install 0.4.x
 
@@ -92,8 +92,10 @@ scope, so a credential issued for one customer cannot hold it however it is
 asked for — and `webhooks:read` / `webhooks:write` for webhook endpoints and
 their deliveries. The phone-system surface needs `pbx-call-records:read` for
 the call log, `pbx-users:read` for the subscribers and their devices alike,
-and `pbx-calls:write` for click-to-dial. A client that provisions accounts
-and then reads them asks for both:
+and `pbx-calls:write` for click-to-dial. `customers:read` lists your customers
+and reads one, and only a credential issued for your whole account holds it.
+A client that provisions accounts and then reads them asks for `fax:read` and
+`fax-accounts:write`:
 
 ```ts
 const provisioning = new Ringivo({
@@ -508,6 +510,41 @@ the one `catch` above is enough to answer 400 and never 500.
 During a secret rotation the header carries two signatures and either secret
 verifies, so a rotation costs you no deliveries.
 
+## Customers
+
+`client.customers` lists the businesses you sell to and reads one.
+
+```ts
+const found = await client.customers.list({ code: "jpz3k" });
+const [clinic] = found.customers;
+
+if (clinic) {
+  console.log(clinic.name, clinic.pbx, clinic.effectiveRegion);
+
+  const calls = await client.pbx.callRecords.list({ customer: clinic.id });
+  console.log(calls.callRecords.length);
+}
+```
+
+**A customer's `id` is what the other resources take as `customer`** —
+`client.pbx.callRecords.list({ customer })`, `pbx.users.list` and
+`pbx.devices.list`, and the fax-account calls. `code` is the platform's short
+code for a customer: five lowercase letters and digits that never change, so
+it finds one customer or none.
+
+**An account-wide credential only.** `customers:read` rides a credential
+issued for your whole account. A credential issued for one customer never
+holds it: the scope is dropped when the token is minted.
+
+`pbx` says whether the customer has a phone system. When it is `false`,
+`residential`, `callLimit`, `callLimitExternal`, `transports` and
+`provisioningState` are all `null`. The order of `transports` is data: it is
+the order the transports are offered in DNS, first preferred.
+
+The list is newest first and walks by cursor like every other list here —
+`after`, `before`, `pageSize`. A customer that is not on your account answers
+**404**, not 403.
+
 ## Call records, users, devices and click-to-dial
 
 `client.pbx` is your customers' phone systems: who holds which extension,
@@ -522,7 +559,6 @@ const page = await client.pbx.callRecords.list({
   startedAfter: "2026-09-01T00:00:00Z",
   startedBefore: "2026-09-30T23:59:59Z",
   direction: "inbound",
-  disposition: "missed",
 });
 
 for (const call of page.callRecords) {
@@ -539,12 +575,11 @@ everything. A range wider than 13 months is refused with a 400.
 `get()`.** That asymmetry is its own portal's, not ours. Pass
 `includeHidden: true` to put them back into a listing.
 
-`direction` is `inbound`, `outbound` or `on-net` and `disposition` is
-`answered` or `missed`; a word outside those is a 400 rather than an empty
-page. On a record you read back, though, both are plain strings — the switch
-records one integer carrying the pair, and one it has no word for arrives as
-its own digits. Compare against the values you know rather than assuming
-there are no others.
+`direction` is `inbound`, `outbound` or `on-net`; a word outside those is a
+400 rather than an empty page. On a record you read back, though, `direction`
+and `disposition` are both plain strings — the switch records one integer
+carrying the pair, and one it has no word for arrives as its own digits.
+Compare against the values you know rather than assuming there are no others.
 
 ### Who is on the phone system, and what is registered
 
@@ -598,9 +633,9 @@ which of their registrations to place it from.
 
 **The 202 is not a call that happened.** It comes back the moment the
 platform has accepted the request, so `status` is `requested` and nothing on
-it says how the call went. `call.id` is the id the request was placed under.
-This release does not link it to the call record that appears afterwards;
-find that record by the subscriber and the time.
+it says how the call went. `call.id` is the id the request was placed under,
+and it finds the call record once the call has ended — see
+[Finding the call a click-to-dial became](#finding-the-call-a-click-to-dial-became).
 
 **There is no cancel, and this is not undoable.** Once the request is
 accepted, the call is out of your hands.
@@ -622,6 +657,34 @@ dialled.
 IDs as E.164 **without** the plus and answers with the spelling the called
 party will see, so a `+1…` comes back as `1…`. It is `null` when the
 subscriber's own caller ID was used.
+
+### Finding the call a click-to-dial became
+
+```ts
+const call = await client.pbx.users.call(personId, { destination: "+13025556789" });
+
+// Later, once the call has ended — and inside the date range, see below:
+const records = await client.pbx.callRecords.list({ callId: call.id });
+for (const record of records.callRecords) {
+  console.log(record.disposition, record.talkTime);
+}
+```
+
+`callId` takes the `id` that `users.call()` returned. The record appears once
+the call has ended.
+
+**The date range still applies.** The call id is matched only inside the
+months your range covers, and with no `startedAfter` or `startedBefore` that is
+the current and the previous month. To find an older call, pass a range that
+covers when it was placed.
+
+An empty page means the call has not ended yet, it was placed outside the
+range, or the id names no call. It is never an error.
+
+One call writes two records: the phone system rings the subscriber first,
+then dials out. The list returns the visible dial-out record; add
+`includeHidden: true` to get the hidden ring leg as well. A call record's own
+`id` comes from the phone system's row, so it never equals `call.id`.
 
 ### Scopes, and what a read can reach
 
@@ -738,7 +801,9 @@ decision and not a library's.
 | `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
-| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, disposition?, user?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. |
+| `client.customers.list({ code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `code` finds one customer. |
+| `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
+| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, user?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `callId` finds what a click-to-dial became. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.users.list({ customer?, user?, search?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxUserPage`: `users` plus `nextCursor`. `user` is the exact extension; `search` is the directory box. |
 | `client.pbx.users.get(pbxUserId)` | `pbx-users:read` | One `PbxUser`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
@@ -748,13 +813,14 @@ decision and not a library's.
 | `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 
-`CallRecord`, `CallRecordPage`, `Fax`, `FaxAccount`, `FaxAccountNumber`,
-`FaxAccountPage`, `FaxAccountUser`, `FaxAccountUserPage`, `FaxDocument`,
-`FaxPage`, `MediaLink`, `PbxCall`, `PbxDevice`, `PbxDevicePage`, `PbxUser`,
-`PbxUserPage`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
-`WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
-built from in `.raw` — so a member the API adds after this release reaches you
-without a new SDK. A member the API did not send reads `null`.
+`CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
+`FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
+`FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
+`PbxDevice`, `PbxDevicePage`, `PbxUser`, `PbxUserPage`, `WebhookDelivery`,
+`WebhookDeliveryPage`, `WebhookEndpoint` and `WebhookEndpointPage` are frozen
+plain objects, and each keeps the JSON it was built from in `.raw` — so a
+member the API adds after this release reaches you without a new SDK. A member
+the API did not send reads `null`.
 
 The whole endpoint surface is typed from the OpenAPI document at
 `src/_generated/schema.d.ts`. Those types are private: they are regenerated

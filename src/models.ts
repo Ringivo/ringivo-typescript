@@ -813,8 +813,8 @@ export interface PbxDevicePage {
  * publishes unmodified. An integer this API has no word for is served as its
  * own digits rather than as null — a vocabulary that grows at the switch's
  * end never erases a call — so these are `string`, not the narrow set the
- * FILTERS accept. Compare against the words you know and treat anything else
- * as unrecognised rather than assuming it cannot happen.
+ * `direction` FILTER accepts. Compare against the words you know and treat
+ * anything else as unrecognised rather than assuming it cannot happen.
  *
  * `hasRecording` says a recording is HELD for this call. Fetching the audio
  * is a later release; this one only answers the question.
@@ -879,11 +879,17 @@ export interface CallRecordPage {
  * nothing on this object says how the call went. That story is a
  * `CallRecord`, minutes later.
  *
- * **`id` is the id the request was placed under, and this release does not
- * link it to that record.** A `CallRecord`'s own id is computed from the
- * vendor row it was read out of, and no attribute on it publishes this one,
- * so there is no join to make here however much the two ids look alike.
- * Find the record by the subscriber and the time instead.
+ * **`id` is the id the request was placed under, and it finds that record.**
+ * Pass it to `pbx.callRecords.list({ callId: call.id })`: the record appears
+ * once the call has ended, and by default the list returns the visible
+ * dial-out record — the hidden leg that rang the subscriber comes back only
+ * with `includeHidden: true`. **The list's date range still applies:** with no
+ * `startedAfter` or `startedBefore` only the current and the previous month
+ * are read, so for an older call pass a range that covers when it was placed.
+ * An empty page means the call has not ended yet, it was placed outside the
+ * range, or the id names no call. It is never an error.
+ * A `CallRecord`'s own id is computed from the vendor row it was read out of,
+ * so it never equals this one.
  *
  * **There is no idempotency key on the way in.** Asking twice is two calls
  * to a real person, so a `PbxCall` you never received is not a request to
@@ -1049,6 +1055,122 @@ export function pbxCallFromResource(resource: RawJson): PbxCall {
     status: text(attributes, "status"),
     requestedAt: instant(attributes["requested-at"]),
     raw: resource,
+  });
+}
+
+/**
+ * One of your customers: a business you sell to.
+ *
+ * `id` is what the other resources take as `customer` — the filter on
+ * `client.pbx.callRecords.list()`, `pbx.users.list()` and `pbx.devices.list()`,
+ * and the owner named on a fax account.
+ *
+ * `code` is the short code the platform assigns: five lowercase letters and
+ * digits, and it never changes. `dataResidencyCountry` is fixed when the
+ * customer is created. `effectiveRegion` is what `regionPreference` resolves
+ * to NOW — for `partner_default` that is your account's current default, so it
+ * can change without anybody editing this customer.
+ *
+ * -- THE PHONE-SYSTEM FIELDS ARE NULL, NOT FALSE, WITHOUT ONE ---------------
+ * `pbx` says whether the customer has a phone system. When it is `false`, the
+ * five fields after it — `residential`, `callLimit`, `callLimitExternal`,
+ * `transports` and `provisioningState` — are `null`: there is no setting to
+ * report, and a `false` or a `0` would read as one.
+ *
+ * `transports` keeps the server's ORDER, which is data: the order the SIP
+ * transports are offered in DNS, first preferred.
+ *
+ * `regionPreference`, `transports` and `provisioningState` are `string`s
+ * rather than the spec's enums, for the reason `FaxAccount.status` is: a word
+ * the server adds tomorrow must reach you today, without a new SDK.
+ */
+export interface Customer {
+  readonly id: string;
+  readonly name: string | null;
+  readonly code: string | null;
+  /** The service address's country, ISO 3166-1 alpha-2. */
+  readonly country: string | null;
+  /** The service address's street lines, as the address was validated. */
+  readonly addressLines: readonly string[] | null;
+  readonly city: string | null;
+  /** The state or province. */
+  readonly region: string | null;
+  readonly postalCode: string | null;
+  /** An IANA time zone name. */
+  readonly timeZone: string | null;
+  /** The country this customer's data is kept in, ISO 3166-1 alpha-2. */
+  readonly dataResidencyCountry: string | null;
+  /** `partner_default`, `use1` or `usw1`. */
+  readonly regionPreference: string | null;
+  readonly effectiveRegion: string | null;
+  /** Whether this customer has a phone system. */
+  readonly pbx: boolean | null;
+  readonly residential: boolean | null;
+  /** The most calls the phone system allows at once. */
+  readonly callLimit: number | null;
+  /** The most external calls the phone system allows at once. */
+  readonly callLimitExternal: number | null;
+  /** The SIP transports offered, first preferred. */
+  readonly transports: readonly string[] | null;
+  /** Where building the phone system on the switch stands. */
+  readonly provisioningState: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `customers.list()`, newest first.
+ *
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` — never
+ * one this client built — and it is null on the last page. `nextUrl` mirrors
+ * `links.next`, which is absent rather than null at the end.
+ */
+export interface CustomerPage {
+  readonly customers: readonly Customer[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — both customer calls. */
+export function customerFromResource(resource: RawJson): Customer {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    name: text(attributes, "name"),
+    code: text(attributes, "code"),
+    country: text(attributes, "country"),
+    addressLines: textList(attributes, "addressLines"),
+    city: text(attributes, "city"),
+    region: text(attributes, "region"),
+    postalCode: text(attributes, "postalCode"),
+    timeZone: text(attributes, "timeZone"),
+    dataResidencyCountry: text(attributes, "dataResidencyCountry"),
+    regionPreference: text(attributes, "regionPreference"),
+    effectiveRegion: text(attributes, "effectiveRegion"),
+    pbx: boolean(attributes, "pbx"),
+    residential: boolean(attributes, "residential"),
+    callLimit: integer(attributes, "callLimit"),
+    callLimitExternal: integer(attributes, "callLimitExternal"),
+    transports: textList(attributes, "transports"),
+    provisioningState: text(attributes, "provisioningState"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function customerPageFromDocument(document: RawJson): CustomerPage {
+  const data = document.data;
+  const customers = (Array.isArray(data) ? data : []).filter(isRecord).map(customerFromResource);
+
+  return Object.freeze({
+    customers: Object.freeze(customers),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
   });
 }
 
