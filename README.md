@@ -1,9 +1,11 @@
 # ringivo
 
-The TypeScript and JavaScript client for the Ringivo fax API: send a fax,
-read one, list them, cancel one, fetch its pages, manage your customers' fax
+The TypeScript and JavaScript client for the Ringivo API: send a fax, read
+one, list them, cancel one, fetch its pages, manage your customers' fax
 accounts, say who may read them, register the webhooks that tell you what
-happened — and verify them when they arrive.
+happened — and verify them when they arrive. It also reads your customers'
+phone systems: their call records, who holds which extension, what their
+phones have registered, and click-to-dial.
 
 ```sh
 npm install ringivo
@@ -77,8 +79,10 @@ faxes, `fax-accounts:write` for opening, changing or deleting a fax
 account and for granting or withdrawing access to one — a reseller-tier
 scope, so a credential issued for one customer cannot hold it however it is
 asked for — and `webhooks:read` / `webhooks:write` for webhook endpoints and
-their deliveries. A client that provisions accounts and then reads them asks
-for both:
+their deliveries. The phone-system surface needs `pbx-call-records:read` for
+the call log, `pbx-users:read` for the subscribers and their devices alike,
+and `pbx-calls:write` for click-to-dial. A client that provisions accounts
+and then reads them asks for both:
 
 ```ts
 const provisioning = new Ringivo({
@@ -493,6 +497,126 @@ the one `catch` above is enough to answer 400 and never 500.
 During a secret rotation the header carries two signatures and either secret
 verifies, so a rotation costs you no deliveries.
 
+## Call records, users, devices and click-to-dial
+
+`client.pbx` is your customers' phone systems: who holds which extension,
+what their phones have registered, what was called — and asking one of
+those phones to place a call.
+
+```ts
+const clinic = "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081";
+
+const page = await client.pbx.callRecords.list({
+  customer: clinic,
+  startedAfter: "2026-09-01T00:00:00Z",
+  startedBefore: "2026-09-30T23:59:59Z",
+  direction: "inbound",
+  disposition: "missed",
+});
+
+for (const call of page.callRecords) {
+  console.log(call.startedAt, call.fromUri, call.toUser, call.duration);
+}
+```
+
+**Name a date range unless you mean the last two months.** The phone system
+keeps one table per month, and your range picks which of them are opened at
+all — so with no range you get the current month and the previous one, not
+everything. A range wider than 13 months is refused with a 400.
+
+**A record the phone system hides is left out of the list and served by
+`get()`.** That asymmetry is its own portal's, not ours. Pass
+`includeHidden: true` to put them back into a listing.
+
+`direction` is `inbound`, `outbound` or `on-net` and `disposition` is
+`answered` or `missed`; a word outside those is a 400 rather than an empty
+page. On a record you read back, though, both are plain strings — the switch
+records one integer carrying the pair, and one it has no word for arrives as
+its own digits. Compare against the values you know rather than assuming
+there are no others.
+
+### Who is on the phone system, and what is registered
+
+```ts
+const people = await client.pbx.users.list({ customer: clinic, search: "perkins" });
+for (const person of people.users) {
+  console.log(person.user, person.displayName, person.email);
+}
+
+const phones = await client.pbx.devices.list({ user: people.users[0].id, registered: true });
+for (const phone of phones.devices) {
+  console.log(phone.aor, phone.userAgent, phone.registrationExpiresAt);
+}
+```
+
+`search` is the directory box — one substring across the display name, both
+halves of the person's name and the extension. `user` on `pbx.users` is the
+exact EXTENSION instead, and `101` does not match `1010`; `user` on
+`pbx.devices` is a **users id**, not an extension.
+
+**A device is one REGISTRATION, not one handset.** The row exists because
+something sent a SIP REGISTER and it disappears when nothing does, so an
+unplugged phone leaves no device at all and a phone that registered twice
+leaves two. `registered: false` asks for the expired ones.
+
+**A PBX user's and a device's timestamps are strings, not `Date`s** — the
+only ones in this package that are. They come straight out of the phone
+system, which has never published the format it writes them in, so the API
+serves them unparsed and so do we: a date a year out would read exactly like
+a date that is right. A call record's `startedAt`, `answeredAt` and
+`releasedAt` ARE `Date`s, because those the switch stores as epochs.
+
+### Asking somebody's phone to dial
+
+```ts
+const call = await client.pbx.users.call(personId, {
+  destination: "+13025556789",
+  callerId: "+14075550101",
+});
+
+console.log(call.id, call.status); // 0198c4a1-… requested
+```
+
+Their phone rings; when they answer it, the switch dials `destination` and
+joins the two. `autoAnswer: true` skips their half of that, if the handset
+supports it, and `device` picks which of their registrations to call from.
+
+**The 202 is not a call that happened.** It comes back the moment the switch
+has been told, so `status` is `requested` and nothing on it says whether a
+phone rang or anybody answered. `call.id` is the id the call is placed
+under, so the call record that appears afterwards carries the same one —
+that is how you find out how it went.
+
+**There is no cancel, and this is not undoable.** By the time a withdrawal
+could be sent, a phone is ringing and somebody is picking it up.
+
+A `device` that is not that user's own is a 422 pointing at
+`/data/attributes/device`, rather than ringing a stranger's phone with your
+user's caller ID on it. A switch that refuses the origination is a 502
+carrying its own status in `meta`.
+
+### Scopes, and what a read can reach
+
+Reading the call log needs `pbx-call-records:read`. Subscribers **and** their
+devices are both `pbx-users:read` — one scope covers the two. Click-to-dial
+needs `pbx-calls:write`.
+
+```ts
+const phones = new Ringivo({
+  baseUrl: "https://api.yourprovider.example",
+  clientId: "0198c4a1-1f2e-7a3b-9c40-5f6e7d8a9b01",
+  clientSecret: "9tK2xr4mQ7vBnZ1sD5hL0pWfC8jY3aE6",
+  tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
+  scopes: ["pbx-call-records:read", "pbx-users:read", "pbx-calls:write"],
+});
+```
+
+**Every one of these reads is narrowed to your own customers' phone systems,
+and there is no unscoped form.** A credential that reaches no customer with
+a phone system is refused with a **400** rather than handed an empty page, so
+"nobody has one yet" never reads as "nobody has any users". Anything outside
+your reach answers **404**, not 403.
+
 ## When something is refused
 
 ```ts
@@ -586,12 +710,20 @@ decision and not a library's.
 | `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
+| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, disposition?, user?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. |
+| `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
+| `client.pbx.users.list({ customer?, user?, search?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxUserPage`: `users` plus `nextCursor`. `user` is the exact extension; `search` is the directory box. |
+| `client.pbx.users.get(pbxUserId)` | `pbx-users:read` | One `PbxUser`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
+| `client.pbx.users.call(pbxUserId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Ring their phone and dial out. Resolves to a `PbxCall` — an intent, not a call that happened. |
+| `client.pbx.devices.list({ customer?, user?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `user` is a users id, not an extension. |
+| `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 
-`Fax`, `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
-`FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`,
-`WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
+`CallRecord`, `CallRecordPage`, `Fax`, `FaxAccount`, `FaxAccountNumber`,
+`FaxAccountPage`, `FaxAccountUser`, `FaxAccountUserPage`, `FaxDocument`,
+`FaxPage`, `MediaLink`, `PbxCall`, `PbxDevice`, `PbxDevicePage`, `PbxUser`,
+`PbxUserPage`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
 `WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
 built from in `.raw` — so a member the API adds after this release reaches you
 without a new SDK. A member the API did not send reads `null`.
