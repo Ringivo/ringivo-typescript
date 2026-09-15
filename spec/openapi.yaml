@@ -272,7 +272,9 @@ tags:
       **This is the one write on `/v1/pbx/`**, it needs its own scope (`pbx-calls:write`), and the
       read scopes do not imply it — the act has a cost and a caller ID attached. It answers **202**,
       never 201: the phone system takes the command onto its own bus and the call has not happened
-      yet. What happened to it arrives later on `/v1/pbx/call-records`, under the same id.
+      yet, which is why `status` reports the REQUEST's state, not the call's. This release does not
+      link the call to its call record — find it on `/v1/pbx/call-records` by subscriber and time
+      instead.
   - name: Call records
     description: |
       Your customers' call log.
@@ -10412,9 +10414,10 @@ components:
           type: string
           enum: [requested]
           description: |
-            Always `requested` from this endpoint. The phone system has taken the command and
-            nothing about the call is knowable yet; what happened to it arrives on
-            `/v1/pbx/call-records` under this same id.
+            Always `requested` from this endpoint: it is the REQUEST's state, not the call's, because
+            the phone system has taken the command and nothing about the call is knowable yet. This
+            release does not link the call to its call record; find it on `/v1/pbx/call-records` by
+            subscriber and time instead.
         requested-at: { type: string, format: date-time }
     PbxCallResource:
       type: object

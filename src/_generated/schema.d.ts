@@ -5440,9 +5440,10 @@ export interface components {
             /** @description The `devices` id the call originates from, as sent. Null when none was named. */
             device?: string | null;
             /**
-             * @description Always `requested` from this endpoint. The phone system has taken the command and
-             *     nothing about the call is knowable yet; what happened to it arrives on
-             *     `/v1/pbx/call-records` under this same id.
+             * @description Always `requested` from this endpoint: it is the REQUEST's state, not the call's, because
+             *     the phone system has taken the command and nothing about the call is knowable yet. This
+             *     release does not link the call to its call record; find it on `/v1/pbx/call-records` by
+             *     subscriber and time instead.
              * @enum {string}
              */
             status?: "requested";
