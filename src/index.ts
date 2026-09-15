@@ -41,11 +41,17 @@
  * to dial out. Reading needs `pbx-call-records:read` and `pbx-users:read`;
  * click-to-dial needs `pbx-calls:write`.
  *
+ * Your customers themselves are `client.customers` — list them and read one.
+ * A customer's `id` is what `client.pbx` lists take as `customer`. Both need
+ * `customers:read`, which only an account-wide credential holds.
+ *
  * Webhook receivers want `verifyWebhook()`, which needs no client and no
  * network.
  */
 export { Ringivo } from "./client.js";
 export type { RingivoOptions } from "./client.js";
+export { Customers } from "./customers.js";
+export type { ListCustomersOptions } from "./customers.js";
 export {
   ApiError,
   AuthenticationError,
@@ -74,6 +80,8 @@ export type {
 export type {
   CallRecord,
   CallRecordPage,
+  Customer,
+  CustomerPage,
   Fax,
   FaxAccount,
   FaxAccountNumber,

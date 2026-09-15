@@ -1054,6 +1054,122 @@ export function pbxCallFromResource(resource: RawJson): PbxCall {
 }
 
 /**
+ * One of your customers: a business you sell to.
+ *
+ * `id` is what the other resources take as `customer` — the filter on
+ * `client.pbx.callRecords.list()`, `pbx.users.list()` and `pbx.devices.list()`,
+ * and the owner named on a fax account.
+ *
+ * `code` is the short code the platform assigns: five lowercase letters and
+ * digits, and it never changes. `dataResidencyCountry` is fixed when the
+ * customer is created. `effectiveRegion` is what `regionPreference` resolves
+ * to NOW — for `partner_default` that is your account's current default, so it
+ * can change without anybody editing this customer.
+ *
+ * -- THE PHONE-SYSTEM FIELDS ARE NULL, NOT FALSE, WITHOUT ONE ---------------
+ * `pbx` says whether the customer has a phone system. When it is `false`, the
+ * five fields after it — `residential`, `callLimit`, `callLimitExternal`,
+ * `transports` and `provisioningState` — are `null`: there is no setting to
+ * report, and a `false` or a `0` would read as one.
+ *
+ * `transports` keeps the server's ORDER, which is data: the order the SIP
+ * transports are offered in DNS, first preferred.
+ *
+ * `regionPreference`, `transports` and `provisioningState` are `string`s
+ * rather than the spec's enums, for the reason `FaxAccount.status` is: a word
+ * the server adds tomorrow must reach you today, without a new SDK.
+ */
+export interface Customer {
+  readonly id: string;
+  readonly name: string | null;
+  readonly code: string | null;
+  /** The service address's country, ISO 3166-1 alpha-2. */
+  readonly country: string | null;
+  /** The service address's street lines, as the address was validated. */
+  readonly addressLines: readonly string[] | null;
+  readonly city: string | null;
+  /** The state or province. */
+  readonly region: string | null;
+  readonly postalCode: string | null;
+  /** An IANA time zone name. */
+  readonly timeZone: string | null;
+  /** The country this customer's data is kept in, ISO 3166-1 alpha-2. */
+  readonly dataResidencyCountry: string | null;
+  /** `partner_default`, `use1` or `usw1`. */
+  readonly regionPreference: string | null;
+  readonly effectiveRegion: string | null;
+  /** Whether this customer has a phone system. */
+  readonly pbx: boolean | null;
+  readonly residential: boolean | null;
+  /** The most calls the phone system allows at once. */
+  readonly callLimit: number | null;
+  /** The most external calls the phone system allows at once. */
+  readonly callLimitExternal: number | null;
+  /** The SIP transports offered, first preferred. */
+  readonly transports: readonly string[] | null;
+  /** Where building the phone system on the switch stands. */
+  readonly provisioningState: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `customers.list()`, newest first.
+ *
+ * `nextCursor` is the server's own cursor, lifted out of `meta.page` — never
+ * one this client built — and it is null on the last page. `nextUrl` mirrors
+ * `links.next`, which is absent rather than null at the end.
+ */
+export interface CustomerPage {
+  readonly customers: readonly Customer[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — both customer calls. */
+export function customerFromResource(resource: RawJson): Customer {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    name: text(attributes, "name"),
+    code: text(attributes, "code"),
+    country: text(attributes, "country"),
+    addressLines: textList(attributes, "addressLines"),
+    city: text(attributes, "city"),
+    region: text(attributes, "region"),
+    postalCode: text(attributes, "postalCode"),
+    timeZone: text(attributes, "timeZone"),
+    dataResidencyCountry: text(attributes, "dataResidencyCountry"),
+    regionPreference: text(attributes, "regionPreference"),
+    effectiveRegion: text(attributes, "effectiveRegion"),
+    pbx: boolean(attributes, "pbx"),
+    residential: boolean(attributes, "residential"),
+    callLimit: integer(attributes, "callLimit"),
+    callLimitExternal: integer(attributes, "callLimitExternal"),
+    transports: textList(attributes, "transports"),
+    provisioningState: text(attributes, "provisioningState"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function customerPageFromDocument(document: RawJson): CustomerPage {
+  const data = document.data;
+  const customers = (Array.isArray(data) ? data : []).filter(isRecord).map(customerFromResource);
+
+  return Object.freeze({
+    customers: Object.freeze(customers),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/**
  * `links.next`, present on every page but the last — on the final page the
  * key is ABSENT from the document altogether, never present-and-null. Both
  * are read as "no next", because a client that trusted only the documented

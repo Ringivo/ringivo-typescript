@@ -59,6 +59,7 @@ interface Surface {
     webhookEndpoints: object;
     webhookDeliveries: object;
     pbx: { callRecords: object; users: object; devices: object };
+    customers: object;
     request: unknown;
   };
   VERSION: string;
@@ -216,6 +217,25 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
     ).toEqual(["call", "get", "list"]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.devices))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["get", "list"]);
+  });
+
+  it("exposes the whole customers surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["customers:read"],
+    });
+
+    // Reads only, in this release.
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.customers))
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["get", "list"]);

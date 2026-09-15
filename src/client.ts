@@ -4,7 +4,8 @@
  * `Ringivo` owns three things: the base URL (there is no default — see
  * below), one authenticated request path, and the resource namespaces hung
  * off it (`client.faxes`, `client.faxAccounts`, `client.faxAccountUsers`,
- * `client.webhookEndpoints`, `client.webhookDeliveries`, `client.pbx`).
+ * `client.webhookEndpoints`, `client.webhookDeliveries`, `client.pbx`,
+ * `client.customers`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -41,6 +42,7 @@ import { type PathBasedClient, createPathBasedClient } from "openapi-fetch";
 
 import type { paths } from "./_generated/schema.js";
 import { ClientCredentialsAuth, USER_AGENT } from "./auth.js";
+import { Customers } from "./customers.js";
 import { throwForResponse } from "./errors.js";
 import { FaxAccountUsers } from "./faxAccountUsers.js";
 import { FaxAccounts } from "./faxAccounts.js";
@@ -100,6 +102,10 @@ export interface RingivoOptions {
    * The phone-system surface needs `pbx-call-records:read` for the call log,
    * `pbx-users:read` for the subscribers AND their devices — one scope covers
    * both — and `pbx-calls:write` for click-to-dial.
+   *
+   * Listing and reading your customers needs `customers:read`, which only a
+   * credential issued for your whole account holds: it is dropped from a
+   * credential issued for one customer when the token is minted.
    */
   scopes: readonly string[];
   /**
@@ -161,6 +167,9 @@ export class Ringivo {
    * `pbx.devices`, and `pbx.users.call()` for click-to-dial.
    */
   readonly pbx: Pbx;
+
+  /** Your customers: list them, read one. */
+  readonly customers: Customers;
 
   private readonly auth: ClientCredentialsAuth;
 
@@ -244,6 +253,7 @@ export class Ringivo {
     this.webhookEndpoints = new WebhookEndpoints(this);
     this.webhookDeliveries = new WebhookDeliveries(this);
     this.pbx = new Pbx(this);
+    this.customers = new Customers(this);
   }
 
   toString(): string {
