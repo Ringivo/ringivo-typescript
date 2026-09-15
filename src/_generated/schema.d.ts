@@ -928,8 +928,9 @@ export interface paths {
          *     it. Every other read answers `"secret": null` — an honest statement that the platform holds
          *     no readable copy.
          *
-         *     **Scope:** `fax:read` lists only **fax-account-scoped** endpoints; customer- and
-         *     tenant-scoped endpoints are absent from that list and require `webhooks:read`.
+         *     **Scope:** `fax:read` lists the endpoints its own credential reaches — its customer's for a
+         *     customer-scoped token, its reseller's for a tenant integrator one. `webhooks:read` is what a
+         *     PERSON needs to list their reseller's endpoints without a fax grant behind it.
          */
         get: operations["listWebhookEndpoints"];
         put?: never;
@@ -942,24 +943,28 @@ export interface paths {
          *     address literal and a non-http scheme are each refused at registration. A hostname that
          *     does not resolve yet is accepted on purpose, so you can register before publishing DNS.
          *
-         *     `events` is the list you want. **`null` or `[]` both mean "every event in scope"**, and the
-         *     list is published back verbatim rather than normalised, so a client that sent `[]` can tell
-         *     its write was understood. An event name this platform does not publish is a 422 — a typo
-         *     would otherwise subscribe you to silence.
+         *     `events` is the list you want, and **it must name at least one event type** — an omitted
+         *     member, `null` and `[]` are each a 422. An endpoint that named none would receive every
+         *     event type this platform ever adds, including families your integration has never seen. The
+         *     list is published back verbatim rather than normalised, so a client can tell its write was
+         *     understood. An event name this platform does not publish is a 422 too — a typo would
+         *     otherwise subscribe you to silence.
          *
          *     `scopeType`/`scopeId` say what the endpoint hears about, and neither can be changed
          *     afterwards: the delivery history is the record of what THAT scope was told.
          *
          *     `filter` narrows delivery BELOW that scope, matched against the body's `data` object — a
-         *     customer-scoped endpoint can ask for one fax account with
-         *     `fax_account_id:<id>`. Its SYNTAX is checked here and a 422 names the character that could
+         *     customer-scoped endpoint asks for one fax account with
+         *     `fax_account_id:<id>`, which is how a per-inbox subscription is written. Its SYNTAX is
+         *     checked here and a 422 names the character that could
          *     not be read; its FIELD NAMES are not checked against anything, so a filter naming a field
          *     the body does not carry is valid and matches nothing. The grammar is on the `filter`
          *     attribute.
          *
-         *     **Scope:** `fax:write` may register only a `fax_account`-scoped endpoint; naming a
-         *     `customer` or `tenant` scope with a `fax:*` token is refused with a 422, and needs
-         *     `webhooks:write`.
+         *     **Scope:** a `fax:write` token may register an endpoint at any scope it already reaches,
+         *     but only for `fax.*` events — naming `message.received` or a `port_order.*` type with a
+         *     `fax:*` token is a 422 on that member, and needs `webhooks:write`. A scope the token does
+         *     not reach is refused on `scopeId`, whatever the events are.
          */
         post: operations["createWebhookEndpoint"];
         delete?: never;
@@ -982,20 +987,30 @@ export interface paths {
          * Read one webhook endpoint
          * @description `secret` is always `null` here — see the create.
          *
-         *     **Scope:** `fax:read` reaches only **fax-account-scoped** endpoints; a customer- or
-         *     tenant-scoped endpoint answers **404** to a `fax:*` token, exactly as an id that names
-         *     nothing does, and requires `webhooks:read`.
+         *     **Scope:** `fax:read` reaches the endpoints its own credential reaches; one outside that
+         *     reach answers **404** to a `fax:*` token, exactly as an id that names nothing does, and
+         *     requires `webhooks:read`.
          */
         get: operations["getWebhookEndpoint"];
         put?: never;
         post?: never;
         /**
          * Remove a webhook endpoint
-         * @description The fan-out stops at once. **The delivery history survives** — "why did our integration stop
-         *     hearing about faxes?" is answered by the deliveries of the endpoint somebody removed.
+         * @description The fan-out stops at once, and **this cannot be undone**. The endpoint is deleted outright
+         *     and its delivery rows go with it — the ones still being retried and the ones that
+         *     dead-lettered. A delivery that landed never wrote a row, so nothing that describes a
+         *     SUCCESSFUL delivery is lost; what goes is work owed to a URL you have just unregistered.
          *
-         *     **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
-         *     tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
+         *     The secret goes too, and it is not recoverable: it is shown once at registration and once at
+         *     each rotation. Registering the same URL again means minting a new one and deploying it on
+         *     the receiving server.
+         *
+         *     **Read `GET /v1/webhook-deliveries?filter[status]=dead` first** if you still need to know
+         *     what you missed. Afterwards, the record of the removal — who, when, and what the endpoint
+         *     was subscribed to — is on your account's audit page.
+         *
+         *     **Scope:** `fax:write` reaches the endpoints its own credential reaches; one outside that
+         *     reach answers **404** to a `fax:*` token and requires `webhooks:write`.
          */
         delete: operations["deleteWebhookEndpoint"];
         options?: never;
@@ -1008,8 +1023,10 @@ export interface paths {
          *     **Sending `filter: null` clears it**, after which the endpoint hears everything its scope and
          *     `events` match again.
          *
-         *     **Scope:** `fax:write` reaches only **fax-account-scoped** endpoints; a customer- or
-         *     tenant-scoped endpoint answers **404** to a `fax:*` token and requires `webhooks:write`.
+         *     **Scope:** `fax:write` reaches the endpoints its own credential reaches, and may leave them
+         *     subscribed to **`fax.*` events only** — an edit naming `message.received` or a `port_order.*`
+         *     type is a 422 on that member. An endpoint outside that reach answers **404** and requires
+         *     `webhooks:write`.
          */
         patch: operations["updateWebhookEndpoint"];
         trace?: never;
@@ -1035,9 +1052,8 @@ export interface paths {
          *     window a delivery's signature header carries two `v1` values, newest first. Roll your own
          *     copy before the deadline.
          *
-         *     **Scope:** `fax:write` may rotate only a **fax-account-scoped** endpoint's secret; a
-         *     customer- or tenant-scoped endpoint answers **404** to a `fax:*` token and requires
-         *     `webhooks:write`.
+         *     **Scope:** `fax:write` may rotate the secret of an endpoint its own credential reaches; one
+         *     outside that reach answers **404** to a `fax:*` token and requires `webhooks:write`.
          */
         post: operations["rotateWebhookEndpointSecret"];
         delete?: never;
@@ -1068,15 +1084,18 @@ export interface paths {
          *     everything still on the ladder. Any other status value — `delivered` included, which this
          *     collection used to publish — is refused with a 400 rather than ignored.
          *
+         *     **Removing an endpoint deletes its rows here too**, in the same request. Read what you
+         *     missed BEFORE you remove it.
+         *
          *     For proof that a specific event arrived, use your own receipt: every POST carries
          *     `Ringivo-Event-Id`, and the resource itself can be refetched.
          *
          *     The body we POSTed is never published here — only its `payloadSha256` digest, so an
          *     integrator who kept what they received can prove it is what we sent.
          *
-         *     **Scope:** a delivery borrows its endpoint's reach, so `fax:read` lists only the deliveries
-         *     of **fax-account-scoped** endpoints; the deliveries of customer- and tenant-scoped endpoints
-         *     require `webhooks:read`.
+         *     **Scope:** a delivery borrows its endpoint's reach, so `fax:read` lists the deliveries of
+         *     the endpoints it reaches; the deliveries of an endpoint outside that reach require
+         *     `webhooks:read`.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1099,9 +1118,9 @@ export interface paths {
         };
         /**
          * Read one webhook delivery
-         * @description **Scope:** a delivery borrows its endpoint's reach, so `fax:read` reaches only the
-         *     deliveries of **fax-account-scoped** endpoints; a delivery of a customer- or tenant-scoped
-         *     endpoint answers **404** to a `fax:*` token and requires `webhooks:read`.
+         * @description **Scope:** a delivery borrows its endpoint's reach, so `fax:read` reaches the deliveries of
+         *     the endpoints it reaches; a delivery of an endpoint outside that reach answers **404** to a
+         *     `fax:*` token and requires `webhooks:read`.
          */
         get: operations["getWebhookDelivery"];
         put?: never;
@@ -2183,6 +2202,177 @@ export interface paths {
         patch: operations["updateTenant"];
         trace?: never;
     };
+    "/v1/pbx/users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List PBX users
+         * @description The subscribers of your customers' phone systems, extension first.
+         *
+         *     **Every `/v1/pbx/` read is scoped to your customers' PBX domains**, and there is no unscoped
+         *     form. A credential that reaches no customer with a PBX is refused with a **400** rather than
+         *     given an empty page, so "nobody has a phone system yet" never reads as "nobody has any
+         *     users".
+         */
+        get: operations["listPbxUsers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/users/{user}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one PBX user
+         * @description A subscriber outside your customers' domains answers **404**, not 403 — the same answer an id
+         *     that names nothing gives.
+         */
+        get: operations["getPbxUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/users/{user}/calls": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Place a click-to-dial call
+         * @description Asks the phone system to ring `{user}`'s phone and connect it to `destination`.
+         *
+         *     **202, and the id is yours before the call exists.** The `data.id` in the answer is minted
+         *     here and handed to the phone system as the SIP Call-ID it places the call under. Nothing
+         *     else about the call is knowable at this point, which is why `status` is always `requested`.
+         *
+         *     **This release does not link that id to the call record.** A call record's id is derived
+         *     from the phone system's own CDR row, and no call-record field carries the SIP call id, so
+         *     there is no join to make from this id today. A later release may expose the call id on call
+         *     records so you can correlate.
+         *
+         *     **`device` must belong to `{user}`.** A device id that names a registration owned by
+         *     somebody else — including a user of the same name on another domain — is refused with a
+         *     **422** pointing at `/data/attributes/device`. Nothing is dialled.
+         *
+         *     A user outside your customers' domains answers **404**, not 403 — the same answer an id that
+         *     names nothing gives. A phone system that refuses or cannot be reached answers **502** with
+         *     its own status in `errors[0].meta.vendor_status`; nothing was dialled and the request may be
+         *     retried.
+         */
+        post: operations["placePbxCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List PBX devices
+         * @description The registrations your customers' phones have made — a row exists because something sent a
+         *     SIP REGISTER, and disappears when nothing does.
+         */
+        get: operations["listPbxDevices"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/devices/{device}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one PBX device */
+        get: operations["getPbxDevice"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/call-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List call records
+         * @description Your customers' call log, newest first.
+         *
+         *     **The date range picks the months that are read.** The switch keeps one table per month, so
+         *     `filter[started-after]` and `filter[started-before]` decide which are opened at all. With no
+         *     range you get the current and previous month; a range wider than **13 months** is refused
+         *     with a 400 carrying `meta: {filter: {maxMonths: 13}}`.
+         *
+         *     **Hidden records are left out of this list** and served on a direct read, which is what the
+         *     phone system's own portal does. `filter[include-hidden]=true` puts them back.
+         */
+        get: operations["listCallRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/call-records/{callRecord}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one call record
+         * @description A hidden record IS served here — the list leaves it out, a direct read does not, which is
+         *     what the phone system's own portal does.
+         */
+        get: operations["getCallRecord"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -2353,9 +2543,10 @@ export interface webhooks {
          *     not keep the bytes, so ask your messaging provider for the file. A text message carries an
          *     empty `media` list rather than an absent key.
          *
-         *     **Scope: `tenant` and `customer`, never `fax_account`.** A message belongs to a number,
-         *     which belongs to a customer, which belongs to you — so a tenant-scoped endpoint and a
-         *     customer-scoped one both hear it, and an endpoint attached to a fax account never does.
+         *     **Scope: `tenant` and `customer`** — which is every scope there is, so the only endpoint
+         *     that does not hear a message is one that did not ask for the type. A message belongs to a
+         *     number, which belongs to a customer, which belongs to you — so a tenant-scoped endpoint and
+         *     a customer-scoped one both hear it.
          *     `data.customer_id` is null while the number sits unassigned in your own pool, and only your
          *     tenant-scoped endpoints are called for that one.
          *
@@ -2701,13 +2892,19 @@ export interface components {
          */
         FaxResolution: "fine" | "standard";
         /**
-         * @description What an endpoint hears about. All three are matched as a containment order, so a
-         *     reseller-wide endpoint and a per-account one both hear about the same fax.
+         * @description What an endpoint hears about. Both are matched as a containment order, so a reseller-wide
+         *     endpoint and a customer-scoped one both hear about the same fax.
+         *
+         *     A third value, `fax_account`, was retired on 2026-09-15 and is now refused like any other
+         *     unknown scope. Narrow below a customer with `filter: fax_account_id:<id>` instead — the
+         *     fax body already carries that field, and one expression generalizes where a per-object
+         *     scope did not.
          * @enum {string}
          */
-        WebhookScopeType: "tenant" | "customer" | "fax_account";
+        WebhookScopeType: "tenant" | "customer";
         /**
-         * @description Every event name a subscriber may ask for.
+         * @description Every event name a subscriber may ask for. Which of them a given endpoint may ask for also
+         *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
         WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed";
@@ -3257,12 +3454,27 @@ export interface components {
             scopeType?: components["schemas"]["WebhookScopeType"];
             /**
              * Format: uuid
-             * @description The id of the tenant, customer or fax account this endpoint hears about.
+             * @description The id of the tenant or customer this endpoint hears about.
              */
             scopeId?: string | null;
             /** Format: uri */
             url?: string | null;
-            /** @description Null or `[]` both mean "every event in scope". */
+            /**
+             * @description The event types this endpoint asked for. **A write names at least one** — `null` and
+             *     `[]` are refused on create and on update. Endpoints registered before 2026-09-14 that
+             *     named none were given the catalog as it stood that day.
+             *
+             *     **Every name must be one this endpoint's `scopeType` can carry**, or the write is a 422
+             *     on that member. An event reaches the scopes of the things that CONTAIN it: a fax has a
+             *     customer and a reseller; `message.received` has a customer and a reseller; a port order
+             *     has only a reseller. So `port_order.*` on a customer-scoped endpoint is refused — it
+             *     would be a live subscription that can never fire.
+             *
+             *     No `minItems` here, unlike the create body, and the difference is deliberate: an empty
+             *     list still READS as "every event in scope" wherever an event is matched, so that a row
+             *     this rule never reached keeps receiving rather than going silently dark. This schema
+             *     describes what may come back, and the request bodies describe what you may send.
+             */
             events?: components["schemas"]["WebhookEventType"][] | null;
             /**
              * @description An expression that narrows delivery BELOW this endpoint's scope, matched against the
@@ -3293,6 +3505,12 @@ export interface components {
              *     tightly than `AND`**, so `a:1 OR b:2 AND c:3` means `(a:1 OR b:2) AND c:3` — parenthesise
              *     when you want the other reading. Two adjacent terms with no keyword are an `AND`.
              *     Negation is `NOT x` or a leading `-`, which mean the same thing.
+             *
+             *     A field name is made of letters, digits, `_`, `.` and `-`. **A `-` is part of the name
+             *     everywhere except as the first character of a term**, where it is the negation above —
+             *     so `fax-account:A` names a field, `a.b-c:1` names one inside a path, and `-x-y:1` is
+             *     "not `x-y`". A term that starts with `-` therefore always negates: `--x:1` is `x:1`
+             *     negated twice, not a field called `-x`.
              *
              *     The SYNTAX is checked when you register or edit the endpoint, and a 422 names the
              *     character it could not read. **The FIELD NAMES are not checked against anything.** A
@@ -3353,7 +3571,13 @@ export interface components {
                     scopeType: components["schemas"]["WebhookScopeType"];
                     /** Format: uuid */
                     scopeId: string;
-                    events?: components["schemas"]["WebhookEventType"][] | null;
+                    /**
+                     * @description Name at least one event type. An endpoint that named none would receive every
+                     *     event type this platform ever adds, so `null` and `[]` are each a 422. Each name
+                     *     must also be one the `scopeType` you chose can carry — see `events` on the
+                     *     endpoint resource.
+                     */
+                    events: components["schemas"]["WebhookEventType"][];
                     /**
                      * @description Narrows delivery below the scope. Omit it, or send null, to receive everything
                      *     the scope and `events` match. Grammar and the field-name caveat: see `filter` on
@@ -3378,7 +3602,13 @@ export interface components {
                 attributes: {
                     /** Format: uri */
                     url?: string;
-                    events?: components["schemas"]["WebhookEventType"][] | null;
+                    /**
+                     * @description Replaced wholesale by what you send, and it must still name at least one event
+                     *     type — `null` and `[]` are each a 422 here too. The rule is on this arm because
+                     *     the field means the same thing on each: an endpoint that could be emptied by a
+                     *     PATCH would reach the every-event state a create refuses, one request later.
+                     */
+                    events?: components["schemas"]["WebhookEventType"][];
                     /**
                      * @description Replaced wholesale by what you send. **Send null to clear it**, after which the
                      *     endpoint hears everything its scope and `events` match again.
@@ -5147,6 +5377,287 @@ export interface components {
                 attributes: components["schemas"]["SipTrunkTargetWritableAttributes"];
             };
         };
+        /**
+         * @description Which way the call went. The phone system records ONE integer carrying both this and
+         *     `disposition`; an integer we have no word for is published as its own digits rather than as
+         *     null, so a vocabulary that grows at the switch's end never erases a call.
+         * @enum {string|null}
+         */
+        CallDirection: "outbound" | "inbound" | "on-net" | null;
+        /**
+         * @description Whether anybody answered. Derived from the same integer as `direction`.
+         * @enum {string|null}
+         */
+        CallDisposition: "answered" | "missed" | null;
+        PbxCallRequest: {
+            data: {
+                /** @enum {string} */
+                type: "calls";
+                attributes: components["schemas"]["PbxCallRequestAttributes"];
+            };
+        };
+        PbxCallRequestAttributes: {
+            /**
+             * @description Who to call: an E.164 number with its `+`, or an extension of 2 to 7 digits on the
+             *     user's own domain. The phone system completes an extension against that domain itself.
+             * @example +13025046250
+             * @example 2002
+             */
+            destination: string;
+            /**
+             * @description The number the called party sees. E.164, with or without the `+`; a ten-digit North
+             *     American number is also accepted and answered with its country code, because this
+             *     platform stores every caller ID as E.164 **without** the plus. A value that is not a
+             *     telephone number is refused rather than ignored. Omit it to use the user's own caller ID.
+             * @example +14074366118
+             * @example 4074366118
+             */
+            "caller-id"?: string | null;
+            /**
+             * @description Ask the user's own phone to go off-hook by itself instead of ringing.
+             * @default false
+             */
+            "auto-answer": boolean;
+            /**
+             * Format: uuid
+             * @description Which of the user's registered devices to call from — a `devices` id. It MUST belong to
+             *     this user; one that does not is a 422 pointing at `/data/attributes/device`. Omit it to
+             *     let the phone system ring the user's devices as it normally would.
+             */
+            device?: string | null;
+        };
+        /**
+         * @description The call as it was requested. Every value is what was actually sent to the phone system,
+         *     which is not always what was typed: `caller-id` comes back in the spelling the called party
+         *     will see.
+         */
+        PbxCallAttributes: {
+            /** @description Who was called, as sent. */
+            destination?: string;
+            /** @description The number presented, E.164 without the `+`. Null when the user's own was used. */
+            "caller-id"?: string | null;
+            "auto-answer"?: boolean;
+            /** @description The `devices` id the call originates from, as sent. Null when none was named. */
+            device?: string | null;
+            /**
+             * @description Always `requested` from this endpoint. The phone system has taken the command and
+             *     nothing about the call is knowable yet; what happened to it arrives on
+             *     `/v1/pbx/call-records` under this same id.
+             * @enum {string}
+             */
+            status?: "requested";
+            /** Format: date-time */
+            "requested-at"?: string;
+        };
+        PbxCallResource: {
+            /** @enum {string} */
+            type: "calls";
+            /**
+             * Format: uuid
+             * @description Minted by this API before the call was placed, and handed to the phone system as the SIP
+             *     Call-ID it places the call under. It names the call on the PHONE SYSTEM; this release
+             *     does not link it to anything on `/v1/pbx/call-records`, whose ids come from the CDR row
+             *     instead. A later release may expose the call id there so you can correlate.
+             */
+            id: string;
+            attributes?: components["schemas"]["PbxCallAttributes"];
+        };
+        PbxCallDocumentResponse: {
+            data: components["schemas"]["PbxCallResource"];
+        };
+        /**
+         * @description A subscriber on a customer's phone system. Every field is read-only: this API does not write
+         *     the phone system, and the write surface answers with a change INTENT rather than an update.
+         */
+        PbxUserAttributes: {
+            /** @description The extension. */
+            user?: string | null;
+            /** @description The customer's PBX domain. */
+            domain?: string | null;
+            "display-name"?: string | null;
+            "first-name"?: string | null;
+            "last-name"?: string | null;
+            email?: string | null;
+            /** @description The phone system's own permission tier for this person. */
+            scope?: string | null;
+            group?: string | null;
+            site?: string | null;
+            /**
+             * @description The phone system's own presence word, verbatim. There is deliberately no derived
+             *     `online` flag: the vocabulary is longer than two states and which words mean "available"
+             *     is yours to decide, not ours to freeze into this contract.
+             */
+            presence?: string | null;
+            "caller-id-number"?: string | null;
+            "caller-id-name"?: string | null;
+            "time-zone"?: string | null;
+            /**
+             * @description As the phone system stores it — TEXT, not RFC 3339. It is served unparsed because the
+             *     switch has never published the format, and a mis-parse would be silent.
+             */
+            "created-at"?: string | null;
+            /** @description As the phone system stores it. */
+            "updated-at"?: string | null;
+        };
+        PbxUserRelationships: {
+            customer?: components["schemas"]["RelationshipToOne"];
+            devices?: components["schemas"]["RelationshipToMany"];
+        };
+        PbxUserResource: {
+            /** @enum {string} */
+            type: "users";
+            /**
+             * Format: uuid
+             * @description Stable for the life of the subscriber: it is computed from the extension and the domain,
+             *     so it is the same id in every region and will not change when this data moves to its
+             *     permanent home.
+             */
+            id: string;
+            attributes?: components["schemas"]["PbxUserAttributes"];
+            relationships?: components["schemas"]["PbxUserRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        PbxUserDocumentResponse: {
+            data: components["schemas"]["PbxUserResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        PbxUserCollectionDocument: {
+            data: components["schemas"]["PbxUserResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        /**
+         * @description One REGISTRATION, not one handset: the row exists because something sent a SIP REGISTER, and
+         *     it disappears when nothing does.
+         */
+        PbxDeviceAttributes: {
+            /** @description The address of record that registered. */
+            aor?: string | null;
+            /** @description The subscriber's extension. */
+            user?: string | null;
+            domain?: string | null;
+            mode?: string | null;
+            /** @description What the phone said it is. */
+            "user-agent"?: string | null;
+            contact?: string | null;
+            transport?: string | null;
+            /** @description The address the registration arrived from. */
+            "received-from"?: string | null;
+            /** @description As the phone system stores it — text, not RFC 3339. */
+            "registered-at"?: string | null;
+            /** @description As the phone system stores it. */
+            "registration-expires-at"?: string | null;
+            /** @description Derived — is `registration-expires-at` still in the future? */
+            registered?: boolean;
+            "auto-answer"?: boolean;
+            /** @description As the phone system stores it. */
+            "created-at"?: string | null;
+        };
+        PbxDeviceRelationships: {
+            customer?: components["schemas"]["RelationshipToOne"];
+            "pbx-user"?: components["schemas"]["RelationshipToOne"];
+        };
+        PbxDeviceResource: {
+            /** @enum {string} */
+            type: "devices";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["PbxDeviceAttributes"];
+            relationships?: components["schemas"]["PbxDeviceRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        PbxDeviceDocumentResponse: {
+            data: components["schemas"]["PbxDeviceResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        PbxDeviceCollectionDocument: {
+            data: components["schemas"]["PbxDeviceResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        /**
+         * @description One call, as the phone system recorded it. The three instants are RFC 3339 **in UTC** — the
+         *     switch stores them as Unix epochs, which is the one timestamp shape that carries no zone
+         *     ambiguity.
+         */
+        CallRecordAttributes: {
+            direction?: components["schemas"]["CallDirection"];
+            disposition?: components["schemas"]["CallDisposition"];
+            /**
+             * @description The phone system's own integer, unmodified — `direction` and `disposition` are both read
+             *     off it. Published so a support conversation can quote what the switch actually recorded.
+             */
+            "vendor-type"?: number | null;
+            domain?: string | null;
+            /** @description The extension that placed the call, empty when an outside caller did. */
+            "from-user"?: string | null;
+            "from-uri"?: string | null;
+            "from-name"?: string | null;
+            "to-user"?: string | null;
+            "to-uri"?: string | null;
+            /** @description What was actually dialled. */
+            dialed?: string | null;
+            /** @description The extension that acted on somebody else's behalf, if any. */
+            "by-user"?: string | null;
+            /** @description The extension that took the call. */
+            "term-user"?: string | null;
+            /** Format: date-time */
+            "started-at"?: string | null;
+            /**
+             * Format: date-time
+             * @description Null when nobody answered.
+             */
+            "answered-at"?: string | null;
+            /** Format: date-time */
+            "released-at"?: string | null;
+            /** @description Seconds, end to end. */
+            duration?: number | null;
+            /** @description Seconds anybody was actually talking. */
+            "talk-time"?: number | null;
+            tag?: string | null;
+            /** @description Does the phone system hide this record from its own call log? */
+            hidden?: boolean;
+            /**
+             * @description Is a recording held for this call? Existence only in this release — the media endpoint
+             *     that hands the audio back is a later one.
+             */
+            "has-recording"?: boolean;
+            /** @description The phone system's own id for the call, for support conversations. */
+            "vendor-id"?: string | null;
+        };
+        CallRecordRelationships: {
+            customer?: components["schemas"]["RelationshipToOne"];
+            "from-pbx-user"?: components["schemas"]["RelationshipToOne"];
+            "to-pbx-user"?: components["schemas"]["RelationshipToOne"];
+        };
+        CallRecordResource: {
+            /** @enum {string} */
+            type: "call-records";
+            /**
+             * Format: uuid
+             * @description Computed from the month, the domain and the switch's own call id, so two calls in two
+             *     months can never share one even if the switch reuses its id.
+             */
+            id: string;
+            attributes?: components["schemas"]["CallRecordAttributes"];
+            relationships?: components["schemas"]["CallRecordRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        CallRecordDocumentResponse: {
+            data: components["schemas"]["CallRecordResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        CallRecordCollectionDocument: {
+            data: components["schemas"]["CallRecordResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
     };
     responses: {
         /** @description No usable bearer token was presented. */
@@ -5206,6 +5717,19 @@ export interface components {
                 "application/vnd.api+json": components["schemas"]["ErrorDocument"];
             };
         };
+        /**
+         * @description The phone system refused the request or could not be reached. Nothing was dialled and the
+         *     request may be retried. `errors[0].meta.vendor_status` carries the status the phone system
+         *     itself answered with, so a refusal and an outage can be told apart.
+         */
+        PhoneSystemUnreachable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+            };
+        };
         /** @description Too many requests (`code: rate_limited`). */
         RateLimited: {
             headers: {
@@ -5237,6 +5761,12 @@ export interface components {
         PhoneNumberId: string;
         /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
         TenantId: string;
+        /** @description The PBX user's id. */
+        PbxUserId: string;
+        /** @description The device registration's id. */
+        PbxDeviceId: string;
+        /** @description The call record's id. */
+        CallRecordId: string;
         /**
          * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
          *     that is not a positive whole number, is refused with a 400 whose error carries
@@ -7755,7 +8285,7 @@ export interface operations {
                      *           "type": "webhook-endpoints",
                      *           "id": "0198c4a1-8192-73b4-e5b6-708192031425",
                      *           "attributes": {
-                     *             "scopeType": "fax_account",
+                     *             "scopeType": "customer",
                      *             "scopeId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
                      *             "url": "https://hooks.acme-vet.example/faxes",
                      *             "events": [
@@ -7797,7 +8327,7 @@ export interface operations {
                  *         "type": "webhook-endpoints",
                  *         "attributes": {
                  *           "url": "https://hooks.acme-vet.example/faxes",
-                 *           "scopeType": "fax_account",
+                 *           "scopeType": "customer",
                  *           "scopeId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
                  *           "events": [
                  *             "fax.received",
@@ -7824,7 +8354,7 @@ export interface operations {
                      *         "type": "webhook-endpoints",
                      *         "id": "0198c4a1-8192-73b4-e5b6-708192031425",
                      *         "attributes": {
-                     *           "scopeType": "fax_account",
+                     *           "scopeType": "customer",
                      *           "scopeId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
                      *           "url": "https://hooks.acme-vet.example/faxes",
                      *           "events": [
@@ -7889,7 +8419,7 @@ export interface operations {
                      *         "type": "webhook-endpoints",
                      *         "id": "0198c4a1-8192-73b4-e5b6-708192031425",
                      *         "attributes": {
-                     *           "scopeType": "fax_account",
+                     *           "scopeType": "customer",
                      *           "scopeId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
                      *           "url": "https://hooks.acme-vet.example/faxes",
                      *           "events": [
@@ -8013,7 +8543,7 @@ export interface operations {
                      *         "type": "webhook-endpoints",
                      *         "id": "0198c4a1-8192-73b4-e5b6-708192031425",
                      *         "attributes": {
-                     *           "scopeType": "fax_account",
+                     *           "scopeType": "customer",
                      *           "scopeId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
                      *           "url": "https://hooks.acme-vet.example/faxes",
                      *           "events": [
@@ -10718,6 +11248,457 @@ export interface operations {
             404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableDocument"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    listPbxUsers: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description `user` (the default) or `display-name`, either reversible with a leading `-`. The id is
+                 *     appended as a tiebreaker, so the order is always total and a page boundary cannot fall
+                 *     inside a tie.
+                 * @example display-name
+                 */
+                sort?: "user" | "-user" | "display-name" | "-display-name";
+                /** @description Only the subscribers of this customer's PBX domain. */
+                "filter[customer]"?: string;
+                /**
+                 * @description Exact match on the extension. `101` does not match `1010`.
+                 * @example 101
+                 */
+                "filter[user]"?: string;
+                /**
+                 * @description Case-insensitive substring match on the display name, first name, last name or
+                 *     extension — the one parameter behind a directory search box.
+                 * @example perkins
+                 */
+                "filter[search]"?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of PBX users. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "users",
+                     *           "id": "6f98cc5d-5248-5100-9967-8606e2993077",
+                     *           "attributes": {
+                     *             "user": "101",
+                     *             "domain": "acme.example",
+                     *             "display-name": "Ann Perkins",
+                     *             "first-name": "Ann",
+                     *             "last-name": "Perkins",
+                     *             "email": "ann@acme.example",
+                     *             "scope": "Basic User",
+                     *             "group": "sales",
+                     *             "site": "HQ",
+                     *             "presence": "open",
+                     *             "caller-id-number": "+14075550101",
+                     *             "caller-id-name": "Ann Perkins",
+                     *             "time-zone": "US/Eastern",
+                     *             "created-at": "2026-01-02 03:04:05",
+                     *             "updated-at": "2026-09-01 10:00:00"
+                     *           },
+                     *           "relationships": {
+                     *             "customer": {
+                     *               "data": {
+                     *                 "type": "customers",
+                     *                 "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f"
+                     *               }
+                     *             },
+                     *             "devices": {
+                     *               "data": [
+                     *                 {
+                     *                   "type": "devices",
+                     *                   "id": "92e7c8b3-9d9f-5286-86ac-f0d0c035e6c0"
+                     *                 }
+                     *               ]
+                     *             }
+                     *           }
+                     *         }
+                     *       ],
+                     *       "meta": {
+                     *         "page": {
+                     *           "size": 25,
+                     *           "nextCursor": null
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["PbxUserCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getPbxUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX user's id. */
+                user: components["parameters"]["PbxUserId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PBX user. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PbxUserDocumentResponse"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    placePbxCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX user's id. */
+                user: components["parameters"]["PbxUserId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/vnd.api+json": components["schemas"]["PbxCallRequest"];
+            };
+        };
+        responses: {
+            /** @description The call was accepted by the phone system. It has not happened yet. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PbxCallDocumentResponse"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
+            502: components["responses"]["PhoneSystemUnreachable"];
+        };
+    };
+    listPbxDevices: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /** @description `aor` (the default), reversible with a leading `-`. */
+                sort?: "aor" | "-aor";
+                /** @description Only the registrations on this customer's PBX domain. */
+                "filter[customer]"?: string;
+                /**
+                 * @description Only the registrations belonging to this PBX **user id** — not an extension. An id you
+                 *     cannot reach answers an empty page rather than a refusal.
+                 */
+                "filter[user]"?: string;
+                /** @description `true` for registrations that have not expired, `false` for the rest. */
+                "filter[registered]"?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of devices. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "devices",
+                     *           "id": "92e7c8b3-9d9f-5286-86ac-f0d0c035e6c0",
+                     *           "attributes": {
+                     *             "aor": "sip:101@acme.example",
+                     *             "user": "101",
+                     *             "domain": "acme.example",
+                     *             "mode": "register",
+                     *             "user-agent": "Polycom/6.4.2",
+                     *             "contact": "sip:101@198.51.100.7:5060",
+                     *             "transport": "udp",
+                     *             "received-from": "198.51.100.7:5060",
+                     *             "registered-at": "2026-09-14 08:00:00",
+                     *             "registration-expires-at": "2026-09-14 09:00:00",
+                     *             "registered": true,
+                     *             "auto-answer": false,
+                     *             "created-at": "2026-01-02 03:04:05"
+                     *           },
+                     *           "relationships": {
+                     *             "customer": {
+                     *               "data": {
+                     *                 "type": "customers",
+                     *                 "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f"
+                     *               }
+                     *             },
+                     *             "pbx-user": {
+                     *               "data": {
+                     *                 "type": "users",
+                     *                 "id": "6f98cc5d-5248-5100-9967-8606e2993077"
+                     *               }
+                     *             }
+                     *           }
+                     *         }
+                     *       ],
+                     *       "meta": {
+                     *         "page": {
+                     *           "size": 25,
+                     *           "nextCursor": null
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["PbxDeviceCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getPbxDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The device registration's id. */
+                device: components["parameters"]["PbxDeviceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The device. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PbxDeviceDocumentResponse"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCallRecords: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /** @description `-started-at` (the default, newest first) or `started-at`. */
+                sort?: "-started-at" | "started-at";
+                /** @description Only the calls on this customer's PBX domain. */
+                "filter[customer]"?: string;
+                /**
+                 * @description Calls that started at or after this moment, RFC 3339.
+                 * @example 2026-09-01T00:00:00Z
+                 */
+                "filter[started-after]"?: string;
+                /**
+                 * @description Calls that started at or before this moment, RFC 3339.
+                 * @example 2026-09-30T23:59:59Z
+                 */
+                "filter[started-before]"?: string;
+                /** @description A word outside this list is refused with a 400, never answered with an empty page. */
+                "filter[direction]"?: components["schemas"]["CallDirection"];
+                "filter[disposition]"?: components["schemas"]["CallDisposition"];
+                /** @description Calls with this PBX **user id** on either leg — placed by them or taken by them. */
+                "filter[user]"?: string;
+                /** @description `true` also returns records the phone system marks hidden. */
+                "filter[include-hidden]"?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of call records. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "call-records",
+                     *           "id": "e4837703-48c1-5c9e-8699-bbaafb17bb84",
+                     *           "attributes": {
+                     *             "direction": "inbound",
+                     *             "disposition": "answered",
+                     *             "vendor-type": 1,
+                     *             "domain": "acme.example",
+                     *             "from-user": "",
+                     *             "from-uri": "sip:+13025556789@carrier.example",
+                     *             "from-name": "Dr Bell",
+                     *             "to-user": "101",
+                     *             "to-uri": "sip:101@acme.example",
+                     *             "dialed": "+14075550101",
+                     *             "by-user": "",
+                     *             "term-user": "101",
+                     *             "started-at": "2026-09-12T14:00:00+00:00",
+                     *             "answered-at": "2026-09-12T14:00:04+00:00",
+                     *             "released-at": "2026-09-12T14:01:04+00:00",
+                     *             "duration": 64,
+                     *             "talk-time": 60,
+                     *             "tag": "clinic",
+                     *             "hidden": false,
+                     *             "has-recording": true,
+                     *             "vendor-id": "20260912000000000001c0ffee0123456789abcdef"
+                     *           },
+                     *           "relationships": {
+                     *             "customer": {
+                     *               "data": {
+                     *                 "type": "customers",
+                     *                 "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f"
+                     *               }
+                     *             },
+                     *             "from-pbx-user": {
+                     *               "data": null
+                     *             },
+                     *             "to-pbx-user": {
+                     *               "data": {
+                     *                 "type": "users",
+                     *                 "id": "6f98cc5d-5248-5100-9967-8606e2993077"
+                     *               }
+                     *             }
+                     *           }
+                     *         }
+                     *       ],
+                     *       "meta": {
+                     *         "page": {
+                     *           "size": 25,
+                     *           "nextCursor": null
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["CallRecordCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    getCallRecord: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The call record's id. */
+                callRecord: components["parameters"]["CallRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The call record. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["CallRecordDocumentResponse"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     onFaxReceived: {
