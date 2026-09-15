@@ -379,9 +379,11 @@ await client.webhookEndpoints.update(endpoint.id, {
 ```
 
 **The list REPLACES the old one**, so name every event you want, not only the
-new ones. It must still name at least one — `null` and `[]` are each a 422 here
-too, because a PATCH that could empty the list would reach, one request later,
-the every-event state a registration refuses.
+new ones. It must still name at least one: `[]` is a 422; this client never
+sends `null` — a JavaScript caller's `null` is dropped from the PATCH, and
+refused if nothing else was named. A PATCH that could empty the list would
+otherwise reach, one request later, the every-event state a registration
+refuses.
 
 `update()` is a sparse PATCH, like `faxAccounts.update()`: it sends only the
 members you pass, so changing the events leaves the URL and the switch exactly

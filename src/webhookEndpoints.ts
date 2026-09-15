@@ -186,9 +186,11 @@ export interface UpdateWebhookEndpointOptions {
   url?: string;
   /**
    * The events you want from now on — the list REPLACES the old one, it is
-   * not merged into it, and it must still name at least one. `null` and `[]`
-   * are each a 422 here too: a PATCH that could empty the list would reach the
-   * every-event state a create refuses, one request later.
+   * not merged into it, and it must still name at least one. `[]` is a 422;
+   * this client never sends `null` — a JavaScript caller's `null` is dropped
+   * from the PATCH, and refused if nothing else was named. A PATCH that could
+   * empty the list would otherwise reach the every-event state a create
+   * refuses, one request later.
    */
   events?: readonly [string, ...string[]];
   /**
