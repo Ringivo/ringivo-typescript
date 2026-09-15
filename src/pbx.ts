@@ -95,13 +95,19 @@ export interface ListCallRecordsOptions {
   user?: string;
   /**
    * The records of ONE click-to-dial call: pass the `id` that
-   * `pbx.users.call()` returned.
+   * `pbx.users.call()` returned. The call record appears once the call has
+   * ended.
    *
-   * The call record appears once the call has ended, so an empty page soon
-   * after the call means "not yet" rather than "never". One call writes two
-   * records — the phone system rings the subscriber first, then dials out —
-   * and by default the list returns the visible dial-out record. The hidden
-   * leg that rang the subscriber comes back only with `includeHidden: true`.
+   * **The date range still applies.** The call id is matched only inside the
+   * months `startedAfter` and `startedBefore` cover, and with neither that is
+   * the current and the previous month. To find an older call, pass a range
+   * that covers when it was placed. So an empty page means one of two things:
+   * the call has not ended yet, or it was placed outside the range.
+   *
+   * One call writes two records — the phone system rings the subscriber
+   * first, then dials out — and by default the list returns the visible
+   * dial-out record. The hidden leg that rang the subscriber comes back only
+   * with `includeHidden: true`.
    *
    * An id that names no call answers an empty page, not an error.
    */
@@ -244,7 +250,8 @@ export class CallRecords {
    * Hidden records are left out here and served by `get()`.
    *
    * `callId` finds what a click-to-dial became: pass the `id` that
-   * `pbx.users.call()` returned, once the call has ended.
+   * `pbx.users.call()` returned, once the call has ended. The date range above
+   * still applies to it, so name one that covers an older call.
    *
    * Needs `pbx-call-records:read`.
    */

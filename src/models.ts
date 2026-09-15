@@ -883,8 +883,12 @@ export interface CallRecordPage {
  * Pass it to `pbx.callRecords.list({ callId: call.id })`: the record appears
  * once the call has ended, and by default the list returns the visible
  * dial-out record — the hidden leg that rang the subscriber comes back only
- * with `includeHidden: true`. A `CallRecord`'s own id is computed from the
- * vendor row it was read out of, so it never equals this one.
+ * with `includeHidden: true`. **The list's date range still applies:** with no
+ * `startedAfter` or `startedBefore` only the current and the previous month
+ * are read, so for an older call pass a range that covers when it was placed.
+ * An empty page means the call has not ended yet, or it is outside the range.
+ * A `CallRecord`'s own id is computed from the vendor row it was read out of,
+ * so it never equals this one.
  *
  * **There is no idempotency key on the way in.** Asking twice is two calls
  * to a real person, so a `PbxCall` you never received is not a request to

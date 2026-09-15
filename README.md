@@ -94,7 +94,8 @@ their deliveries. The phone-system surface needs `pbx-call-records:read` for
 the call log, `pbx-users:read` for the subscribers and their devices alike,
 and `pbx-calls:write` for click-to-dial. `customers:read` lists your customers
 and reads one, and only a credential issued for your whole account holds it.
-A client that provisions accounts and then reads them asks for both:
+A client that provisions accounts and then reads them asks for `fax:read` and
+`fax-accounts:write`:
 
 ```ts
 const provisioning = new Ringivo({
@@ -576,10 +577,9 @@ everything. A range wider than 13 months is refused with a 400.
 
 `direction` is `inbound`, `outbound` or `on-net`; a word outside those is a
 400 rather than an empty page. On a record you read back, though, `direction`
-and `disposition` are both plain strings — the switch
-records one integer carrying the pair, and one it has no word for arrives as
-its own digits. Compare against the values you know rather than assuming
-there are no others.
+and `disposition` are both plain strings — the switch records one integer
+carrying the pair, and one it has no word for arrives as its own digits.
+Compare against the values you know rather than assuming there are no others.
 
 ### Who is on the phone system, and what is registered
 
@@ -663,7 +663,7 @@ subscriber's own caller ID was used.
 ```ts
 const call = await client.pbx.users.call(personId, { destination: "+13025556789" });
 
-// Later, once the call has ended:
+// Later, once the call has ended — and inside the date range, see below:
 const records = await client.pbx.callRecords.list({ callId: call.id });
 for (const record of records.callRecords) {
   console.log(record.disposition, record.talkTime);
@@ -671,7 +671,14 @@ for (const record of records.callRecords) {
 ```
 
 `callId` takes the `id` that `users.call()` returned. The record appears once
-the call has ended, so an empty page right after the call means "not yet".
+the call has ended.
+
+**The date range still applies.** The call id is matched only inside the
+months your range covers, and with no `startedAfter` or `startedBefore` that is
+the current and the previous month. To find an older call, pass a range that
+covers when it was placed. So an empty page means one of two things: the call
+has not ended yet, or it was placed outside the range.
+
 One call writes two records: the phone system rings the subscriber first,
 then dials out. The list returns the visible dial-out record; add
 `includeHidden: true` to get the hidden ring leg as well. A call record's own
@@ -809,9 +816,9 @@ decision and not a library's.
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxUser`, `PbxUserPage`, `WebhookDelivery`,
 `WebhookDeliveryPage`, `WebhookEndpoint` and `WebhookEndpointPage` are frozen
-plain objects, and each keeps the JSON it was
-built from in `.raw` — so a member the API adds after this release reaches you
-without a new SDK. A member the API did not send reads `null`.
+plain objects, and each keeps the JSON it was built from in `.raw` — so a
+member the API adds after this release reaches you without a new SDK. A member
+the API did not send reads `null`.
 
 The whole endpoint surface is typed from the OpenAPI document at
 `src/_generated/schema.d.ts`. Those types are private: they are regenerated
