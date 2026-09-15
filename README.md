@@ -676,8 +676,10 @@ the call has ended.
 **The date range still applies.** The call id is matched only inside the
 months your range covers, and with no `startedAfter` or `startedBefore` that is
 the current and the previous month. To find an older call, pass a range that
-covers when it was placed. So an empty page means one of two things: the call
-has not ended yet, or it was placed outside the range.
+covers when it was placed.
+
+An empty page means the call has not ended yet, it was placed outside the
+range, or the id names no call. It is never an error.
 
 One call writes two records: the phone system rings the subscriber first,
 then dials out. The list returns the visible dial-out record; add

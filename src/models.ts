@@ -886,7 +886,8 @@ export interface CallRecordPage {
  * with `includeHidden: true`. **The list's date range still applies:** with no
  * `startedAfter` or `startedBefore` only the current and the previous month
  * are read, so for an older call pass a range that covers when it was placed.
- * An empty page means the call has not ended yet, or it is outside the range.
+ * An empty page means the call has not ended yet, it was placed outside the
+ * range, or the id names no call. It is never an error.
  * A `CallRecord`'s own id is computed from the vendor row it was read out of,
  * so it never equals this one.
  *

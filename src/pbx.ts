@@ -101,15 +101,15 @@ export interface ListCallRecordsOptions {
    * **The date range still applies.** The call id is matched only inside the
    * months `startedAfter` and `startedBefore` cover, and with neither that is
    * the current and the previous month. To find an older call, pass a range
-   * that covers when it was placed. So an empty page means one of two things:
-   * the call has not ended yet, or it was placed outside the range.
+   * that covers when it was placed.
+   *
+   * An empty page means the call has not ended yet, it was placed outside the
+   * range, or the id names no call. It is never an error.
    *
    * One call writes two records — the phone system rings the subscriber
    * first, then dials out — and by default the list returns the visible
    * dial-out record. The hidden leg that rang the subscriber comes back only
    * with `includeHidden: true`.
-   *
-   * An id that names no call answers an empty page, not an error.
    */
   callId?: string;
   /**
