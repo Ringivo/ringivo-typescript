@@ -842,7 +842,13 @@ describe("users.call", () => {
     });
   });
 
-  it("omits what was not named rather than sending nulls", async () => {
+  it("omits what was not named, but always spells auto-answer", async () => {
+    // The spec requires `destination` alone and gives `auto-answer` a
+    // `default: false` — which the generated request type renders as a
+    // non-optional member. Sending our own `false` is the reading that needs
+    // no local alias widening that type, and the server reads it the same as
+    // an absent member. `caller-id` and `device` really are optional, and
+    // stay out of the document when they were not named.
     const calls = new Calls();
     server.use(
       http.post(PLACE_CALL_URL, async ({ request }) => {
@@ -854,7 +860,10 @@ describe("users.call", () => {
     await client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
 
     expect(JSON.parse(calls.last.body)).toEqual({
-      data: { type: "calls", attributes: { destination: "+13025556789" } },
+      data: {
+        type: "calls",
+        attributes: { destination: "+13025556789", "auto-answer": false },
+      },
     });
   });
 
@@ -882,7 +891,10 @@ describe("users.call", () => {
     server.use(
       http.post(PLACE_CALL_URL, () =>
         HttpResponse.json(
-          accepted({ "caller-id": "+14075550101", "auto-answer": true, device: PBX_DEVICE_ID }),
+          // `caller-id` comes back WITHOUT the plus: the platform stores every
+          // caller ID as E.164 without one and answers with the spelling the
+          // called party will see, so this is not an echo of what was sent.
+          accepted({ "caller-id": "14075550101", "auto-answer": true, device: PBX_DEVICE_ID }),
           { status: 202 },
         ),
       ),
@@ -890,18 +902,33 @@ describe("users.call", () => {
 
     const call = await client().pbx.users.call(PBX_USER_ID, {
       destination: "+13025556789",
+      callerId: "+14075550101",
       device: PBX_DEVICE_ID,
     });
 
     expect(call.id).toBe(CALL_ID);
     expect(call.destination).toBe("+13025556789");
-    expect(call.callerId).toBe("+14075550101");
+    // Sent with a plus, answered without one. Passed through as it arrived.
+    expect(call.callerId).toBe("14075550101");
     expect(call.autoAnswer).toBe(true);
     expect(call.device).toBe(PBX_DEVICE_ID);
     // NOT a call that happened — only one that was asked for.
     expect(call.status).toBe("requested");
+    // Declared RFC 3339 by the spec, unlike a PbxUser's timestamps.
+    expect(call.requestedAt).toBeInstanceOf(Date);
     expect(call.requestedAt?.toISOString()).toBe("2026-09-15T04:30:00.000Z");
     expect(Object.isFrozen(call)).toBe(true);
+  });
+
+  it("reads a null caller-id as the subscriber's own being used", async () => {
+    server.use(
+      http.post(PLACE_CALL_URL, () => HttpResponse.json(accepted(), { status: 202 })),
+    );
+
+    const call = await client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
+
+    expect(call.callerId).toBeNull();
+    expect(call.device).toBeNull();
   });
 
   it("raises a typed 422 pointing at the device that is not this user's", async () => {

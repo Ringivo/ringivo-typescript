@@ -889,12 +889,19 @@ export interface CallRecordPage {
  * to a real person, so a `PbxCall` you never received is not a request to
  * repeat blindly.
  *
- * `device` is the `pbx.devices` id the call is originated from, echoed back
- * when you named one — it is an ATTRIBUTE rather than a relationship, the
- * same as it is on the way in.
+ * **These values are what was SENT to the phone system, not what you typed.**
+ * `callerId` is the clearest case: the platform stores caller IDs as E.164
+ * without the plus and answers with the spelling the called party will see,
+ * so a `+1…` you passed comes back as `1…`. It is null when the
+ * subscriber's own caller ID was used.
  *
- * `requestedAt` is null if the server sends a value this client cannot read
- * as an instant; `raw` keeps what arrived either way.
+ * `device` is the `pbx.devices` id the call originates from, and null when
+ * none was named — an ATTRIBUTE rather than a relationship, the same as it
+ * is on the way in. `status` is `requested` and nothing else from this
+ * endpoint.
+ *
+ * `requestedAt` is a real instant: the API declares it RFC 3339, unlike a
+ * `PbxUser`'s timestamps, which come from the phone system as unparsed text.
  */
 export interface PbxCall {
   readonly id: string;

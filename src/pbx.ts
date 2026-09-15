@@ -26,15 +26,13 @@
  * `src/_generated/schema.d.ts` type-checks their paths, their query members
  * and their response bodies at compile time.
  *
- * `users.call()` is hand-built, for the two reasons `faxAccountUsers.create()`
- * is: a JSON:API resource route answers 415 to the `application/json` a body
- * with no explicit type gets, and the shared transport is built with `Accept`
- * alone. It is hand-built for a THIRD reason as well, and this one is
- * temporary — `POST /v1/pbx/users/{id}/calls` is not in the vendored spec
- * yet, so its document is declared against the local interface below rather
- * than a generated one. When the action reaches the spec, the next
- * `scripts/generate.sh` publishes its schemas and `CallRequest` here is
- * replaced by the generated type; nothing a caller sees changes.
+ * `users.call()` sends its document through `client.request()` instead, for
+ * the one reason `faxAccountUsers.create()` does: a JSON:API resource route
+ * answers 415 to the `application/json` a body with no explicit type gets,
+ * and the shared transport is built with `Accept` alone. ITS BODY IS
+ * SPEC-TYPED ALL THE SAME — the document is declared as the generated
+ * `PbxCallRequest`, so a member this package spells wrongly is a compile
+ * error rather than a 422 somebody reads out of a log.
  *
  * -- THE WIRE IS KEBAB-CASE HERE --------------------------------------------
  * `/v1/pbx/` attributes and filters are spelled `started-after`,
@@ -43,6 +41,7 @@
  * these resources and this module writes it verbatim; the camelCase is on
  * this package's side of the boundary, in src/models.ts.
  */
+import type { components } from "./_generated/schema.js";
 import type { Ringivo } from "./client.js";
 import { JSONAPI_MEDIA_TYPE, transportOf } from "./client.js";
 import {
@@ -177,7 +176,16 @@ export interface PlaceCallOptions {
    * `/data/attributes/destination`.
    */
   destination: string;
-  /** The number to show the far end, E.164. Your provider's default if omitted. */
+  /**
+   * The number the called party sees — E.164, with or without the `+`. A ten
+   * digit North American number is accepted too and answered with its country
+   * code. A value that is not a telephone number is refused rather than
+   * ignored. Omit it to use the subscriber's own caller ID.
+   *
+   * **`PbxCall.callerId` is not an echo of what you sent**: the platform
+   * stores caller IDs as E.164 WITHOUT the plus, and answers with the
+   * spelling the called party will see.
+   */
   callerId?: string;
   /**
    * Ask the subscriber's device to answer automatically, where it supports
@@ -190,34 +198,25 @@ export interface PlaceCallOptions {
    *
    * **The device must be that subscriber's own** — one that is not is
    * refused with a 422 pointing at `/data/attributes/device`, whether it
-   * belongs to somebody else or does not exist. The two are deliberately
-   * one answer: a device id is a client-supplied name for hardware on a
-   * shared platform, and telling the two apart would say whose it is. Omit
+   * belongs to somebody else or does not exist, and nothing is dialled. The
+   * two are deliberately one answer: a device id is a client-supplied name
+   * for hardware on a shared platform, and telling them apart would say
+   * whose it is. The check includes a user of the SAME NAME on another
+   * domain, which is the case that would otherwise reach a stranger. Omit
    * it and the platform chooses.
    */
   device?: string;
 }
 
 /**
- * The click-to-dial document, as this client sends it.
+ * The click-to-dial document as the spec declares it.
  *
- * Local, unexported and HAND-WRITTEN: the action is not in the vendored spec
- * yet, so there is no generated request schema to declare it against. It
- * exists all the same so that a member misspelled here is a compile error
- * rather than a 422 read back out of a log — and so that the replacement,
- * when the spec catches up, is one import.
+ * Local and unexported, so nothing generated crosses the public boundary —
+ * the same shape `faxAccountUsers.ts` and `webhookEndpoints.ts` use for
+ * their write documents. What it buys is that a member misspelled here is a
+ * compile error rather than a 422 read back out of a log.
  */
-interface CallRequest {
-  data: {
-    type: "calls";
-    attributes: {
-      destination: string;
-      "caller-id"?: string;
-      "auto-answer"?: boolean;
-      device?: string;
-    };
-  };
-}
+type CallRequest = components["schemas"]["PbxCallRequest"];
 
 /** The `client.pbx.callRecords` namespace. */
 export class CallRecords {
@@ -341,29 +340,35 @@ export class PbxUsers {
    * is a second phone call to a real person.** Unlike `faxes.send()`, which
    * carries an `Idempotency-Key` and replays rather than resends, nothing
    * here deduplicates: a request you send twice because you never saw the
-   * first response is two calls.
+   * first response is two calls. The **502** below is the exception the API
+   * names — nothing was dialled, so that one may be retried.
    *
    * A subscriber outside your customers' domains answers **404**, not 403.
    * A `device` that is not this subscriber's own is a **422** pointing at
-   * `/data/attributes/device`, whether it belongs to somebody else or does
-   * not exist. A platform that refuses the origination is a **502** carrying
-   * its own status in `meta`.
+   * `/data/attributes/device` — including one that belongs to a user of the
+   * same name on another domain — and nothing is dialled. A phone system
+   * that refuses or cannot be reached answers **502**, with its own status
+   * in `errors[0].meta.vendor_status`.
    *
    * Needs `pbx-calls:write`.
    */
   async call(pbxUserId: string, options: PlaceCallOptions): Promise<PbxCall> {
     const id = idParam(pbxUserId, "a pbx user id is required");
 
-    // Only what the caller named. `auto-answer` defaults to false at the
-    // server, so an absent member and `false` mean the same thing there —
-    // but sending nothing keeps the document a statement of what was asked
-    // for, which is what the audit trail records.
-    const attributes: CallRequest["data"]["attributes"] = { destination: options.destination };
+    // `auto-answer` IS ALWAYS SENT, and the other two only when named.
+    //
+    // The spec requires `destination` alone and gives `auto-answer` a
+    // `default: false`, which openapi-typescript renders as a NON-optional
+    // member — a property with a default always has a value once the server
+    // has read the document. Spelling our own `false` is therefore the one
+    // reading that needs no local alias widening the generated type, and it
+    // says the same thing to the server as leaving it out.
+    const attributes: CallRequest["data"]["attributes"] = {
+      destination: options.destination,
+      "auto-answer": options.autoAnswer ?? false,
+    };
     if (options.callerId !== undefined) {
       attributes["caller-id"] = options.callerId;
-    }
-    if (options.autoAnswer !== undefined) {
-      attributes["auto-answer"] = options.autoAnswer;
     }
     if (options.device !== undefined) {
       attributes.device = options.device;

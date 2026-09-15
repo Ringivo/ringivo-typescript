@@ -598,9 +598,19 @@ accepted, the call is out of your hands.
 second phone call to a real person.**
 
 The device must be that subscriber's own — one that is not is refused with a
-422, whether it belongs to somebody else or does not exist. The pointer is
-`/data/attributes/device`. A platform that refuses the origination is a 502
-carrying its own status in `meta`.
+422, whether it belongs to somebody else or does not exist, and nothing is
+dialled. The pointer is `/data/attributes/device`. The check covers a user of
+the same name on another domain, which is the case that would otherwise reach
+a stranger.
+
+A phone system that refuses or cannot be reached is a 502, with its own status
+in `errors[0].meta.vendor_status`. **That one is safe to retry** — nothing was
+dialled.
+
+`call.callerId` is not an echo of what you sent: the platform stores caller
+IDs as E.164 **without** the plus and answers with the spelling the called
+party will see, so a `+1…` comes back as `1…`. It is `null` when the
+subscriber's own caller ID was used.
 
 ### Scopes, and what a read can reach
 
