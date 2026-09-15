@@ -10,15 +10,17 @@
  * Two things in this module are worth more than the usual care, and each has
  * its own test below. The SECRET is readable in exactly two responses, so a
  * builder that dropped it would be a credential a caller can never recover.
- * And `events` has three distinct wire forms — a list, `[]`, and `null` —
- * whose meanings differ, so "the member is missing" and "the member is null"
- * must not collapse into one another.
+ * And `events` is the member the platform tightened: a create must name a
+ * non-empty list, and an update must never send `null`. So the tests here pin
+ * the compile-time refusals AND what an untyped caller's `null` does on a
+ * PATCH — it is dropped rather than put on the wire.
  */
 import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
 import { ApiError, Ringivo } from "./index.js";
+import type { CreateWebhookEndpointOptions, UpdateWebhookEndpointOptions } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -194,9 +196,11 @@ describe("get", () => {
   });
 
   it("reads a null event list as null, and an empty one as empty", async () => {
-    // Both mean "every event in scope" to the platform, and it keeps whichever
-    // was sent rather than normalising — so a caller who sent `[]` can tell
-    // their write was understood, and this client must not flatten the two.
+    // A WRITE can no longer produce either: the platform requires a non-empty
+    // list on registration and on every change. This is a READER, though, and
+    // it answers for documents it did not build — `null` is a response that
+    // carried no list at all and `[]` is one that carried an empty list, so a
+    // client that turned either into the other would be inventing an answer.
     server.use(
       http.get(ENDPOINT_URL, () =>
         HttpResponse.json({ data: endpointResource({ events: null }) }),
@@ -287,14 +291,43 @@ describe("create", () => {
     expect(endpoint.secret).toBe(SECRET);
   });
 
-  it("sends an empty event list as [] rather than dropping it", async () => {
-    // `[]` means "every event in scope" and the platform keeps it verbatim, so
-    // it has to reach the wire.
+  it("does not typecheck without events, or with an empty list", () => {
+    // THE DIRECTIVES ARE THE GATE, the way src/auth.test.ts pins its required
+    // options: `tsc --noEmit` reports an UNUSED `@ts-expect-error` — and fails
+    // the build — the day either of these starts compiling.
+    //
+    // There is no runtime half to pair them with, and that is deliberate. The
+    // platform answers 422 to a create that names no events and to one that
+    // names `[]`, so this client refuses both at the type rather than holding
+    // a second opinion about them at run time. Nothing is sent here.
+    //
+    // @ts-expect-error events is required, so an options object without it must not typecheck
+    const withoutEvents: CreateWebhookEndpointOptions = {
+      url: HOOK_URL,
+      scopeType: "fax_account",
+      scopeId: ACCOUNT_ID,
+    };
+    const withAnEmptyList: CreateWebhookEndpointOptions = {
+      url: HOOK_URL,
+      scopeType: "fax_account",
+      scopeId: ACCOUNT_ID,
+      // @ts-expect-error [] is not a non-empty list, so an empty one must not typecheck
+      events: [],
+    };
+
+    // Each directive is spent on the member it names: every OTHER required
+    // option is supplied above, and these two assertions are what stops a
+    // later edit from letting a directive pass on a different mistake.
+    expect(withoutEvents).not.toHaveProperty("events");
+    expect(withAnEmptyList.events).toEqual([]);
+  });
+
+  it("sends the switch when the caller names it", async () => {
     const calls = new Calls();
     server.use(
       http.post(ENDPOINTS_URL, async ({ request }) => {
         await calls.record(request);
-        return HttpResponse.json({ data: endpointResource({ events: [] }) }, { status: 201 });
+        return HttpResponse.json({ data: endpointResource({ active: false }) }, { status: 201 });
       }),
     );
 
@@ -302,37 +335,14 @@ describe("create", () => {
       url: HOOK_URL,
       scopeType: "fax_account",
       scopeId: ACCOUNT_ID,
-      events: [],
-    });
-
-    const body = JSON.parse(calls.last.body) as { data: { attributes: Record<string, unknown> } };
-
-    expect(body.data.attributes.events).toEqual([]);
-    expect("events" in body.data.attributes).toBe(true);
-    expect(endpoint.events).toEqual([]);
-  });
-
-  it("sends null for an event list the caller nulled", async () => {
-    const calls = new Calls();
-    server.use(
-      http.post(ENDPOINTS_URL, async ({ request }) => {
-        await calls.record(request);
-        return HttpResponse.json({ data: endpointResource({ events: null }) }, { status: 201 });
-      }),
-    );
-
-    await client().webhookEndpoints.create({
-      url: HOOK_URL,
-      scopeType: "fax_account",
-      scopeId: ACCOUNT_ID,
-      events: null,
+      events: ["fax.received"],
       active: false,
     });
 
     const body = JSON.parse(calls.last.body) as { data: { attributes: Record<string, unknown> } };
 
-    expect(body.data.attributes.events).toBeNull();
     expect(body.data.attributes.active).toBe(false);
+    expect(endpoint.active).toBe(false);
   });
 
   it("leaves out a member nobody named", async () => {
@@ -350,9 +360,10 @@ describe("create", () => {
       url: HOOK_URL,
       scopeType: "fax_account",
       scopeId: ACCOUNT_ID,
+      events: ["fax.received"],
       // Explicitly undefined, which is what a caller spreading an options
       // object gets, and it must read the same as not passing it at all.
-      events: undefined,
+      active: undefined,
     });
 
     const body = JSON.parse(calls.last.body) as { data: { attributes: Record<string, unknown> } };
@@ -361,8 +372,8 @@ describe("create", () => {
       url: HOOK_URL,
       scopeType: "fax_account",
       scopeId: ACCOUNT_ID,
+      events: ["fax.received"],
     });
-    expect("events" in body.data.attributes).toBe(false);
     expect("active" in body.data.attributes).toBe(false);
   });
 
@@ -391,6 +402,7 @@ describe("create", () => {
         url: HOOK_URL,
         scopeType: "customer",
         scopeId: ACCOUNT_ID,
+        events: ["fax.received"],
       }),
     ).rejects.toMatchObject({ statusCode: 422, code: "validation_failed" });
   });
@@ -450,20 +462,35 @@ describe("update", () => {
     expect(endpoint.active).toBe(false);
   });
 
-  it("sends null events as a value, not as an omission", async () => {
+  it("never sends null events, whatever an untyped caller passes", async () => {
+    // `null` USED TO BE A VALUE on this member — "every event in scope" — and
+    // the platform answers 422 to it now. The option type stops a TypeScript
+    // caller (the cast below is what it takes to get past it); JavaScript has
+    // no such stop, so the key is dropped instead of sent.
     const calls = new Calls();
     server.use(
       http.patch(ENDPOINT_URL, async ({ request }) => {
         await calls.record(request);
-        return HttpResponse.json({ data: endpointResource({ events: null }) });
+        return HttpResponse.json({ data: endpointResource() });
       }),
     );
 
-    await client().webhookEndpoints.update(ENDPOINT_ID, { events: null });
+    const nulled = { events: null } as unknown as UpdateWebhookEndpointOptions;
+
+    // Alone, it names nothing this client can send, so the empty-change guard
+    // refuses it here rather than spending a round trip on the 422.
+    await expect(client().webhookEndpoints.update(ENDPOINT_ID, nulled)).rejects.toThrow(
+      /at least one field to change/,
+    );
+    expect(calls.count, "a null event list reached the wire").toBe(0);
+
+    // And beside a member that IS sendable, the patch goes out without it.
+    await client().webhookEndpoints.update(ENDPOINT_ID, { ...nulled, active: false });
 
     const body = JSON.parse(calls.last.body) as { data: { attributes: Record<string, unknown> } };
 
-    expect(body.data.attributes).toEqual({ events: null });
+    expect(body.data.attributes).toEqual({ active: false });
+    expect("events" in body.data.attributes).toBe(false);
   });
 
   it("refuses a change that changes nothing", async () => {

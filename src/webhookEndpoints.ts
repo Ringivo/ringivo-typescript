@@ -32,12 +32,21 @@
  * either — so a rotation costs no deliveries as long as your own copy is
  * rolled before the deadline.
  *
- * -- SPARSE WRITES -----------------------------------------------------------
+ * -- SPARSE WRITES, AND THE ONE MEMBER THAT IS NOT OPTIONAL -----------------
  * `update()` sends only the members the caller passed, so adding events to an
- * endpoint leaves its URL and its switch alone. `undefined` is "not given"
- * and `null` is a VALUE — for `events` it means "every event in scope".
- * `create()` follows the same rule: an attribute nobody named is absent from
- * the document, and the platform's own default applies.
+ * endpoint leaves its URL and its switch alone: `undefined` is "not given",
+ * and an attribute nobody named is absent from the document rather than sent
+ * as `null`, so the platform's own default applies. `create()` follows the
+ * same rule for `active`.
+ *
+ * `events` IS THE EXCEPTION, and it is the member that changed. It used to be
+ * optional and nullable, where `null` and `[]` both meant "every event in
+ * scope". The platform refuses both now — an endpoint that named none would
+ * receive every event type the platform ever adds, at a handler nobody asked
+ * whether it wanted one — so `create()` requires a non-empty list and
+ * `update()` never sends `null`. Both arms of the API answer 422 to each, and
+ * the option type here is a non-empty array, so an empty literal is a compile
+ * error rather than a round trip.
  */
 import type { components, paths } from "./_generated/schema.js";
 import { JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
@@ -144,15 +153,20 @@ export interface CreateWebhookEndpointOptions {
   /** The id of that tenant, customer or fax account. Required. */
   scopeId: string;
   /**
-   * The events you want. **`null` and `[]` both mean "every event in
-   * scope"**, and the platform keeps whichever you sent rather than
-   * normalising it, so a caller who sent `[]` can tell their write was
-   * understood. Leave it out and the member is absent from the document.
+   * The events you want — AT LEAST ONE, and the list is exact: this endpoint
+   * hears about the names on it and about nothing else.
    *
-   * An event name this platform does not publish is a 422 — a typo would
-   * otherwise subscribe you to silence.
+   * **There is no "everything" spelling.** `null` and `[]` used to mean "every
+   * event in scope"; each is a 422 now, because that default is paid for by a
+   * handler that meets a brand-new event type it has never seen. Name the
+   * events you handle, and add to the list with `update()` when you handle
+   * more.
+   *
+   * The type is a non-empty array, so `events: []` is a compile error rather
+   * than a round trip. An event name this platform does not publish is a 422 —
+   * a typo would otherwise subscribe you to silence.
    */
-  events?: readonly string[] | null;
+  events: readonly [string, ...string[]];
   /** Switched on unless you say otherwise. */
   active?: boolean;
 }
@@ -161,8 +175,9 @@ export interface CreateWebhookEndpointOptions {
  * What `webhookEndpoints.update()` accepts — a SPARSE patch.
  *
  * Only the members you pass are sent, so adding events leaves the URL and the
- * switch exactly as they were. `undefined` is "not given"; `null` on `events`
- * is a VALUE that means "every event in scope".
+ * switch exactly as they were. `undefined` is "not given", and it is the only
+ * way to leave a member alone: `null` is not a value this surface takes any
+ * more.
  *
  * There is no `scopeType` or `scopeId` here on purpose: neither can change.
  */
@@ -171,9 +186,13 @@ export interface UpdateWebhookEndpointOptions {
   url?: string;
   /**
    * The events you want from now on — the list REPLACES the old one, it is
-   * not merged into it. `null` or `[]` mean every event in scope.
+   * not merged into it, and it must still name at least one. `[]` is a 422;
+   * this client never sends `null` — a JavaScript caller's `null` is dropped
+   * from the PATCH, and refused if nothing else was named. A PATCH that could
+   * empty the list would otherwise reach the every-event state a create
+   * refuses, one request later.
    */
-  events?: readonly string[] | null;
+  events?: readonly [string, ...string[]];
   /**
    * `false` stops the fan-out without removing the endpoint, and keeps its
    * secret and its delivery history.
@@ -239,6 +258,10 @@ export class WebhookEndpoints {
    * readable: **store it now; there is no way to read it back.** Every other
    * read answers `secret: null`, because the platform keeps no readable copy.
    *
+   * `events` NAMES WHAT THIS ENDPOINT HEARS ABOUT, and it is required: there
+   * is no spelling left that means "every event in scope", because a handler
+   * should not meet an event type nobody subscribed it to.
+   *
    * Needs `webhooks:write`. A `fax:write` token may register only a
    * `fax_account`-scoped endpoint: naming a `customer` or `tenant` scope with
    * a `fax:*` token is a 422.
@@ -248,10 +271,8 @@ export class WebhookEndpoints {
       url: options.url,
       scopeType: options.scopeType as CreateAttributes["scopeType"],
       scopeId: options.scopeId,
+      events: eventList(options.events),
     };
-    if (options.events !== undefined) {
-      attributes.events = eventList(options.events);
-    }
     if (options.active !== undefined) {
       attributes.active = options.active;
     }
@@ -296,10 +317,7 @@ export class WebhookEndpoints {
   ): Promise<WebhookEndpoint> {
     const attributes = writableAttributes(options);
     if (Object.keys(attributes).length === 0) {
-      throw new Error(
-        "update() needs at least one field to change: url, events or active. Pass null or [] " +
-          "as events to hear about every event in scope — that counts as a change.",
-      );
+      throw new Error("update() needs at least one field to change: url, events or active.");
     }
 
     const document: UpdateRequest = {
@@ -405,31 +423,44 @@ function jsonApiHeaders(): Headers {
 }
 
 /**
- * The event list as the document carries it: `null` stays `null`, and a list
- * is copied.
+ * The event list as the document carries it — a copy, never the caller's own
+ * array.
  *
- * Copied because the caller's array is theirs — nothing here should hold a
+ * Copied because the caller's array is theirs: nothing here should hold a
  * reference a caller can change after the call. Cast because this package's
- * own option is `readonly string[]` while the spec's is an enum, for the
+ * own option is a list of `string` while the spec's is an enum, for the
  * reason `ListWebhookEndpointsOptions.scopeType` is widened: an event name
  * the platform publishes tomorrow must be subscribable today, without waiting
  * for a regenerate and a release. A name this platform does not publish is a
  * 422, which is the server's answer to give rather than a compile error six
  * months out of date.
+ *
+ * `NonNullable` rather than the member's own type, because one helper serves
+ * both arms and the two differ: `events` is required and non-nullable on the
+ * create attributes and optional on the update ones. The array both accept is
+ * what this returns.
  */
-function eventList(events: readonly string[] | null): CreateAttributes["events"] {
-  return events === null ? null : ([...events] as CreateAttributes["events"]);
+function eventList(
+  events: readonly [string, ...string[]],
+): NonNullable<CreateAttributes["events"]> {
+  return [...events] as NonNullable<CreateAttributes["events"]>;
 }
 
 /**
- * The attributes the caller actually named — `null` included.
+ * The attributes the caller actually named.
  *
- * `undefined` is dropped and `null` is KEPT, because the two mean different
- * things on the wire: an absent member leaves the server's value exactly as it
- * was, while `events: null` asks for every event in scope. They are separated
- * HERE rather than left to `JSON.stringify` — which also drops `undefined` —
- * because `update()` has to COUNT what was named in order to refuse an empty
- * change, and a count taken after serialisation is a count of a string.
+ * `undefined` is dropped, and so is a `null` on `events`. That second half is
+ * what changed: `null` used to be a VALUE on that member — "every event in
+ * scope" — and the platform answers 422 to it now, so the key is left out and
+ * a PATCH that named nothing else is refused by `update()`'s own empty-change
+ * guard rather than spending a round trip on the refusal. The option type
+ * already stops a TypeScript caller from spelling it; the `!= null` below is
+ * what an untyped one meets.
+ *
+ * The members are separated HERE rather than left to `JSON.stringify` — which
+ * also drops `undefined` — because `update()` has to COUNT what was named in
+ * order to refuse an empty change, and a count taken after serialisation is a
+ * count of a string.
  */
 function writableAttributes(options: UpdateWebhookEndpointOptions): UpdateAttributes {
   const attributes: UpdateAttributes = {};
@@ -437,7 +468,7 @@ function writableAttributes(options: UpdateWebhookEndpointOptions): UpdateAttrib
   if (options.url !== undefined) {
     attributes.url = options.url;
   }
-  if (options.events !== undefined) {
+  if (options.events != null) {
     attributes.events = eventList(options.events);
   }
   if (options.active !== undefined) {
