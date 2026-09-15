@@ -587,9 +587,9 @@ which of their registrations to place it from.
 
 **The 202 is not a call that happened.** It comes back the moment the
 platform has accepted the request, so `status` is `requested` and nothing on
-it says how the call went. `call.id` is the id the call is placed under, so
-the call record that appears afterwards carries the same one — that is how
-you find out.
+it says how the call went. `call.id` is the id the request was placed under.
+This release does not link it to the call record that appears afterwards;
+find that record by the subscriber and the time.
 
 **There is no cancel, and this is not undoable.** Once the request is
 accepted, the call is out of your hands.

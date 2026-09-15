@@ -329,8 +329,10 @@ export class PbxUsers {
    * **THE 202 IS NOT A CALL THAT HAPPENED.** It comes back the moment the
    * platform has accepted the request, so the `PbxCall` you get says
    * `status: "requested"` and nothing about how the call went. Its `id` is
-   * the id the call is placed under, so the `CallRecord` that appears
-   * afterwards carries the same one — that is how you find out.
+   * the id the request was placed under. **This release does not link it to
+   * the call record that appears afterwards** — a `CallRecord`'s own id is
+   * computed from the vendor row, and no attribute on it publishes this one
+   * — so find that record by the subscriber and the time.
    *
    * **This is not undoable.** There is no cancel: once the request is
    * accepted, the call is out of your hands.

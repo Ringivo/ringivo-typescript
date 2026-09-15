@@ -877,8 +877,13 @@ export interface CallRecordPage {
  * It is an intent, not a call that happened. The server answers **202** the
  * moment it has accepted the request, so `status` is `requested` here and
  * nothing on this object says how the call went. That story is a
- * `CallRecord`, minutes later, and `id` is what ties the two together: it is
- * the id the call is placed under, carried through to its record.
+ * `CallRecord`, minutes later.
+ *
+ * **`id` is the id the request was placed under, and this release does not
+ * link it to that record.** A `CallRecord`'s own id is computed from the
+ * vendor row it was read out of, and no attribute on it publishes this one,
+ * so there is no join to make here however much the two ids look alike.
+ * Find the record by the subscriber and the time instead.
  *
  * **There is no idempotency key on the way in.** Asking twice is two calls
  * to a real person, so a `PbxCall` you never received is not a request to
