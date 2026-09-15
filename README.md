@@ -14,6 +14,17 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
+## Before you install 0.8.0
+
+**0.8.0 carries a webhook break you did not ask for.** It is the release that
+first ships a change to `client.webhookEndpoints`: `create()` now **requires**
+`events` and refuses an empty list, and `update()` never sends `null` — an
+endpoint that named no events would be subscribed to every event type the
+platform ever adds. Both are compile errors rather than 422s, so a typed
+caller finds out at build time; see [Webhook endpoints](#webhook-endpoints).
+Nothing else in 0.8.0 changes an existing call — the rest is the new
+`client.pbx` surface.
+
 ## Before you install 0.4.x
 
 **0.2.x has no future.** It mints at `POST /v1/integration/token`, and that
