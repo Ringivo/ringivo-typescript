@@ -58,6 +58,7 @@ interface Surface {
     faxAccountUsers: object;
     webhookEndpoints: object;
     webhookDeliveries: object;
+    pbx: { callRecords: object; users: object; devices: object };
     request: unknown;
   };
   VERSION: string;
@@ -179,6 +180,42 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
 
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.webhookDeliveries))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["get", "list"]);
+  });
+
+  it("exposes the whole phone-system surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["pbx-users:read"],
+    });
+
+    // Three collections hung off one namespace, and `call()` on the users
+    // one — the only write on the whole surface.
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual([]);
+    expect(Object.keys(client.pbx).sort()).toEqual(["callRecords", "devices", "users"]);
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.callRecords))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["get", "list"]);
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.users))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["call", "get", "list"]);
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.devices))
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["get", "list"]);
