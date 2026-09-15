@@ -2161,6 +2161,52 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/customers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List your customers
+         * @description Every customer on your account, newest first. `filter[code]` finds one customer by its code.
+         *
+         *     This collection carries an exact `meta.page.total` on every page.
+         */
+        get: operations["listCustomers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/customers/{customer}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read one customer
+         * @description A customer that is not on your account answers **404** — the same answer an id that names
+         *     nothing gives, never 403.
+         */
+        get: operations["getCustomer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant}": {
         parameters: {
             query?: never;
@@ -2265,10 +2311,11 @@ export interface paths {
          *     here and handed to the phone system as the SIP Call-ID it places the call under. Nothing
          *     else about the call is knowable at this point, which is why `status` is always `requested`.
          *
-         *     **This release does not link that id to the call record.** A call record's id is derived
-         *     from the phone system's own CDR row, and no call-record field carries the SIP call id, so
-         *     there is no join to make from this id today. A later release may expose the call id on call
-         *     records so you can correlate.
+         *     **Find the call's records with this id.** A call record's own id comes from the phone
+         *     system's CDR row, so the two ids differ: send this one as `filter[call-id]` on
+         *     `GET /v1/pbx/call-records` once the call ends. One call writes two records; the phone system
+         *     records the leg that rang the user as hidden, so the list answers the outbound leg alone
+         *     unless you add `filter[include-hidden]=true`.
          *
          *     **`device` must belong to `{user}`.** A device id that names a registration owned by
          *     somebody else — including a user of the same name on another domain — is refused with a
@@ -2786,8 +2833,8 @@ export interface components {
             /**
              * @description The exact number of rows the collection holds under the filters applied, repeated on
              *     every page of the walk. Present on SOME collections only, so read it as optional: of the
-             *     collections documented here `fax-accounts`, `fax-account-users` and `webhook-endpoints`
-             *     publish it, and `faxes` and `webhook-deliveries` never do. Counting a table that only
+             *     collections documented here `customers`, `fax-accounts`, `fax-account-users` and
+             *     `webhook-endpoints` publish it, and `faxes` and `webhook-deliveries` never do. Counting a table that only
              *     grows costs more with every row, which is the price a cursor walk exists to not pay.
              */
             total?: number;
@@ -4924,6 +4971,98 @@ export interface components {
             };
         };
         /**
+         * @description The primary region chosen for this customer. `partner_default` follows your account's default
+         *     region, so changing that default moves every customer that chose it; `use1` and `usw1` pin
+         *     the customer to one region.
+         * @enum {string}
+         */
+        CustomerRegionPreference: "partner_default" | "use1" | "usw1";
+        /**
+         * @description A SIP transport this customer's phone system offers.
+         * @enum {string}
+         */
+        CustomerTransport: "udp" | "tcp" | "tls";
+        CustomerAttributes: {
+            name?: string;
+            /**
+             * @description The short code the platform assigns a customer: five characters, lowercase letters and
+             *     digits. It never changes.
+             * @example jpz3k
+             */
+            code?: string | null;
+            /**
+             * @description The service address's country, ISO 3166-1 alpha-2.
+             * @example US
+             */
+            country?: string | null;
+            /** @description The service address's street lines, as the address was validated. */
+            addressLines?: string[];
+            city?: string | null;
+            /** @description The state or province. */
+            region?: string | null;
+            postalCode?: string | null;
+            /**
+             * @description An IANA time zone name.
+             * @example America/Chicago
+             */
+            timeZone?: string | null;
+            /**
+             * @description The country this customer's data is kept in, ISO 3166-1 alpha-2. Set when the customer
+             *     is created, and never changed.
+             * @example US
+             */
+            dataResidencyCountry?: string;
+            regionPreference?: components["schemas"]["CustomerRegionPreference"];
+            /**
+             * @description The region `regionPreference` resolves to now. For `partner_default` that is your
+             *     account's current default.
+             * @example use1
+             */
+            effectiveRegion?: string;
+            /** @description Whether this customer has a phone system. The five fields after this one are null when it does not. */
+            pbx?: boolean;
+            /** @description The phone system's residential setting. */
+            residential?: boolean | null;
+            /** @description The most calls the phone system allows at once. */
+            callLimit?: number | null;
+            /** @description The most external calls the phone system allows at once. */
+            callLimitExternal?: number | null;
+            /**
+             * @description The SIP transports the phone system offers. The ORDER is data: it is the order the
+             *     transports are offered in DNS, first preferred.
+             * @example [
+             *       "tls",
+             *       "udp"
+             *     ]
+             */
+            transports?: components["schemas"]["CustomerTransport"][] | null;
+            /** @description Where building the phone system on the switch stands. */
+            provisioningState?: components["schemas"]["ProvisioningState"] | null;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        CustomerResource: {
+            /** @enum {string} */
+            type: "customers";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["CustomerAttributes"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        CustomerDocumentResponse: {
+            data: components["schemas"]["CustomerResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        CustomerCollectionDocument: {
+            data: components["schemas"]["CustomerResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        /**
          * @description The reseller onboarding lifecycle (console ADR-0006). Only `active` opens the portal;
          *     `suspended` is a staff action reachable from any other state.
          * @enum {string}
@@ -5441,9 +5580,8 @@ export interface components {
             device?: string | null;
             /**
              * @description Always `requested` from this endpoint: it is the REQUEST's state, not the call's, because
-             *     the phone system has taken the command and nothing about the call is knowable yet. This
-             *     release does not link the call to its call record; find it on `/v1/pbx/call-records` by
-             *     subscriber and time instead.
+             *     the phone system has taken the command and nothing about the call is knowable yet. Find
+             *     the call's records with `filter[call-id]` on `/v1/pbx/call-records`.
              * @enum {string}
              */
             status?: "requested";
@@ -5456,9 +5594,9 @@ export interface components {
             /**
              * Format: uuid
              * @description Minted by this API before the call was placed, and handed to the phone system as the SIP
-             *     Call-ID it places the call under. It names the call on the PHONE SYSTEM; this release
-             *     does not link it to anything on `/v1/pbx/call-records`, whose ids come from the CDR row
-             *     instead. A later release may expose the call id there so you can correlate.
+             *     Call-ID it places the call under. It names the call on the PHONE SYSTEM, and
+             *     `filter[call-id]` on `/v1/pbx/call-records` finds the records the call wrote — whose own
+             *     ids come from the CDR row instead.
              */
             id: string;
             attributes?: components["schemas"]["PbxCallAttributes"];
@@ -5762,6 +5900,8 @@ export interface components {
         PhoneNumberId: string;
         /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
         TenantId: string;
+        /** @description The customer's id. A customer that is not on your account is a 404. */
+        CustomerId: string;
         /** @description The PBX user's id. */
         PbxUserId: string;
         /** @description The device registration's id. */
@@ -11147,6 +11287,170 @@ export interface operations {
             };
         };
     };
+    listCustomers: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                /** @description One or more customer ids. */
+                "filter[id]"?: string[];
+                /**
+                 * @description The customer whose `code` is exactly this value.
+                 * @example jpz3k
+                 */
+                "filter[code]"?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of your customers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "customers",
+                     *           "id": "0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e",
+                     *           "attributes": {
+                     *             "name": "Acme Dental",
+                     *             "code": "jpz3k",
+                     *             "country": "US",
+                     *             "addressLines": [
+                     *               "233 S Wacker Dr"
+                     *             ],
+                     *             "city": "Chicago",
+                     *             "region": "IL",
+                     *             "postalCode": "60606",
+                     *             "timeZone": "America/Chicago",
+                     *             "dataResidencyCountry": "US",
+                     *             "regionPreference": "partner_default",
+                     *             "effectiveRegion": "use1",
+                     *             "pbx": true,
+                     *             "residential": false,
+                     *             "callLimit": 10,
+                     *             "callLimitExternal": 10,
+                     *             "transports": [
+                     *               "tls",
+                     *               "udp"
+                     *             ],
+                     *             "provisioningState": "active",
+                     *             "createdAt": "2026-09-01T12:00:00.000000Z",
+                     *             "updatedAt": "2026-09-01T12:05:00.000000Z"
+                     *           }
+                     *         }
+                     *       ],
+                     *       "meta": {
+                     *         "page": {
+                     *           "size": 25,
+                     *           "nextCursor": null,
+                     *           "total": 1
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["CustomerCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The customer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "customers",
+                     *         "id": "0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e",
+                     *         "attributes": {
+                     *           "name": "Acme Dental",
+                     *           "code": "jpz3k",
+                     *           "country": "US",
+                     *           "addressLines": [
+                     *             "233 S Wacker Dr"
+                     *           ],
+                     *           "city": "Chicago",
+                     *           "region": "IL",
+                     *           "postalCode": "60606",
+                     *           "timeZone": "America/Chicago",
+                     *           "dataResidencyCountry": "US",
+                     *           "regionPreference": "partner_default",
+                     *           "effectiveRegion": "use1",
+                     *           "pbx": false,
+                     *           "residential": null,
+                     *           "callLimit": null,
+                     *           "callLimitExternal": null,
+                     *           "transports": null,
+                     *           "provisioningState": null,
+                     *           "createdAt": "2026-09-01T12:00:00.000000Z",
+                     *           "updatedAt": "2026-09-01T12:00:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["CustomerDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     getTenant: {
         parameters: {
             query?: never;
@@ -11593,9 +11897,25 @@ export interface operations {
                 "filter[started-before]"?: string;
                 /** @description A word outside this list is refused with a 400, never answered with an empty page. */
                 "filter[direction]"?: components["schemas"]["CallDirection"];
-                "filter[disposition]"?: components["schemas"]["CallDisposition"];
                 /** @description Calls with this PBX **user id** on either leg — placed by them or taken by them. */
                 "filter[user]"?: string;
+                /**
+                 * @description The records of ONE click-to-dial call — the `id` that `POST /v1/pbx/users/{user}/calls`
+                 *     answered with.
+                 *
+                 *     **One call writes two records.** The phone system rings the user first and then dials
+                 *     out, and it records each leg once the call ends. It records the leg that rang the user as
+                 *     hidden, so this list answers the outbound leg alone; add `filter[include-hidden]=true` for
+                 *     both.
+                 *
+                 *     **The date range still applies.** Only the months in the range are searched — this month
+                 *     and last unless you send `filter[started-after]` or `filter[started-before]` — so look up
+                 *     an older call with a range that covers it.
+                 *
+                 *     An id that names no call answers an empty page, not an error.
+                 * @example 01a0a62e-bd9e-73a1-89ec-127a80d6dd4c
+                 */
+                "filter[call-id]"?: string;
                 /** @description `true` also returns records the phone system marks hidden. */
                 "filter[include-hidden]"?: boolean;
             };

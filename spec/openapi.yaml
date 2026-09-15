@@ -219,6 +219,18 @@ tags:
       `onboardingRequirements` carries the list, and every write on this surface is refused with a
       403 while it is non-empty.
 
+  - name: Customers
+    description: |
+      The businesses you sell to — one row per customer, carrying its service address, the country
+      its data is kept in, and whether it has a phone system.
+
+      **Reads only, here.** This reference lists customers and reads one. A customer's `id` is what
+      other resources ask for — `filter[customer]` on the PBX collections, for example.
+
+      **An account-wide credential only.** `customers:read` rides a credential issued for your whole
+      reseller account. A credential issued for one customer never holds it: that scope is dropped
+      from a customer credential when the token is minted.
+
   - name: SIP trunks
     description: |
       A customer's phone system connected to Telimatic over SIP — one object per trunk, carrying the
@@ -272,9 +284,8 @@ tags:
       **This is the one write on `/v1/pbx/`**, it needs its own scope (`pbx-calls:write`), and the
       read scopes do not imply it — the act has a cost and a caller ID attached. It answers **202**,
       never 201: the phone system takes the command onto its own bus and the call has not happened
-      yet, which is why `status` reports the REQUEST's state, not the call's. This release does not
-      link the call to its call record — find it on `/v1/pbx/call-records` by subscriber and time
-      instead.
+      yet, which is why `status` reports the REQUEST's state, not the call's. Once the call ends, find
+      its records by sending its `id` as `filter[call-id]` on `/v1/pbx/call-records`.
   - name: Call records
     description: |
       Your customers' call log.
@@ -5524,6 +5535,131 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDocument'
 
+  /v1/customers:
+    get:
+      tags: [Customers]
+      operationId: listCustomers
+      summary: List your customers
+      description: |
+        Every customer on your account, newest first. `filter[code]` finds one customer by its code.
+
+        This collection carries an exact `meta.page.total` on every page.
+      security:
+        - bearerAuth: [customers:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - $ref: '#/components/parameters/Sort'
+        - name: filter[id]
+          in: query
+          required: false
+          description: One or more customer ids.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+        - name: filter[code]
+          in: query
+          required: false
+          description: The customer whose `code` is exactly this value.
+          schema: { type: string }
+          example: jpz3k
+      responses:
+        '200':
+          description: A page of your customers.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/CustomerCollectionDocument'
+              example:
+                data:
+                  - type: customers
+                    id: 0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e
+                    attributes:
+                      name: Acme Dental
+                      code: jpz3k
+                      country: US
+                      addressLines: [233 S Wacker Dr]
+                      city: Chicago
+                      region: IL
+                      postalCode: '60606'
+                      timeZone: America/Chicago
+                      dataResidencyCountry: US
+                      regionPreference: partner_default
+                      effectiveRegion: use1
+                      pbx: true
+                      residential: false
+                      callLimit: 10
+                      callLimitExternal: 10
+                      transports: [tls, udp]
+                      provisioningState: active
+                      createdAt: '2026-09-01T12:00:00.000000Z'
+                      updatedAt: '2026-09-01T12:05:00.000000Z'
+                meta:
+                  page:
+                    size: 25
+                    nextCursor: null
+                    total: 1
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/customers/{customer}:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+    get:
+      tags: [Customers]
+      operationId: getCustomer
+      summary: Read one customer
+      description: |
+        A customer that is not on your account answers **404** — the same answer an id that names
+        nothing gives, never 403.
+      security:
+        - bearerAuth: [customers:read]
+      responses:
+        '200':
+          description: The customer.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/CustomerDocumentResponse'
+              example:
+                data:
+                  type: customers
+                  id: 0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e
+                  attributes:
+                    name: Acme Dental
+                    code: jpz3k
+                    country: US
+                    addressLines: [233 S Wacker Dr]
+                    city: Chicago
+                    region: IL
+                    postalCode: '60606'
+                    timeZone: America/Chicago
+                    dataResidencyCountry: US
+                    regionPreference: partner_default
+                    effectiveRegion: use1
+                    pbx: false
+                    residential: null
+                    callLimit: null
+                    callLimitExternal: null
+                    transports: null
+                    provisioningState: null
+                    createdAt: '2026-09-01T12:00:00.000000Z'
+                    updatedAt: '2026-09-01T12:00:00.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /v1/tenants/{tenant}:
     parameters:
       - $ref: '#/components/parameters/TenantId'
@@ -5762,10 +5898,11 @@ paths:
         here and handed to the phone system as the SIP Call-ID it places the call under. Nothing
         else about the call is knowable at this point, which is why `status` is always `requested`.
 
-        **This release does not link that id to the call record.** A call record's id is derived
-        from the phone system's own CDR row, and no call-record field carries the SIP call id, so
-        there is no join to make from this id today. A later release may expose the call id on call
-        records so you can correlate.
+        **Find the call's records with this id.** A call record's own id comes from the phone
+        system's CDR row, so the two ids differ: send this one as `filter[call-id]` on
+        `GET /v1/pbx/call-records` once the call ends. One call writes two records; the phone system
+        records the leg that rang the user as hidden, so the list answers the outbound leg alone
+        unless you add `filter[include-hidden]=true`.
 
         **`device` must belong to `{user}`.** A device id that names a registration owned by
         somebody else — including a user of the same name on another domain — is refused with a
@@ -5957,17 +6094,31 @@ paths:
           description: A word outside this list is refused with a 400, never answered with an empty page.
           schema:
             $ref: '#/components/schemas/CallDirection'
-        - name: filter[disposition]
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/CallDisposition'
         - name: filter[user]
           in: query
           required: false
           description: |
             Calls with this PBX **user id** on either leg — placed by them or taken by them.
           schema: { type: string, format: uuid }
+        - name: filter[call-id]
+          in: query
+          required: false
+          description: |
+            The records of ONE click-to-dial call — the `id` that `POST /v1/pbx/users/{user}/calls`
+            answered with.
+
+            **One call writes two records.** The phone system rings the user first and then dials
+            out, and it records each leg once the call ends. It records the leg that rang the user as
+            hidden, so this list answers the outbound leg alone; add `filter[include-hidden]=true` for
+            both.
+
+            **The date range still applies.** Only the months in the range are searched — this month
+            and last unless you send `filter[started-after]` or `filter[started-before]` — so look up
+            an older call with a range that covers it.
+
+            An id that names no call answers an empty page, not an error.
+          schema: { type: string, format: uuid }
+          example: 01a0a62e-bd9e-73a1-89ec-127a80d6dd4c
         - name: filter[include-hidden]
           in: query
           required: false
@@ -6599,6 +6750,12 @@ components:
       required: true
       description: The tenant's id. Only the credential's own tenant resolves; any other id is a 404.
       schema: { type: string, format: uuid }
+    CustomerId:
+      name: customer
+      in: path
+      required: true
+      description: The customer's id. A customer that is not on your account is a 404.
+      schema: { type: string, format: uuid }
     PbxUserId:
       name: user
       in: path
@@ -6927,8 +7084,8 @@ components:
           description: |
             The exact number of rows the collection holds under the filters applied, repeated on
             every page of the walk. Present on SOME collections only, so read it as optional: of the
-            collections documented here `fax-accounts`, `fax-account-users` and `webhook-endpoints`
-            publish it, and `faxes` and `webhook-deliveries` never do. Counting a table that only
+            collections documented here `customers`, `fax-accounts`, `fax-account-users` and
+            `webhook-endpoints` publish it, and `faxes` and `webhook-deliveries` never do. Counting a table that only
             grows costs more with every row, which is the price a cursor walk exists to not pay.
       additionalProperties: true
     DocumentMeta:
@@ -9699,6 +9856,119 @@ components:
               format: email
               description: The address the mail went to, echoed back.
 
+    # -- customers (the reads; console ADR-0023's pattern resource) --------------------------------
+    CustomerRegionPreference:
+      type: string
+      description: |
+        The primary region chosen for this customer. `partner_default` follows your account's default
+        region, so changing that default moves every customer that chose it; `use1` and `usw1` pin
+        the customer to one region.
+      enum: [partner_default, use1, usw1]
+    CustomerTransport:
+      type: string
+      description: A SIP transport this customer's phone system offers.
+      enum: [udp, tcp, tls]
+    CustomerAttributes:
+      type: object
+      properties:
+        name: { type: string, maxLength: 255 }
+        code:
+          type: [string, 'null']
+          description: |
+            The short code the platform assigns a customer: five characters, lowercase letters and
+            digits. It never changes.
+          example: jpz3k
+        country:
+          type: [string, 'null']
+          description: The service address's country, ISO 3166-1 alpha-2.
+          example: US
+        addressLines:
+          type: array
+          items: { type: string }
+          description: The service address's street lines, as the address was validated.
+        city: { type: [string, 'null'] }
+        region: { type: [string, 'null'], description: 'The state or province.' }
+        postalCode: { type: [string, 'null'] }
+        timeZone:
+          type: [string, 'null']
+          description: An IANA time zone name.
+          example: America/Chicago
+        dataResidencyCountry:
+          type: string
+          description: |
+            The country this customer's data is kept in, ISO 3166-1 alpha-2. Set when the customer
+            is created, and never changed.
+          example: US
+        regionPreference:
+          $ref: '#/components/schemas/CustomerRegionPreference'
+        effectiveRegion:
+          type: string
+          description: |
+            The region `regionPreference` resolves to now. For `partner_default` that is your
+            account's current default.
+          example: use1
+        pbx:
+          type: boolean
+          description: Whether this customer has a phone system. The five fields after this one are null when it does not.
+        residential:
+          type: [boolean, 'null']
+          description: The phone system's residential setting.
+        callLimit:
+          type: [integer, 'null']
+          description: The most calls the phone system allows at once.
+        callLimitExternal:
+          type: [integer, 'null']
+          description: The most external calls the phone system allows at once.
+        transports:
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/CustomerTransport'
+          description: |
+            The SIP transports the phone system offers. The ORDER is data: it is the order the
+            transports are offered in DNS, first preferred.
+          example: [tls, udp]
+        provisioningState:
+          description: Where building the phone system on the switch stands.
+          oneOf:
+            - $ref: '#/components/schemas/ProvisioningState'
+            - type: 'null'
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    CustomerResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [customers] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/CustomerAttributes'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    CustomerDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/CustomerResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    CustomerCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CustomerResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+
     # -- tenants (the credential's own view of itself, ADR-0029) -----------------------------------
     TenantStatus:
       type: string
@@ -10415,9 +10685,8 @@ components:
           enum: [requested]
           description: |
             Always `requested` from this endpoint: it is the REQUEST's state, not the call's, because
-            the phone system has taken the command and nothing about the call is knowable yet. This
-            release does not link the call to its call record; find it on `/v1/pbx/call-records` by
-            subscriber and time instead.
+            the phone system has taken the command and nothing about the call is knowable yet. Find
+            the call's records with `filter[call-id]` on `/v1/pbx/call-records`.
         requested-at: { type: string, format: date-time }
     PbxCallResource:
       type: object
@@ -10429,9 +10698,9 @@ components:
           format: uuid
           description: |
             Minted by this API before the call was placed, and handed to the phone system as the SIP
-            Call-ID it places the call under. It names the call on the PHONE SYSTEM; this release
-            does not link it to anything on `/v1/pbx/call-records`, whose ids come from the CDR row
-            instead. A later release may expose the call id there so you can correlate.
+            Call-ID it places the call under. It names the call on the PHONE SYSTEM, and
+            `filter[call-id]` on `/v1/pbx/call-records` finds the records the call wrote — whose own
+            ids come from the CDR row instead.
         attributes:
           $ref: '#/components/schemas/PbxCallAttributes'
     PbxCallDocumentResponse:
