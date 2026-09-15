@@ -356,6 +356,13 @@ the record of what that scope was told, so a different scope is a new
 endpoint. A `fax:write` token may only say `fax_account`; naming a `customer`
 or `tenant` scope with it is a 422.
 
+`events` is required, and it must name at least one type. **There is no
+spelling that means *every event in scope*:** `null` and `[]` are each a 422,
+and the option type is a non-empty array, so an empty list is a compile error
+before it is a round trip. Name the events you handle — `update()` below is how
+you add more. An event name the platform does not publish is a 422 too, so a
+typo cannot subscribe you to silence.
+
 The URL must be `https` on a public host. A hostname that does not resolve yet
 is accepted on purpose, so you can register before you publish DNS.
 
@@ -372,12 +379,9 @@ await client.webhookEndpoints.update(endpoint.id, {
 ```
 
 **The list REPLACES the old one**, so name every event you want, not only the
-new ones. `null` or `[]` mean *every event in scope* — which is also the
-simplest way to stop maintaining the list at all:
-
-```ts
-await client.webhookEndpoints.update(endpoint.id, { events: null }); // everything
-```
+new ones. It must still name at least one — `null` and `[]` are each a 422 here
+too, because a PATCH that could empty the list would reach, one request later,
+the every-event state a registration refuses.
 
 `update()` is a sparse PATCH, like `faxAccounts.update()`: it sends only the
 members you pass, so changing the events leaves the URL and the switch exactly
@@ -574,8 +578,8 @@ decision and not a library's.
 | `client.faxAccountUsers.delete(faxAccountUserId)` | `fax-accounts:write` | Withdraw a grant. Nothing else changes. |
 | `client.webhookEndpoints.list({ scopeType?, scopeId?, active?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookEndpointPage`: `endpoints` plus `nextCursor`. `fax:read` sees fax-account scopes only. |
 | `client.webhookEndpoints.get(webhookEndpointId)` | `webhooks:read` | One `WebhookEndpoint`. Its `secret` is always `null` here. |
-| `client.webhookEndpoints.create({ url, scopeType, scopeId, events?, active? })` | `webhooks:write` | Register one. **The only response carrying the secret.** `fax:write` may register a `fax_account` scope only. |
-| `client.webhookEndpoints.update(webhookEndpointId, { url?, events?, active? })` | `webhooks:write` | A sparse PATCH: only what you pass. The event list replaces the old one. |
+| `client.webhookEndpoints.create({ url, scopeType, scopeId, events, active? })` | `webhooks:write` | Register one. **The only response carrying the secret.** `events` names at least one type. `fax:write` may register a `fax_account` scope only. |
+| `client.webhookEndpoints.update(webhookEndpointId, { url?, events?, active? })` | `webhooks:write` | A sparse PATCH: only what you pass. The event list replaces the old one and must name at least one type. |
 | `client.webhookEndpoints.delete(webhookEndpointId)` | `webhooks:write` | Remove it. The fan-out stops; the deliveries survive. |
 | `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |

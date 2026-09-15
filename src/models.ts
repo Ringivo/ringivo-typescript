@@ -500,10 +500,11 @@ export function faxPageFromDocument(document: RawJson): FaxPage {
  * the platform keeps no readable copy, so that null is an honest statement
  * and not a missing field. Store it when you first see it.
  *
- * `events` is the list the endpoint asked for, published back verbatim.
- * **`null` means every event in scope** — and so does an empty list, which
- * the platform keeps as `[]` rather than normalising, so a caller who sent
- * one can tell their write was understood.
+ * `events` is the list the endpoint asked for, published back verbatim, and it
+ * names at least one type: the platform requires a non-empty list on
+ * registration and on every change. **`null` here is a response that carried
+ * no list** — a sparse fieldset, say — rather than an endpoint that hears
+ * about everything, which is what it used to mean.
  *
  * `secretPreviousExpiresAt` is the deadline of a rotation's 24-hour grace
  * window: until then the PREVIOUS secret still signs, and a delivery carries
