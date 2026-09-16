@@ -6407,6 +6407,13 @@ export interface operations {
                 "filter[tag]"?: {
                     [key: string]: string;
                 };
+                /**
+                 * @description One or more fax ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -7107,6 +7114,13 @@ export interface operations {
                 /** @description Only the accounts of this customer. */
                 "filter[customer]"?: string;
                 "filter[status]"?: components["schemas"]["FaxAccountStatus"];
+                /**
+                 * @description One or more fax account ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -7464,6 +7478,13 @@ export interface operations {
                 sort?: components["parameters"]["Sort"];
                 "filter[fax_account]"?: string;
                 "filter[user]"?: string;
+                /**
+                 * @description One or more grant ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -7667,6 +7688,13 @@ export interface operations {
                  *     already narrowed to one reseller, so such a filter could only name your own id.
                  */
                 "filter[region]"?: "use1" | "usw1";
+                /**
+                 * @description One or more trunk ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -8146,6 +8174,13 @@ export interface operations {
                 sort?: components["parameters"]["Sort"];
                 /** @description Only the addresses of this trunk. */
                 "filter[sipTrunk]"?: string;
+                /**
+                 * @description One or more address ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -8387,6 +8422,13 @@ export interface operations {
                 /** @description Only the destinations of this trunk. */
                 "filter[sipTrunk]"?: string;
                 "filter[enabled]"?: boolean;
+                /**
+                 * @description One or more destination ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -8637,6 +8679,13 @@ export interface operations {
                 "filter[scope_type]"?: components["schemas"]["WebhookScopeType"];
                 "filter[scope_id]"?: string;
                 "filter[active]"?: boolean;
+                /**
+                 * @description One or more endpoint ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -8980,6 +9029,13 @@ export interface operations {
                 "filter[endpoint]"?: string;
                 "filter[event_type]"?: components["schemas"]["WebhookEventType"];
                 "filter[status]"?: components["schemas"]["WebhookDeliveryStatus"];
+                /**
+                 * @description One or more delivery ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;

@@ -816,6 +816,17 @@ paths:
           schema:
             type: object
             additionalProperties: { type: string }
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more fax ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: A page of faxes.
@@ -1451,6 +1462,17 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/FaxAccountStatus'
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more fax account ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The fax accounts.
@@ -1733,6 +1755,17 @@ paths:
           in: query
           required: false
           schema: { type: string, format: uuid }
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more grant ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The grants.
@@ -1899,6 +1932,17 @@ paths:
             The trunk's primary region. There is deliberately no `filter[tenant]`: your credential is
             already narrowed to one reseller, so such a filter could only name your own id.
           schema: { type: string, enum: [use1, usw1] }
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more trunk ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The SIP trunks.
@@ -2285,6 +2329,17 @@ paths:
           required: false
           description: Only the addresses of this trunk.
           schema: { type: string, format: uuid }
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more address ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The allowed addresses.
@@ -2471,6 +2526,17 @@ paths:
           in: query
           required: false
           schema: { type: boolean }
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more destination ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The destinations.
@@ -2677,6 +2743,17 @@ paths:
           in: query
           required: false
           schema: { type: boolean }
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more endpoint ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The endpoints.
@@ -3043,6 +3120,17 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/WebhookDeliveryStatus'
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more delivery ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: A page of deliveries.
