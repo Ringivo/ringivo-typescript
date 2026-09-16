@@ -8010,8 +8010,35 @@ components:
           type: [string, 'null']
           maxLength: 64
           description: |
-            The header line printed across the top of every page. 64 characters is the fax
-            protocol's own column, not a product choice.
+            The header line printed across the top of every page. Superseded by `headerTemplate`,
+            and kept because it still applies wherever no template is set — so an integrator that
+            has never sent one keeps the header it configured.
+        headerTemplate:
+          type: [string, 'null']
+          maxLength: 120
+          description: |
+            The header stamped across the top of every page you send, with `{account_name}`,
+            `{from}`, `{to}`, `{date}` and `{time}` filled in per fax. It is the ONLY header a sent
+            page carries — the sending machine's own header line is switched off, because its format
+            is fixed and cannot be laid out.
+
+            Leave it null and you get `{date} {time} {account_name} {from}`, which is the order a fax
+            header has had for decades. `{account_name}` is your `headerText` if you have set one,
+            and your account's name otherwise, so a line always prints.
+
+            **`{date}` and `{time}` are when the pages were PREPARED, not when they were sent.** On a
+            first attempt those are seconds apart; if the fax is retried hours later the page still
+            shows the first time.
+
+            Plain ASCII only, up to 120 characters: a character a fax page cannot print is refused
+            here rather than dropped from every page without telling you.
+        headerTimezone:
+          type: [string, 'null']
+          maxLength: 64
+          description: |
+            An IANA timezone name, like `America/New_York`. It is the zone `{date}` and `{time}` are
+            printed in, so a recipient reads your local time rather than ours. Null uses ours.
+          example: America/New_York
         defaultFromE164:
           type: [string, 'null']
           description: |
@@ -8095,6 +8122,8 @@ components:
       properties:
         name: { type: string, maxLength: 128 }
         headerText: { type: [string, 'null'], maxLength: 64 }
+        headerTemplate: { type: [string, 'null'], maxLength: 120, pattern: '^[\x20-\x7E]*$' }
+        headerTimezone: { type: [string, 'null'], maxLength: 64, example: America/New_York }
         defaultFromE164: { type: [string, 'null'] }
         retentionDays: { type: [integer, 'null'], minimum: 1, maximum: 36500 }
         retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
@@ -8108,6 +8137,8 @@ components:
       properties:
         name: { type: string, maxLength: 128 }
         headerText: { type: [string, 'null'], maxLength: 64 }
+        headerTemplate: { type: [string, 'null'], maxLength: 120, pattern: '^[\x20-\x7E]*$' }
+        headerTimezone: { type: [string, 'null'], maxLength: 64, example: America/New_York }
         defaultFromE164: { type: [string, 'null'] }
         retentionDays: { type: [integer, 'null'], minimum: 1, maximum: 36500 }
         retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }

@@ -3409,10 +3409,35 @@ export interface components {
         FaxAccountAttributes: {
             name?: string;
             /**
-             * @description The header line printed across the top of every page. 64 characters is the fax
-             *     protocol's own column, not a product choice.
+             * @description The header line printed across the top of every page. Superseded by `headerTemplate`,
+             *     and kept because it still applies wherever no template is set — so an integrator that
+             *     has never sent one keeps the header it configured.
              */
             headerText?: string | null;
+            /**
+             * @description The header stamped across the top of every page you send, with `{account_name}`,
+             *     `{from}`, `{to}`, `{date}` and `{time}` filled in per fax. It is the ONLY header a sent
+             *     page carries — the sending machine's own header line is switched off, because its format
+             *     is fixed and cannot be laid out.
+             *
+             *     Leave it null and you get `{date} {time} {account_name} {from}`, which is the order a fax
+             *     header has had for decades. `{account_name}` is your `headerText` if you have set one,
+             *     and your account's name otherwise, so a line always prints.
+             *
+             *     **`{date}` and `{time}` are when the pages were PREPARED, not when they were sent.** On a
+             *     first attempt those are seconds apart; if the fax is retried hours later the page still
+             *     shows the first time.
+             *
+             *     Plain ASCII only, up to 120 characters: a character a fax page cannot print is refused
+             *     here rather than dropped from every page without telling you.
+             */
+            headerTemplate?: string | null;
+            /**
+             * @description An IANA timezone name, like `America/New_York`. It is the zone `{date}` and `{time}` are
+             *     printed in, so a recipient reads your local time rather than ours. Null uses ours.
+             * @example America/New_York
+             */
+            headerTimezone?: string | null;
             /**
              * @description The caller ID a send falls back to. May be set before the number is routed — whether the
              *     account holds it is asked at the send.
@@ -3472,6 +3497,9 @@ export interface components {
         FaxAccountWritableAttributes: {
             name?: string;
             headerText?: string | null;
+            headerTemplate?: string | null;
+            /** @example America/New_York */
+            headerTimezone?: string | null;
             defaultFromE164?: string | null;
             retentionDays?: number | null;
             retentionPages?: number | null;
@@ -3480,6 +3508,9 @@ export interface components {
         FaxAccountCreateAttributes: {
             name: string;
             headerText?: string | null;
+            headerTemplate?: string | null;
+            /** @example America/New_York */
+            headerTimezone?: string | null;
             defaultFromE164?: string | null;
             retentionDays?: number | null;
             retentionPages?: number | null;
