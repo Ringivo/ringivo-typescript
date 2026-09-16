@@ -3304,10 +3304,14 @@ paths:
           required: false
           schema:
             $ref: '#/components/schemas/ProvisioningState'
-        - name: filter[id]
+        - name: filter[id][]
           in: query
           required: false
-          description: One or more device ids.
+          description: |
+            One or more device ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
           schema:
             type: array
             items: { type: string, format: uuid }
@@ -3625,10 +3629,14 @@ paths:
             one of yours matches nothing — it is never an error, because an empty list is the
             truthful answer to "requests for a number you do not have".
           schema: { type: string, format: uuid }
-        - name: filter[id]
+        - name: filter[id][]
           in: query
           required: false
-          description: One or more request ids.
+          description: |
+            One or more request ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
           schema:
             type: array
             items: { type: string, format: uuid }
@@ -3857,10 +3865,14 @@ paths:
           required: false
           description: Messages received at or before this instant. Both ends are inclusive.
           schema: { type: string, format: date-time }
-        - name: filter[id]
+        - name: filter[id][]
           in: query
           required: false
-          description: One or more message ids.
+          description: |
+            One or more message ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
           schema:
             type: array
             items: { type: string, format: uuid }
@@ -4359,10 +4371,14 @@ paths:
           description: One number in E.164, including orders for a number you have since disconnected.
           schema: { type: string }
           example: '+13215550101'
-        - name: filter[id]
+        - name: filter[id][]
           in: query
           required: false
-          description: One or more order ids.
+          description: |
+            One or more order ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
           schema:
             type: array
             items: { type: string, format: uuid }
@@ -4560,10 +4576,14 @@ paths:
           description: Only the orders standing in this state.
           schema:
             $ref: '#/components/schemas/PortOrderStatus'
-        - name: filter[id]
+        - name: filter[id][]
           in: query
           required: false
-          description: One or more order ids.
+          description: |
+            One or more order ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
           schema:
             type: array
             items: { type: string, format: uuid }
@@ -5551,10 +5571,14 @@ paths:
         - $ref: '#/components/parameters/PageAfter'
         - $ref: '#/components/parameters/PageBefore'
         - $ref: '#/components/parameters/Sort'
-        - name: filter[id]
+        - name: filter[id][]
           in: query
           required: false
-          description: One or more customer ids.
+          description: |
+            One or more customer ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
           schema:
             type: array
             items: { type: string, format: uuid }
@@ -6862,9 +6886,10 @@ components:
     BadQuery:
       description: |
         A query parameter was not one this collection accepts — an unknown filter value, a
-        `page[size]` past the ceiling, a `filter[tag]` with no tag name. Refused rather than
-        ignored, because a filter that silently did nothing would answer 200 with the WHOLE
-        collection to a caller who believes they narrowed it.
+        `page[size]` past the ceiling, a `filter[tag]` with no tag name, or a list-valued filter
+        sent without its brackets (`filter[id]=<id>` instead of `filter[id][]=<id>`). Refused
+        rather than ignored, because a filter that silently did nothing would answer 200 with the
+        WHOLE collection to a caller who believes they narrowed it.
       content:
         application/vnd.api+json:
           schema:

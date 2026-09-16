@@ -5831,9 +5831,10 @@ export interface components {
         };
         /**
          * @description A query parameter was not one this collection accepts — an unknown filter value, a
-         *     `page[size]` past the ceiling, a `filter[tag]` with no tag name. Refused rather than
-         *     ignored, because a filter that silently did nothing would answer 200 with the WHOLE
-         *     collection to a caller who believes they narrowed it.
+         *     `page[size]` past the ceiling, a `filter[tag]` with no tag name, or a list-valued filter
+         *     sent without its brackets (`filter[id]=<id>` instead of `filter[id][]=<id>`). Refused
+         *     rather than ignored, because a filter that silently did nothing would answer 200 with the
+         *     WHOLE collection to a caller who believes they narrowed it.
          */
         BadQuery: {
             headers: {
@@ -8993,8 +8994,13 @@ export interface operations {
                 /** @description Only the devices assigned to this customer. */
                 "filter[customer]"?: string;
                 "filter[state]"?: components["schemas"]["ProvisioningState"];
-                /** @description One or more device ids. */
-                "filter[id]"?: string[];
+                /**
+                 * @description One or more device ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -9345,8 +9351,13 @@ export interface operations {
                  *     truthful answer to "requests for a number you do not have".
                  */
                 "filter[phoneNumber]"?: string;
-                /** @description One or more request ids. */
-                "filter[id]"?: string[];
+                /**
+                 * @description One or more request ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -9587,8 +9598,13 @@ export interface operations {
                 "filter[receivedAfter]"?: string;
                 /** @description Messages received at or before this instant. Both ends are inclusive. */
                 "filter[receivedBefore]"?: string;
-                /** @description One or more message ids. */
-                "filter[id]"?: string[];
+                /**
+                 * @description One or more message ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -10150,8 +10166,13 @@ export interface operations {
                  * @example +13215550101
                  */
                 "filter[e164]"?: string;
-                /** @description One or more order ids. */
-                "filter[id]"?: string[];
+                /**
+                 * @description One or more order ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -10354,8 +10375,13 @@ export interface operations {
                 sort?: components["parameters"]["Sort"];
                 /** @description Only the orders standing in this state. */
                 "filter[status]"?: components["schemas"]["PortOrderStatus"];
-                /** @description One or more order ids. */
-                "filter[id]"?: string[];
+                /**
+                 * @description One or more order ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path?: never;
@@ -11321,8 +11347,13 @@ export interface operations {
                  * @example -createdAt
                  */
                 sort?: components["parameters"]["Sort"];
-                /** @description One or more customer ids. */
-                "filter[id]"?: string[];
+                /**
+                 * @description One or more customer ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
                 /**
                  * @description The customer whose `code` is exactly this value.
                  * @example jpz3k
