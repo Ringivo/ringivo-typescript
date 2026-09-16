@@ -2676,6 +2676,67 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "pbx_change.confirmed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A change you made to the phone system is now in place
+         * @description The phone system applies a change asynchronously: our write is accepted immediately and the
+         *     changed row reaches us a short time later. This fires at the second moment — when the change
+         *     was actually seen in place.
+         *
+         *     **Field NAMES only, never the values.** `fields` says which columns the change touched; the
+         *     values are your subscriber's own details and stay behind your credential.
+         *
+         *     **Scope: `tenant` only.** A change is recorded against the switch row it targets, which is
+         *     reached by a phone-system key rather than through a customer of yours.
+         *
+         *     A change that was reported stalled and then landed sends `pbx_change.stalled` FIRST and this
+         *     second, for the same `intent_id`. A no-op save — one that asked for values the system already
+         *     held — sends nothing at all.
+         */
+        post: operations["onPbxChangeConfirmed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "pbx_change.stalled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A change you made has not shown up yet
+         * @description **This is not a failure.** A change that has not appeared within the platform's watch window
+         *     is reported here so you are not left guessing, but it very often lands a moment later — in
+         *     which case `pbx_change.confirmed` follows for the same `intent_id`. Treat this as "not yet"
+         *     rather than "did not work", and do not re-send the change on it.
+         *
+         *     The window is an operator-tuned number, not a property of your change, so the same change may
+         *     stall one day and not the next.
+         *
+         *     **Field NAMES only, never the values**, and **scope: `tenant` only** — both exactly as
+         *     `pbx_change.confirmed`.
+         */
+        post: operations["onPbxChangeStalled"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface components {
     schemas: {
@@ -2954,7 +3015,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -3919,6 +3980,51 @@ export interface components {
         };
         PortOrderBillExtractionSettledEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["PortOrderBillExtractionSettledEventData"];
+        };
+        /**
+         * @description Which change, against which row, and WHICH FIELDS it touched — never the values. A change
+         *     intent's requested values are your own subscriber's details (caller IDs, e-mail addresses),
+         *     and this body crosses the public internet, so the event is a nudge and the values stay
+         *     behind your credential. Read the object back when you want them.
+         *
+         *     One shape for both `pbx_change.confirmed` and `pbx_change.stalled`: the difference is the
+         *     `type`, not the data.
+         */
+        PbxChangeEventData: {
+            /** Format: uuid */
+            intent_id?: string;
+            /** Format: uuid */
+            tenant_id?: string;
+            /**
+             * Format: uuid
+             * @description The deterministic id of the phone-system row the change was aimed at. Stable, and the
+             *     same id the platform's own read models use for that row.
+             */
+            target_id?: string;
+            /**
+             * @description The phone-system table the row lives in, e.g. `sipbxdomain_subscriber_config`.
+             * @example sipbxdomain_subscriber_config
+             */
+            table?: string;
+            /**
+             * @description The column names the change touched. Names only.
+             * @example [
+             *       "firstname",
+             *       "lastname"
+             *     ]
+             */
+            fields?: string[];
+            /**
+             * Format: date-time
+             * @description When the change was accepted by the phone system, which is when the wait began.
+             */
+            submitted_at?: string;
+        };
+        PbxChangeConfirmedEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["PbxChangeEventData"];
+        };
+        PbxChangeStalledEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["PbxChangeEventData"];
         };
         NumberLookupRequest: {
             /**
@@ -12565,6 +12671,85 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["PortOrderStatusChangedEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onPbxChangeConfirmed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e60",
+                 *       "type": "pbx_change.confirmed",
+                 *       "occurred_at": "2026-09-16T01:20:44+00:00",
+                 *       "data": {
+                 *         "intent_id": "0198c4a1-9203-74c5-a6d7-819203142537",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "target_id": "0198c4a1-7731-5a2e-9c44-2b1908f6d3e1",
+                 *         "table": "sipbxdomain_subscriber_config",
+                 *         "fields": [
+                 *           "firstname",
+                 *           "lastname"
+                 *         ],
+                 *         "submitted_at": "2026-09-16T01:20:14+00:00"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["PbxChangeConfirmedEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onPbxChangeStalled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e61",
+                 *       "type": "pbx_change.stalled",
+                 *       "occurred_at": "2026-09-16T01:20:44+00:00",
+                 *       "data": {
+                 *         "intent_id": "0198c4a1-9203-74c5-a6d7-819203142538",
+                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "target_id": "0198c4a1-7731-5a2e-9c44-2b1908f6d3e1",
+                 *         "table": "sipbxdomain_domains_config",
+                 *         "fields": [
+                 *           "description"
+                 *         ],
+                 *         "submitted_at": "2026-09-16T01:20:14+00:00"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["PbxChangeStalledEvent"];
             };
         };
         responses: {
