@@ -3,12 +3,17 @@
  *
  * Two reads. `list()`'s whole job is a query string and `get()`'s is the
  * object built from the answer, and neither is observable from a return
- * value alone. Three things here are worth more than the usual round trip:
+ * value alone. Four things here are worth more than the usual round trip:
  *
- * - **The list sends only what this release exposes.** `code` and the three
- *   paging members. The spec also documents `sort` and `filter[id]`; neither
- *   is an option here, and the query is asserted key for key so a member
- *   that slipped onto the wire would fail rather than pass unnoticed.
+ * - **The list sends only what this release exposes.** `ids`, `code` and the
+ *   three paging members. The spec also documents `sort`, which is not an
+ *   option here, and the query is asserted key for key so a member that
+ *   slipped onto the wire would fail rather than pass unnoticed.
+ * - **`ids` goes out as a REPEATED bracketed parameter.** The server reads a
+ *   list only from `filter[id][]=a&filter[id][]=b`. A comma-joined value and
+ *   the bare `filter[id]` are both refused, so the RAW query string is what
+ *   these tests assert: the parsed view hides the difference between the
+ *   three, and the difference is the whole point.
  * - **A customer with no phone system reads null on the five PBX fields.**
  *   `pbx: false` is the answer; `residential`, `callLimit`,
  *   `callLimitExternal`, `transports` and `provisioningState` are null,
@@ -27,6 +32,7 @@ const TOKEN_URL = `${BASE_URL}/oauth/token`;
 const CUSTOMERS_URL = `${BASE_URL}/v1/customers`;
 const CUSTOMER_ID = "0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e";
 const CUSTOMER_URL = `${CUSTOMERS_URL}/${CUSTOMER_ID}`;
+const SECOND_CUSTOMER_ID = "0198c4a1-9b21-7e4f-8a32-5b6c7d8e9f01";
 const JSONAPI = "application/vnd.api+json";
 
 const server = mockServer();
@@ -95,10 +101,78 @@ describe("list", () => {
     expect(params.get("filter[code]")).toBe("jpz3k");
     expect(params.get("page[size]")).toBe("50");
     expect(params.get("page[after]")).toBe("0198c4a1-cursor");
+    // A call that named no ids sends NO id parameter — not an empty one.
+    expect(params.has("filter[id][]")).toBe(false);
     // Key for key: an unset member is absent, not empty, and nothing this
     // release does not expose reaches the wire.
     expect([...params.keys()].sort()).toEqual(["filter[code]", "page[after]", "page[size]"]);
     expect(calls.last.request.headers.get("Accept")).toBe(JSONAPI);
+  });
+
+  it("sends one id as exactly one filter[id][] pair", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(CUSTOMERS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().customers.list({ ids: [CUSTOMER_ID] });
+
+    // The RAW query, not the parsed one. A parsed view reads
+    // `filter[id]=<id>` and `filter[id][]=<id>` as different keys but shows
+    // neither spelling, and the server accepts only the second.
+    expect(calls.last.url.search).toBe(`?filter[id][]=${CUSTOMER_ID}`);
+  });
+
+  it("sends two ids as two filter[id][] pairs, in the order given", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(CUSTOMERS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().customers.list({ ids: [CUSTOMER_ID, SECOND_CUSTOMER_ID] });
+
+    const { url } = calls.last;
+
+    expect(url.search).toBe(
+      `?filter[id][]=${CUSTOMER_ID}&filter[id][]=${SECOND_CUSTOMER_ID}`,
+    );
+    expect(url.searchParams.getAll("filter[id][]")).toEqual([
+      CUSTOMER_ID,
+      SECOND_CUSTOMER_ID,
+    ]);
+    // NOT comma-joined. The server reads `filter[id][]=a,b` as one id
+    // spelled "a,b", which matches nothing — and a comma inside a value is
+    // percent-encoded, so neither spelling of it may appear.
+    expect(url.search).not.toContain(",");
+    expect(url.search).not.toContain("%2C");
+    // NOT the bare key. `filter[id]=a&filter[id]=b` reaches the server as
+    // the single string "b", which its own filter then refuses with a 400.
+    expect(url.searchParams.has("filter[id]")).toBe(false);
+  });
+
+  it("sends no id parameter at all for an empty list", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(CUSTOMERS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().customers.list({ ids: [] });
+
+    // An empty list narrows nothing, so it is the same as naming none — an
+    // empty `filter[id][]=` would instead ask for the customer whose id is
+    // the empty string. The DENOMINATOR: the call happened.
+    expect(calls.count).toBe(1);
+    expect(calls.last.url.search).toBe("");
+    expect([...calls.last.url.searchParams.keys()]).toEqual([]);
   });
 
   it("walks backward from a cursor", async () => {

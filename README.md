@@ -532,6 +532,16 @@ if (clinic) {
 code for a customer: five lowercase letters and digits that never change, so
 it finds one customer or none.
 
+`ids` reads several customers by id in one request — the ids `list()` and
+`get()` hand back — instead of one round trip each. It combines with `code`,
+which narrows the same page further, and an empty list narrows nothing:
+
+```ts
+const page = await client.customers.list({
+  ids: ["0198c4a1-4d5e-7f60-a172-3c4d5e6f7081", "0198c4a1-9b21-7e4f-8a32-5b6c7d8e9f01"],
+});
+```
+
 **An account-wide credential only.** `customers:read` rides a credential
 issued for your whole account. A credential issued for one customer never
 holds it: the scope is dropped when the token is minted.
@@ -801,7 +811,7 @@ decision and not a library's.
 | `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
-| `client.customers.list({ code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `code` finds one customer. |
+| `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `ids` reads several customers by id in one request; `code` finds one customer. |
 | `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
 | `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, user?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `callId` finds what a click-to-dial became. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |

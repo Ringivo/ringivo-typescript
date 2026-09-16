@@ -18,16 +18,27 @@
  * and their response bodies at compile time.
  *
  * -- WHAT THE SPEC DOCUMENTS AND THIS RELEASE DOES NOT EXPOSE ----------------
- * `sort` and `filter[id]` are not options here.
+ * `sort` is not an option here, because no other list in this package takes
+ * one: the lists are newest first and walked by cursor, and this one is the
+ * same.
  *
- * `sort`, because no other list in this package takes one: the lists are
- * newest first and walked by cursor, and this one is the same.
+ * -- WHY `ids` NEEDS NO SERIALISER OF ITS OWN -------------------------------
+ * 0.8.0 left the id filter out: the spec named the parameter `filter[id]`
+ * and declared it a plain array, and sending the form the server actually
+ * reads would have taken a serialiser contradicting the vendored spec. The
+ * spec now names it `filter[id][]`, brackets and all, so the two agree and
+ * the filter is a plain option.
  *
- * `filter[id]`, because the spec declares it a plain array, which serialises
- * as a repeated `filter[id]=a&filter[id]=b` — while the server reads a list
- * only from `filter[id][]=a&filter[id][]=b`. Sending the form the server reads
- * would take a serialiser that contradicts the vendored spec. Adding it once
- * the two agree is additive; until then `client.request()` reaches it.
+ * The brackets are not decoration. The server reads a list only from the
+ * repeated `filter[id][]=a&filter[id][]=b`; it reads `filter[id]=a&filter[id]=b`
+ * as the single string "b", which its own filter then refuses with a 400.
+ *
+ * Nothing here builds that by hand. `openapi-fetch` writes one `name=value`
+ * pair per array element and leaves the name's own brackets unescaped, which
+ * is already the form the server reads, and it drops an EMPTY array before
+ * the query is built, so `ids: []` sends no parameter rather than an empty
+ * one. customers.test.ts asserts all of that against the RAW query string
+ * rather than trusting any of it.
  */
 import type { Ringivo } from "./client.js";
 import { transportOf } from "./client.js";
@@ -42,6 +53,13 @@ import {
 
 /** What `customers.list()` accepts. Every member narrows the collection. */
 export interface ListCustomersOptions {
+  /**
+   * Several customers by id in one request — the ids `list()` and `get()`
+   * hand back. Combines with `code`, which narrows the same page further.
+   * An empty list asks for nothing and narrows nothing, exactly as leaving
+   * this out does.
+   */
+  ids?: string[];
   /**
    * The customer whose `code` is exactly this value — the five-character
    * code the platform assigns, which never changes. So this finds one
@@ -69,8 +87,9 @@ export class Customers {
   /**
    * One page of your customers, newest first.
    *
-   * `code` finds one customer by its code. A customer's `id` is what the
-   * other resources take as `customer` — `client.pbx.callRecords.list()`
+   * `ids` reads several customers by id in one request, and combines with
+   * `code`. `code` finds one customer by its code. A customer's `id` is what
+   * the other resources take as `customer` — `client.pbx.callRecords.list()`
    * among them.
    *
    * Needs `customers:read`, which only an account-wide credential holds.
@@ -82,6 +101,7 @@ export class Customers {
           "page[after]": options.after,
           "page[before]": options.before,
           "page[size]": options.pageSize,
+          "filter[id][]": options.ids,
           "filter[code]": options.code,
         },
       },
