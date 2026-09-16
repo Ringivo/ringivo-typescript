@@ -2802,6 +2802,58 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "call-transcript.available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A written transcript of a call is ready to read
+         * @description Fired when we have transcribed the recording of a call. It is a separate moment from
+         *     `call-recording.available` and always later: the audio has to exist before it can be
+         *     transcribed, and the transcription itself takes a little while. Subscribing to one does not
+         *     subscribe you to the other.
+         *
+         *     **The words are not in this body, and never will be.** No transcript, no excerpt, no
+         *     summary. A webhook body travels to you over the public internet and is kept in your logs at
+         *     whatever retention you keep — and the words of somebody's telephone call are not something
+         *     either of us should leave there. The read endpoint that serves the text is not published
+         *     yet; it arrives in a later release, and it is where authorization will run and where the
+         *     access will be recorded. Until then this event tells you a transcript exists.
+         *
+         *     **Not every recording gets one.** Which calls are transcribed automatically is the phone
+         *     system's own setting, not ours, and a recording we could not transcribe produces no event
+         *     at all rather than an empty one. So treat the absence of this event as "no transcript",
+         *     never as "not yet".
+         *
+         *     **`duration_seconds` is the audio's length as the transcription measured it**, which can
+         *     differ by a second or so from the same figure on `call-recording.available` — they are two
+         *     measurements of one file, not one number reported twice.
+         *
+         *     **You are told once.** A transcript is written once per recording and never updated, so
+         *     there is no superseding event here as there is for recordings. If one does reach you twice,
+         *     both copies carry the same `event_id` — for this event the id is derived from the transcript
+         *     and its text rather than minted per send. Dedupe on it, as the envelope says.
+         *
+         *     **Scope: `tenant` and `customer`, never `fax_account`** — and always the same pair the
+         *     recording carried, because a transcript's owner is its recording's owner. `data.customer_id`
+         *     is null for a call on a domain we cannot resolve to one of your customers, and only your
+         *     tenant-scoped endpoints are called for it.
+         *
+         *     `occurred_at` is the moment the transcript became available to us, and never the moment we
+         *     reached you.
+         */
+        post: operations["onCallTranscriptAvailable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "pbx_change.confirmed": {
         parameters: {
             query?: never;
@@ -3141,7 +3193,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call-recording.available";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call-recording.available" | "call-transcript.available";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -4194,6 +4246,56 @@ export interface components {
         };
         CallRecordingAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["CallRecordingAvailableEventData"];
+        };
+        /**
+         * @description WHICH call was transcribed — and deliberately not a word of what was said. The read endpoint
+         *     that serves the text is not published yet; it arrives in a later release.
+         */
+        CallTranscriptAvailableEventData: {
+            /**
+             * Format: uuid
+             * @description The transcript's id. It is the recording's id — a transcript is keyed by the recording it
+             *     is of — so it is the same id in every region and never changes.
+             */
+            id?: string;
+            /**
+             * Format: uuid
+             * @description The recording this is a transcript of. Today it always equals `id`; it is named
+             *     separately so that a future transcript with a key of its own does not change the meaning
+             *     of a field you are already reading.
+             */
+            recording_id?: string;
+            /**
+             * Format: uuid
+             * @description The customer whose call this is — the same one `call-recording.available` carried. Null
+             *     when the recorded domain resolves to none of your customers; only your tenant-scoped
+             *     endpoints hear about that one.
+             */
+            customer_id?: string | null;
+            /**
+             * @description The switch's own call identifier. Two captures of one call share it.
+             * @example 20260912101500000002-00112233445566778899aabbccddeeff
+             */
+            call_id?: string;
+            /**
+             * @description Which capture of that call was transcribed.
+             * @example 00b1
+             */
+            ccc_id?: string;
+            /**
+             * @description The language of the transcript, as the transcription reported it, or as we asked for it
+             *     when it reported none.
+             * @example en-US
+             */
+            language?: string;
+            /**
+             * @description How long the transcribed audio runs, rounded up to whole seconds. Null when the
+             *     transcription reported no duration.
+             */
+            duration_seconds?: number | null;
+        };
+        CallTranscriptAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["CallTranscriptAvailableEventData"];
         };
         MessageReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["MessageReceivedEventData"];
@@ -13179,6 +13281,44 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["CallRecordingAvailableEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onCallTranscriptAvailable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "1d3a6c02-5f21-5a44-b0c7-9e2f4471aa80",
+                 *       "type": "call-transcript.available",
+                 *       "occurred_at": "2026-09-12T10:21:37+00:00",
+                 *       "data": {
+                 *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
+                 *         "recording_id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "call_id": "20260912101500000002-00112233445566778899aabbccddeeff",
+                 *         "ccc_id": "00b1",
+                 *         "language": "en-US",
+                 *         "duration_seconds": 97
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["CallTranscriptAvailableEvent"];
             };
         };
         responses: {
