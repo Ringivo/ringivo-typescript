@@ -2676,6 +2676,64 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "call-recording.available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A recording of a call is ready to play or download
+         * @description Fired when the recording of a call has finished uploading and we hold a copy of it. Not when
+         *     the call ended: the recording does not exist until the switch has converted it and the bytes
+         *     have reached our bucket, which is minutes later.
+         *
+         *     **Ask for the audio with `GET /v1/pbx/call-records/{id}/recording`.** This body names what
+         *     arrived and carries no way to fetch it — no object key, no URL — for the same reason the fax
+         *     events carry none: a body travels to you over the public internet and lands in your log
+         *     aggregator, and a link to a recording of somebody's telephone call is a bearer capability
+         *     sitting there forever. That request is where authorization runs and where the access is
+         *     recorded.
+         *
+         *     **`duration_seconds` can be null.** The switch does not always report how long a capture
+         *     runs, and the recording is real either way — the audio is in our bucket and
+         *     `GET /v1/pbx/call-records/{id}/recording` serves it. Do not treat a null duration as a
+         *     missing recording.
+         *
+         *     **`data.superseded` is why you may hear about one recording twice.** Both switches capture
+         *     every call independently, and one capture can be short. When the longer one replaces it, the
+         *     bytes behind the SAME recording change and we send this event again with `superseded: true`
+         *     — so `byte_size`, `duration_seconds` and above all `sha256` differ from what you were told
+         *     the first time. A digest that no longer matches a copy you already downloaded is this, not a
+         *     corrupted download. The replacement happens at most once per recording.
+         *
+         *     **One call can produce more than one recording.** Each is a separate capture with its own
+         *     `ccc_id` and its own event; `call_id` is what ties them to the same call.
+         *
+         *     **You are told once per change, and never once per retry.** We send this event when a
+         *     recording first arrives and when a supersede changes the audio behind it — nothing else
+         *     raises it, and re-processing an announcement we have already handled sends nothing. If one
+         *     does reach you twice, both copies carry the same `event_id`, because for this event the id
+         *     is derived from the recording and the `sha256` rather than minted per send. Dedupe on it,
+         *     as the envelope says.
+         *
+         *     **Scope: `tenant` and `customer`, never `fax_account`.** A recording belongs to a customer,
+         *     which belongs to you. `data.customer_id` is null for a recording on a domain we cannot
+         *     resolve to one of your customers, and only your tenant-scoped endpoints are called for it.
+         *
+         *     `occurred_at` is the moment the recording became available to us, and never the moment we
+         *     reached you — so a supersede's `occurred_at` is later than the first event's.
+         */
+        post: operations["onCallRecordingAvailable"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "pbx_change.confirmed": {
         parameters: {
             query?: never;
@@ -3015,7 +3073,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call-recording.available";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -3971,6 +4029,72 @@ export interface components {
              *     that is the start of the wait this event ends.
              */
             status?: components["schemas"]["PortOrderBillExtractionStatus"];
+        };
+        /**
+         * @description A SNAPSHOT of the recording as we hold it, frozen when the event was built. The rule every
+         *     event on this channel follows — a retry six hours later carries the values it was built with
+         *     — and here it does a second job: a recording that has since been superseded sends its own
+         *     event rather than rewriting this one.
+         *
+         *     **No object key and no URL.** Ask `GET /v1/pbx/call-records/{id}/recording` for a link, which
+         *     is where authorization runs.
+         */
+        CallRecordingAvailableEventData: {
+            /**
+             * Format: uuid
+             * @description The recording's id, and the `{id}` of the media request. It is derived from the switch's
+             *     own `(call_id, ccc_id)`, so it is the same id in every region and never changes — a
+             *     supersede reuses it.
+             */
+            id?: string;
+            /**
+             * Format: uuid
+             * @description The customer whose recording this is. Null when the recorded domain resolves to none of
+             *     your customers; only your tenant-scoped endpoints hear about that one.
+             */
+            customer_id?: string | null;
+            /**
+             * @description The switch's own call identifier. Two captures of one call share it.
+             * @example 20260912101500000002-00112233445566778899aabbccddeeff
+             */
+            call_id?: string;
+            /**
+             * @description Which capture of that call this recording is.
+             * @example 00b1
+             */
+            ccc_id?: string;
+            /**
+             * @description How long the recorded audio runs. A supersede changes this. NULL when the switch did not
+             *     report a duration for the capture — the recording is still ours to serve, and
+             *     `byte_size` still describes the bytes.
+             */
+            duration_seconds?: number | null;
+            /** @description The size of the audio we hold. A supersede changes this. */
+            byte_size?: number;
+            /**
+             * @description The SHA-256 of the audio, so you can check a download against what we recorded. A
+             *     supersede changes this — see the operation description before treating a mismatch as
+             *     corruption.
+             */
+            sha256?: string;
+            /**
+             * @description False on the first event for a recording, true when a longer capture has replaced the
+             *     audio behind the same `id`.
+             */
+            superseded?: boolean;
+            /**
+             * Format: date-time
+             * @description When the recording started. Null when the switch did not report it.
+             */
+            recorded_at?: string | null;
+            /**
+             * Format: date-time
+             * @description When it stopped. Null when the switch did not report it.
+             */
+            ended_at?: string | null;
+        };
+        CallRecordingAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["CallRecordingAvailableEventData"];
         };
         MessageReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["MessageReceivedEventData"];
@@ -12671,6 +12795,47 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["PortOrderStatusChangedEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onCallRecordingAvailable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "6be0d8be-ef92-5045-97ff-43c277e2f1b6",
+                 *       "type": "call-recording.available",
+                 *       "occurred_at": "2026-09-12T10:17:02+00:00",
+                 *       "data": {
+                 *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
+                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "call_id": "20260912101500000002-00112233445566778899aabbccddeeff",
+                 *         "ccc_id": "00b1",
+                 *         "duration_seconds": 97,
+                 *         "byte_size": 1552000,
+                 *         "sha256": "abababababababababababababababababababababababababababababababab",
+                 *         "superseded": false,
+                 *         "recorded_at": "2026-09-12T10:15:11+00:00",
+                 *         "ended_at": "2026-09-12T10:16:48+00:00"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["CallRecordingAvailableEvent"];
             };
         };
         responses: {
