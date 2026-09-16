@@ -2420,6 +2420,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/pbx/call-records/{callRecord}/recordings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List a call record's recordings, each with a download link
+         * @description One call can be captured more than once — the phone system keys a recording by
+         *     `(call id, capture id)`, and a call record names BOTH of its legs' call ids — so this
+         *     answers a **collection**, not a single link. Use it whenever `has-recording` is true on the
+         *     call record.
+         *
+         *     **Each item carries its own `content-url`**, a time-limited link on your own API host.
+         *     Follow it with a plain `GET` and **no `Authorization` header**: the signature it carries is
+         *     the authorization. Treat the URL as opaque — the signature covers the whole address, so
+         *     editing any part of it invalidates the link.
+         *
+         *     **Every call mints fresh links and writes one audit entry per recording**, naming who asked.
+         *     Do not cache a URL past its `expires-at` or share it: anyone holding one listens to that
+         *     call with no further authorization.
+         *
+         *     **This collection is not paged.** It is the captures of one call, not a walk over a growing
+         *     table, so there are no `page[...]` parameters and no `meta.page` — every recording of the
+         *     call is in the one response.
+         */
+        get: operations["listCallRecordRecordings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/recordings/{recording}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a recording's audio (the URL the recordings list names)
+         * @description **You do not build this URL — you follow it.** Each item of
+         *     `GET /v1/pbx/call-records/{callRecord}/recordings` carries a `content-url`, and this is
+         *     where it points. Treat it as opaque: the signature covers the whole address, so editing the
+         *     path, the host or any query parameter invalidates it.
+         *
+         *     Send **no `Authorization` header**. The signature is the authorization here, which is why
+         *     this operation publishes no security scheme — the entitlement was checked when the link was
+         *     minted, by the request that held your token. The link stops working at the `expires-at` the
+         *     list reported.
+         *
+         *     The audio is streamed as `audio/wav` with `Content-Disposition: inline`. Range requests are
+         *     not supported: a `Range` header is ignored and the whole recording is returned with a 200,
+         *     so there is no seeking and no resumable download.
+         */
+        get: operations["downloadRecording"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export interface webhooks {
     "fax.received": {
@@ -2691,7 +2759,7 @@ export interface webhooks {
          *     the call ended: the recording does not exist until the switch has converted it and the bytes
          *     have reached our bucket, which is minutes later.
          *
-         *     **Ask for the audio with `GET /v1/pbx/call-records/{id}/recording`.** This body names what
+         *     **Ask for the audio with `GET /v1/pbx/call-records/{id}/recordings`.** This body names what
          *     arrived and carries no way to fetch it — no object key, no URL — for the same reason the fax
          *     events carry none: a body travels to you over the public internet and lands in your log
          *     aggregator, and a link to a recording of somebody's telephone call is a bearer capability
@@ -2700,7 +2768,7 @@ export interface webhooks {
          *
          *     **`duration_seconds` can be null.** The switch does not always report how long a capture
          *     runs, and the recording is real either way — the audio is in our bucket and
-         *     `GET /v1/pbx/call-records/{id}/recording` serves it. Do not treat a null duration as a
+         *     `GET /v1/pbx/call-records/{id}/recordings` serves it. Do not treat a null duration as a
          *     missing recording.
          *
          *     **`data.superseded` is why you may hear about one recording twice.** Both switches capture
@@ -4036,7 +4104,7 @@ export interface components {
          *     — and here it does a second job: a recording that has since been superseded sends its own
          *     event rather than rewriting this one.
          *
-         *     **No object key and no URL.** Ask `GET /v1/pbx/call-records/{id}/recording` for a link, which
+         *     **No object key and no URL.** Ask `GET /v1/pbx/call-records/{id}/recordings` for a link, which
          *     is where authorization runs.
          */
         CallRecordingAvailableEventData: {
@@ -6017,6 +6085,64 @@ export interface components {
             links?: components["schemas"]["ResourceLinks"];
             meta?: components["schemas"]["ResourceMeta"];
         };
+        RecordingAttributes: {
+            /**
+             * @description Which capture of the call this is — the phone system's own capture id.
+             * @example 00b1
+             */
+            "ccc-id"?: string;
+            /**
+             * @description How long the audio runs, in seconds. NULL when the phone system did not report a
+             *     duration for the capture — the recording is still ours to serve, and `byte-size` still
+             *     describes the bytes. Do not read a null as a missing recording.
+             */
+            duration?: number | null;
+            /** @description The size of the audio behind `content-url`. */
+            "byte-size"?: number;
+            /**
+             * @description The SHA-256 of the audio, so you can check a download against what we recorded. A
+             *     supersede changes it — see `superseded` before treating a mismatch as corruption.
+             */
+            sha256?: string;
+            /**
+             * @description False on a first capture, true once a longer capture of the same call has replaced the
+             *     audio behind this id. The id does not change; the duration, size and digest do.
+             */
+            superseded?: boolean;
+            /**
+             * Format: uri
+             * @description A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
+             *     `Authorization` header — the signature it carries is the authorization. Opaque: the
+             *     signature covers the whole address, so any edit invalidates it. Short-lived — do not
+             *     cache it past `expires-at` or share it.
+             */
+            "content-url"?: string;
+            /**
+             * Format: date-time
+             * @description When `content-url` stops working. Ask for the list again to mint a fresh one.
+             */
+            "expires-at"?: string;
+        };
+        RecordingResource: {
+            /** @enum {string} */
+            type: "recordings";
+            /**
+             * Format: uuid
+             * @description Derived from the phone system's own `(call id, capture id)`, so it is the same id in
+             *     every region and never changes — a supersede reuses it.
+             */
+            id: string;
+            attributes?: components["schemas"]["RecordingAttributes"];
+        };
+        RecordingCollectionDocument: {
+            /**
+             * @description One item per capture of the call, in vendor key order `(call_id, ccc_id)` — the phone
+             *     system's own primary key, which is total, and NOT chronological across legs. NOT PAGED —
+             *     this is the captures of one call rather than a walk over a table, so there are no page
+             *     parameters and no `meta.page`.
+             */
+            data: components["schemas"]["RecordingResource"][];
+        };
         CallRecordDocumentResponse: {
             data: components["schemas"]["CallRecordResource"];
             links?: components["schemas"]["ResourceLinks"];
@@ -6139,6 +6265,12 @@ export interface components {
         PbxDeviceId: string;
         /** @description The call record's id. */
         CallRecordId: string;
+        /**
+         * @description The recording's id, from an item of `GET /v1/pbx/call-records/{callRecord}/recordings`. It
+         *     is derived from the phone system's own `(call id, capture id)`, so it is the same id in
+         *     every region and a supersede reuses it.
+         */
+        RecordingId: string;
         /**
          * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
          *     that is not a positive whole number, is refused with a 400 whose error carries
@@ -12337,6 +12469,130 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    listCallRecordRecordings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The call record's id. */
+                callRecord: components["parameters"]["CallRecordId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description The call's recordings, in vendor key order `(call_id, ccc_id)` — NOT chronological
+             *     across legs. An EMPTY `data` array is a normal answer: a call that was not recorded has
+             *     none, and a call recorded a moment ago has none until the phone system has finished
+             *     uploading the audio to us.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "recordings",
+                     *           "id": "6f98cc5d-5248-5100-9967-8606e2993077",
+                     *           "attributes": {
+                     *             "ccc-id": "00b1",
+                     *             "duration": 97,
+                     *             "byte-size": 1563244,
+                     *             "sha256": "abababababababababababababababababababababababababababababababab",
+                     *             "superseded": false,
+                     *             "content-url": "https://api.yourprovider.example/v1/pbx/recordings/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
+                     *             "expires-at": "2026-09-16T11:07:31+00:00"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["RecordingCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description No call record of yours has that id (`code: not_found`). A call belonging to another
+             *     account answers the same way as one that does not exist — its existence is itself
+             *     information.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+        };
+    };
+    downloadRecording: {
+        parameters: {
+            query: {
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                expires: number;
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                signature: string;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description The recording's id, from an item of `GET /v1/pbx/call-records/{callRecord}/recordings`. It
+                 *     is derived from the phone system's own `(call id, capture id)`, so it is the same id in
+                 *     every region and a supersede reuses it.
+                 */
+                recording: components["parameters"]["RecordingId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The audio itself. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/wav": string;
+                };
+            };
+            /**
+             * @description The signature did not verify, or the link has expired (`Invalid signature.`). Ask the
+             *     recordings list for a fresh one — a link cannot be repaired or extended.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description There is no such recording to serve (`code: not_found`). Every miss answers the same way
+             *     on purpose — an unknown recording and one whose audio we no longer hold are deliberately
+             *     indistinguishable, because this route takes no credential.
+             *
+             *     **A link that minted successfully can still 404 here.** The list reports the `byte-size`
+             *     and `sha256` recorded for the audio, which is metadata; this endpoint answers for the
+             *     bytes. Retry the list, and treat a repeat as "the recording is not available" rather
+             *     than as a transport failure.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
         };
     };
     onFaxReceived: {
