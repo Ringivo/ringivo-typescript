@@ -1707,6 +1707,17 @@ paths:
             `-createdAt,-id`, newest first. Any other field is refused with a 400.
           schema: { type: string }
           example: '-createdAt'
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more number ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The DIDs routed to this account.
@@ -2193,6 +2204,17 @@ paths:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
         - $ref: '#/components/parameters/PageBefore'
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more address ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The trunk's allowed addresses.
@@ -2225,6 +2247,17 @@ paths:
         - $ref: '#/components/parameters/PageSize'
         - $ref: '#/components/parameters/PageAfter'
         - $ref: '#/components/parameters/PageBefore'
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more destination ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+            `filter[id][]=<id>`. Sent without the
+            brackets it is refused with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
       responses:
         '200':
           description: The trunk's destinations.

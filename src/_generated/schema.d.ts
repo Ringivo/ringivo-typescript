@@ -7665,6 +7665,13 @@ export interface operations {
                  * @example -createdAt
                  */
                 sort?: string;
+                /**
+                 * @description One or more number ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path: {
@@ -8264,6 +8271,13 @@ export interface operations {
                  *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
                  */
                 "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description One or more address ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path: {
@@ -8313,6 +8327,13 @@ export interface operations {
                  *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
                  */
                 "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description One or more destination ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. One id is still
+                 *     `filter[id][]=<id>`. Sent without the
+                 *     brackets it is refused with a 400.
+                 */
+                "filter[id][]"?: string[];
             };
             header?: never;
             path: {
