@@ -6470,6 +6470,217 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorDocument'
 
+  /v1/pbx/call-records/{callRecord}/transcripts:
+    get:
+      tags: [Call records]
+      operationId: listCallRecordTranscripts
+      summary: List a call record's transcripts, each with a download link
+      description: |
+        What was said on a recorded call. One call can be captured more than once — the phone system
+        keys a recording by `(call id, capture id)` — so this answers a **collection**, with one item
+        per capture rather than one item per transcript.
+
+        **`status` is the member to branch on.** `ready` means we hold the words and the item carries
+        them; `pending` means that capture has no transcript yet and every other member is null.
+        Transcription runs after the audio has finished uploading, so a call recorded a moment ago is
+        normally `pending` for a few minutes.
+
+        **The words themselves are not here.** Ask
+        `GET /v1/pbx/call-records/{callRecord}/transcripts/{recording}` for one transcript with its
+        `segments`, or follow `content-url` for the raw provider JSON. Deriving turns costs a read of
+        the stored document per capture, which is why the list does not do it for captures you did
+        not ask about.
+
+        **`byte-size` and `sha256` describe the DOCUMENT behind `content-url`**, not the audio. They
+        are not comparable with the same members on the recordings list, which describe the audio.
+
+        **Every call mints fresh links and writes one audit entry per transcript**, naming who asked.
+        Do not cache a URL past its `expires-at` or share it: anyone holding one reads that call with
+        no further authorization.
+
+        **This collection is not paged.** It is the captures of one call, not a walk over a growing
+        table, so there are no `page[...]` parameters and no `meta.page`.
+      security:
+        - bearerAuth: [pbx-call-records:read, pbx-transcripts:read]
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+      responses:
+        '200':
+          description: |
+            The call's transcripts, in vendor key order `(call_id, ccc_id)` — NOT chronological
+            across legs. An EMPTY `data` array is a normal answer: a call that was not recorded has
+            no captures to transcribe.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/TranscriptCollectionDocument'
+              example:
+                data:
+                  - type: transcripts
+                    id: 6f98cc5d-5248-5100-9967-8606e2993077
+                    attributes:
+                      ccc-id: 00b1
+                      status: ready
+                      language: en-US
+                      duration: 97
+                      byte-size: 18422
+                      sha256: abababababababababababababababababababababababababababababababab
+                      provider: deepgram
+                      model: nova-3
+                      content-url: https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...
+                      expires-at: '2026-09-17T11:07:31+00:00'
+                  - type: transcripts
+                    id: 7a09dd6e-6359-5211-aa78-9717f3aa4188
+                    attributes:
+                      ccc-id: 00b2
+                      status: pending
+                      language: null
+                      duration: null
+                      byte-size: null
+                      sha256: null
+                      provider: null
+                      model: null
+                      content-url: null
+                      expires-at: null
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            No call record of yours has that id (`code: not_found`). A call belonging to another
+            account answers the same way as one that does not exist — its existence is itself
+            information.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+  /v1/pbx/call-records/{callRecord}/transcripts/{recording}:
+    get:
+      tags: [Call records]
+      operationId: getCallRecordTranscript
+      summary: Read one transcript, with its speaker turns
+      description: |
+        One capture's transcript, with `segments` — the turns of the conversation, each carrying a
+        speaker label, its bounds in seconds and what was said.
+
+        **It is nested under the call record on purpose.** A transcript is reachable only through a
+        call you may already read, which is what makes another account's transcript answer 404 rather
+        than 403. Pass the recording id from an item of the list above; an id that is not one of this
+        call's captures answers 404.
+
+        **A 404 here is not always "no such thing".** `transcript_pending` means the capture is real
+        and its transcript has not been written yet — ask again in a few minutes.
+        `transcript_failed` means transcription was tried and permanently gave up, so there is
+        nothing to wait for.
+      security:
+        - bearerAuth: [pbx-call-records:read, pbx-transcripts:read]
+      parameters:
+        - $ref: '#/components/parameters/CallRecordId'
+        - $ref: '#/components/parameters/TranscriptRecordingId'
+      responses:
+        '200':
+          description: The transcript, with its turns.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/TranscriptDocumentResponse'
+              example:
+                data:
+                  type: transcripts
+                  id: 6f98cc5d-5248-5100-9967-8606e2993077
+                  attributes:
+                    ccc-id: 00b1
+                    status: ready
+                    language: en-US
+                    duration: 97
+                    byte-size: 18422
+                    sha256: abababababababababababababababababababababababababababababababab
+                    provider: deepgram
+                    model: nova-3
+                    content-url: https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...
+                    expires-at: '2026-09-17T11:07:31+00:00'
+                    segments:
+                      - speaker: Speaker 1
+                        start: 0.08
+                        end: 2.4
+                        text: Acme Dental, how can I help?
+                      - speaker: Speaker 2
+                        start: 2.6
+                        end: 5.1
+                        text: I need to move my appointment.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: |
+            Nothing to serve, and the `code` says which kind of nothing: `not_found` (no call record
+            of yours has that id, or no capture of it has that recording id),
+            `transcript_pending` (the capture is real and its transcript is not written yet) or
+            `transcript_failed` (transcription gave up, and no further attempt will be made).
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+  /v1/pbx/transcripts/{recording}/content:
+    get:
+      tags: [Call records]
+      operationId: downloadTranscript
+      summary: Download a transcript's source document (the URL the transcripts list names)
+      description: |
+        **You do not build this URL — you follow it.** Each `ready` item of
+        `GET /v1/pbx/call-records/{callRecord}/transcripts` carries a `content-url`, and this is
+        where it points. Treat it as opaque: the signature covers the whole address, so editing the
+        path, the host or any query parameter invalidates it.
+
+        Send **no `Authorization` header**. The signature is the authorization here, which is why
+        this operation publishes no security scheme — the entitlement was checked when the link was
+        minted, by the request that held your token. The link stops working at the `expires-at` the
+        list reported.
+
+        **What you get is the speech-to-text provider's own response, gzipped and unmodified.** It is
+        the lossless copy we keep, so it carries more than `segments` does — word timings and
+        confidences among them — and its shape is the provider's rather than ours. If you want a
+        stable shape, read `segments` on the transcript instead.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/TranscriptRecordingId'
+        - name: expires
+          in: query
+          required: true
+          description: Part of the signature, minted for you. Do not edit it.
+          schema: { type: integer, format: int64 }
+        - name: signature
+          in: query
+          required: true
+          description: Part of the signature, minted for you. Do not edit it.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The provider's response document, gzipped.
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        '403':
+          description: |
+            The signature did not verify, or the link has expired (`Invalid signature.`). Ask the
+            transcripts list for a fresh one — a link cannot be repaired or extended.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '404':
+          description: |
+            There is no such document to serve (`code: not_found`). Every miss answers the same way
+            on purpose — a transcript we have never held, one whose retention window has closed and
+            one whose stored document is gone are deliberately indistinguishable, because this route
+            takes no credential.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+
 webhooks:
   fax.received:
     post:
@@ -7261,6 +7472,16 @@ components:
         is derived from the phone system's own `(call id, capture id)`, so it is the same id in
         every region and a supersede reuses it.
       schema: { type: string, format: uuid }
+    TranscriptRecordingId:
+      name: recording
+      in: path
+      required: true
+      description: |
+        The recording's id, from an item of
+        `GET /v1/pbx/call-records/{callRecord}/transcripts`. A transcript is keyed by its recording
+        — one transcript per capture — so this is the same id the recordings list publishes, and the
+        same id in every region.
+      schema: { type: string, format: uuid }
     PageSize:
       name: page[size]
       in: query
@@ -7684,6 +7905,8 @@ components:
         - forbidden
         - internal_error
         - sip_trunk_refused
+        - transcript_pending
+        - transcript_failed
     ErrorDocument:
       type: object
       required: [errors]
@@ -11680,6 +11903,146 @@ components:
             parameters and no `meta.page`.
           items:
             $ref: '#/components/schemas/RecordingResource'
+    TranscriptSegment:
+      type: object
+      required: [speaker, start, end, text]
+      properties:
+        speaker:
+          type: string
+          description: |
+            Who was speaking, as a label rather than an identity: `Speaker 1`, `Speaker 2`, and so
+            on. It comes from the speech-to-text provider's own separation of voices (or of the two
+            sides of a stereo capture), so it is stable WITHIN one transcript and means nothing
+            across two — `Speaker 1` on one call is not `Speaker 1` on another.
+          example: Speaker 1
+        start:
+          type: number
+          format: double
+          description: When this turn begins, in seconds from the start of the recording.
+        end:
+          type: number
+          format: double
+          description: When this turn ends, in seconds from the start of the recording.
+        text:
+          type: string
+          description: What was said in this turn.
+    TranscriptAttributes:
+      type: object
+      # NOT A CLOSED SET, and the one member that proves it is `segments`: the single-transcript
+      # endpoint composes this schema with it (`TranscriptWithSegmentsResource`), so a validator that
+      # treated these ten as the whole of a transcript's attributes would reject that endpoint's own
+      # response. Redocly's example check is such a validator.
+      unevaluatedProperties: true
+      properties:
+        ccc-id:
+          type: string
+          description: Which capture of the call this transcript is of — the phone system's own capture id.
+          example: 00b1
+        status:
+          type: string
+          enum: [ready, pending]
+          description: |
+            `ready` when we hold the words, `pending` when that capture has no transcript yet — in
+            which case every member below is null. Transcription runs after the audio has finished
+            uploading, so a call recorded a moment ago is normally `pending` for a few minutes. There
+            is no `failed` here: telling a permanent failure from a wait costs a lookup, so only the
+            single-transcript endpoint pays for it, and it reports it as a 404 with
+            `code: transcript_failed`.
+        language:
+          type: [string, 'null']
+          description: The language the audio was transcribed as. Null while `status` is `pending`.
+          example: en-US
+        duration:
+          type: [integer, 'null']
+          description: |
+            How long the AUDIO runs, in seconds — not how long the text is. Null while `status` is
+            `pending`, and null when the phone system never reported a duration for the capture.
+        byte-size:
+          type: [integer, 'null']
+          description: |
+            The size of the document behind `content-url`, which is the speech-to-text provider's
+            gzipped response — NOT the audio. Not comparable with `byte-size` on the recordings list.
+            Null while `status` is `pending`.
+        sha256:
+          type: [string, 'null']
+          description: |
+            The SHA-256 of that same document, so you can check a download against what we stored.
+            Null while `status` is `pending`.
+        provider:
+          type: [string, 'null']
+          description: Which speech-to-text service produced this transcript. Null while `status` is `pending`.
+          example: deepgram
+        model:
+          type: [string, 'null']
+          description: Which of that service's models produced it. Null while `status` is `pending`.
+          example: nova-3
+        content-url:
+          type: [string, 'null']
+          format: uri
+          description: |
+            A time-limited download URL on your own API host for the provider's own response
+            document. Fetch it with a plain `GET` and no `Authorization` header — the signature it
+            carries is the authorization. Opaque: the signature covers the whole address, so any edit
+            invalidates it. Short-lived — do not cache it past `expires-at` or share it. Null while
+            `status` is `pending`.
+        expires-at:
+          type: [string, 'null']
+          format: date-time
+          description: When `content-url` stops working. Ask for the list again to mint a fresh one.
+    TranscriptResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [transcripts] }
+        id:
+          type: string
+          format: uuid
+          description: |
+            The RECORDING's id — a transcript is keyed by the capture it is of, one to one — so it is
+            the same id the recordings list publishes and the same id in every region.
+        attributes:
+          $ref: '#/components/schemas/TranscriptAttributes'
+    TranscriptWithSegmentsResource:
+      description: |
+        A transcript as the single-transcript endpoint serves it: everything the list carries, plus
+        the turns. `segments` is the one member the list leaves out, because deriving the turns means
+        reading the stored document and the list would pay that per capture.
+      allOf:
+        - $ref: '#/components/schemas/TranscriptResource'
+        - type: object
+          properties:
+            attributes:
+              allOf:
+                - $ref: '#/components/schemas/TranscriptAttributes'
+                - type: object
+                  properties:
+                    segments:
+                      type: array
+                      description: |
+                        The turns of the conversation, in the order they were spoken. An EMPTY array
+                        is a real answer: nobody spoke, or the provider heard nothing it could
+                        separate into turns.
+                      items:
+                        $ref: '#/components/schemas/TranscriptSegment'
+    TranscriptCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          description: |
+            One item per capture of the call, in vendor key order `(call_id, ccc_id)` — the phone
+            system's own primary key, which is total, and NOT chronological across legs. NOT PAGED —
+            this is the captures of one call rather than a walk over a table, so there are no page
+            parameters and no `meta.page`.
+          items:
+            $ref: '#/components/schemas/TranscriptResource'
+    TranscriptDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/TranscriptWithSegmentsResource'
     CallRecordDocumentResponse:
       type: object
       required: [data]
