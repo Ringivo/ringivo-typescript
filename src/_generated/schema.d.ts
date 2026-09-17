@@ -2961,6 +2961,54 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "webhook.heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A keepalive proving the webhook path from one of our regions is working
+         * @description Sent every five minutes, from each of our regions, to every endpoint that asks for it by
+         *     name. It reports nothing about your data: it exists so that you — and we — can tell the
+         *     difference between "nothing happened" and "something between us is broken".
+         *
+         *     **You have to ask for it explicitly.** This is the one event an endpoint subscribed to
+         *     everything does NOT receive: leaving `events` empty means every event about your faxes,
+         *     messages, port orders and calls, and never this one. Name `webhook.heartbeat` in `events`
+         *     to start receiving it, and remove it to stop. That is deliberate — nobody should be signed
+         *     up for 288 deliveries a day by omission.
+         *
+         *     **What a gap means.** A beat that does not arrive means one of the links between the event
+         *     happening and your endpoint being called is down, and that a real event raised in that
+         *     window may not have reached you either. Nothing is queued up for later: we expire a beat
+         *     rather than bank it, so after an outage you get the NEXT beat, not a burst of old ones. A
+         *     beat's `emitted_at` is therefore always recent, and a gap in the `sequence` you have seen
+         *     is the record of the outage.
+         *
+         *     **`sequence` counts within one region** and increases by one per beat. It is what tells you
+         *     a beat is genuinely new. A sequence that repeats or goes backwards is a fault on our side
+         *     and worth telling us about.
+         *
+         *     **Each region beats independently.** You will see a `region` you did not choose and cannot
+         *     change; treat each region's `sequence` as its own series. A region we do not deliver
+         *     webhooks from does not beat at all.
+         *
+         *     **Scope: `tenant` only.** A heartbeat is about our platform rather than about anything of
+         *     one customer's, so a customer-scoped endpoint cannot subscribe to it.
+         *
+         *     `occurred_at` equals `data.emitted_at`, and neither is the moment we reached you.
+         */
+        post: operations["onWebhookHeartbeat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "pbx_change.confirmed": {
         parameters: {
             query?: never;
@@ -3300,7 +3348,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call-recording.available" | "call-transcript.available";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call-recording.available" | "call-transcript.available" | "webhook.heartbeat";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -4400,6 +4448,43 @@ export interface components {
              *     transcription reported no duration.
              */
             duration_seconds?: number | null;
+        };
+        /** @description Which region beat, when, and which beat it was. There is nothing of yours in this body. */
+        WebhookHeartbeatEventData: {
+            /**
+             * @description The region that emitted this beat. Each region counts its own `sequence`, so read the
+             *     two together.
+             * @example usw1
+             */
+            region?: string;
+            /**
+             * Format: date-time
+             * @description When we published the beat — not when we reached you. A beat we could not deliver
+             *     promptly is discarded rather than sent late, so this is always recent.
+             */
+            emitted_at?: string;
+            /**
+             * @description Counts up by one per beat within `region`, and never resets. A gap is an outage window;
+             *     a repeat or a rewind is a fault on our side.
+             * @example 40213
+             */
+            sequence?: number;
+            /**
+             * @description Unique to this beat and to you. It is what makes two beats two events — you do not need
+             *     to read it, and `event_id` is what you dedupe on.
+             * @example 0199c1f0-1111-7000-8000-00000000000a
+             */
+            nonce?: string;
+            /**
+             * @description What produced the beat. `scheduler` is our five-minute timer, which is the only thing
+             *     that produces one today; `api` is reserved for a beat requested on demand.
+             * @example scheduler
+             * @enum {string}
+             */
+            origin?: "scheduler" | "api";
+        };
+        WebhookHeartbeatEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["WebhookHeartbeatEventData"];
         };
         CallTranscriptAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["CallTranscriptAvailableEventData"];
@@ -13795,6 +13880,42 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["CallTranscriptAvailableEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onWebhookHeartbeat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "event_id": "28bd5a88-2196-5e5d-ae52-54687a788ce3",
+                 *       "type": "webhook.heartbeat",
+                 *       "occurred_at": "2026-09-18T14:05:00+00:00",
+                 *       "data": {
+                 *         "region": "usw1",
+                 *         "emitted_at": "2026-09-18T14:05:00+00:00",
+                 *         "sequence": 40213,
+                 *         "nonce": "0199c1f0-1111-7000-8000-00000000000a",
+                 *         "origin": "scheduler"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["WebhookHeartbeatEvent"];
             };
         };
         responses: {

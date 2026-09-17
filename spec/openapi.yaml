@@ -7268,6 +7268,62 @@ webhooks:
         '2XX':
           description: Any 2XX means you accepted it.
 
+  webhook.heartbeat:
+    post:
+      tags: [Webhook endpoints]
+      operationId: onWebhookHeartbeat
+      summary: A keepalive proving the webhook path from one of our regions is working
+      description: |
+        Sent every five minutes, from each of our regions, to every endpoint that asks for it by
+        name. It reports nothing about your data: it exists so that you — and we — can tell the
+        difference between "nothing happened" and "something between us is broken".
+
+        **You have to ask for it explicitly.** This is the one event an endpoint subscribed to
+        everything does NOT receive: leaving `events` empty means every event about your faxes,
+        messages, port orders and calls, and never this one. Name `webhook.heartbeat` in `events`
+        to start receiving it, and remove it to stop. That is deliberate — nobody should be signed
+        up for 288 deliveries a day by omission.
+
+        **What a gap means.** A beat that does not arrive means one of the links between the event
+        happening and your endpoint being called is down, and that a real event raised in that
+        window may not have reached you either. Nothing is queued up for later: we expire a beat
+        rather than bank it, so after an outage you get the NEXT beat, not a burst of old ones. A
+        beat's `emitted_at` is therefore always recent, and a gap in the `sequence` you have seen
+        is the record of the outage.
+
+        **`sequence` counts within one region** and increases by one per beat. It is what tells you
+        a beat is genuinely new. A sequence that repeats or goes backwards is a fault on our side
+        and worth telling us about.
+
+        **Each region beats independently.** You will see a `region` you did not choose and cannot
+        change; treat each region's `sequence` as its own series. A region we do not deliver
+        webhooks from does not beat at all.
+
+        **Scope: `tenant` only.** A heartbeat is about our platform rather than about anything of
+        one customer's, so a customer-scoped endpoint cannot subscribe to it.
+
+        `occurred_at` equals `data.emitted_at`, and neither is the moment we reached you.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookHeartbeatEvent'
+            example:
+              event_id: 28bd5a88-2196-5e5d-ae52-54687a788ce3
+              type: webhook.heartbeat
+              occurred_at: '2026-09-18T14:05:00+00:00'
+              data:
+                region: usw1
+                emitted_at: '2026-09-18T14:05:00+00:00'
+                sequence: 40213
+                nonce: 0199c1f0-1111-7000-8000-00000000000a
+                origin: scheduler
+      responses:
+        '2XX':
+          description: Any 2XX means you accepted it.
+
   pbx_change.confirmed:
     post:
       tags: [Webhook endpoints]
@@ -7990,6 +8046,7 @@ components:
         - pbx_change.stalled
         - call-recording.available
         - call-transcript.available
+        - webhook.heartbeat
     WebhookDeliveryStatus:
       type: string
       description: |
@@ -9356,6 +9413,50 @@ components:
           description: |
             How long the transcribed audio runs, rounded up to whole seconds. Null when the
             transcription reported no duration.
+    WebhookHeartbeatEventData:
+      type: object
+      description: |
+        Which region beat, when, and which beat it was. There is nothing of yours in this body.
+      properties:
+        region:
+          type: string
+          description: |
+            The region that emitted this beat. Each region counts its own `sequence`, so read the
+            two together.
+          example: usw1
+        emitted_at:
+          type: string
+          format: date-time
+          description: |
+            When we published the beat — not when we reached you. A beat we could not deliver
+            promptly is discarded rather than sent late, so this is always recent.
+        sequence:
+          type: integer
+          description: |
+            Counts up by one per beat within `region`, and never resets. A gap is an outage window;
+            a repeat or a rewind is a fault on our side.
+          example: 40213
+        nonce:
+          type: string
+          description: |
+            Unique to this beat and to you. It is what makes two beats two events — you do not need
+            to read it, and `event_id` is what you dedupe on.
+          example: 0199c1f0-1111-7000-8000-00000000000a
+        origin:
+          type: string
+          enum: [scheduler, api]
+          description: |
+            What produced the beat. `scheduler` is our five-minute timer, which is the only thing
+            that produces one today; `api` is reserved for a beat requested on demand.
+          example: scheduler
+    WebhookHeartbeatEvent:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventEnvelope'
+        - type: object
+          required: [data]
+          properties:
+            data:
+              $ref: '#/components/schemas/WebhookHeartbeatEventData'
     CallTranscriptAvailableEvent:
       allOf:
         - $ref: '#/components/schemas/WebhookEventEnvelope'
