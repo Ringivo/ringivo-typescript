@@ -4872,15 +4872,22 @@ export interface components {
          *
          *     `claimed` the number was already text-enabled where it lives and we recorded it ·
          *     `awaiting_signature` the authorization is out and your end user has not signed it yet ·
-         *     `submitted` the signed request reached the provider.
+         *     `submitted` the signed request reached the provider · `failed` the order was abandoned and
+         *     will never be fulfilled.
          *
          *     `claimed` is FINAL the moment the order exists: nothing was ordered, nothing was signed and
          *     nothing is owed. `submitted` will not move either — what is still outstanding is outstanding
          *     on the request, and `messagingEnablement` is what you follow for it. This is deliberately not
          *     a second progress meter.
+         *
+         *     `failed` is also FINAL, and it is not the same fact as a failed `messagingEnablement`. One
+         *     failed request is one attempt that ended; this says nobody will submit for this number again
+         *     under this order, the authorization ceremony is shut and its link no longer opens. It is
+         *     written only by a deliberate act of ours, never by a provider's answer, so an integrator
+         *     reading it back can treat it as settled.
          * @enum {string}
          */
-        HostedMessagingOrderStatus: "claimed" | "awaiting_signature" | "submitted";
+        HostedMessagingOrderStatus: "claimed" | "awaiting_signature" | "submitted" | "failed";
         /**
          * @description Which door the order took. Decided by us from what the number already had, never chosen by
          *     the caller, and never changed afterwards.
