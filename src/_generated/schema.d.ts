@@ -597,6 +597,10 @@ export interface paths {
          *     The account may be one the caller does not themselves hold: administering an account is
          *     permission-gated, while reading its content is grant-gated, so somebody has to be able to
          *     add the first member.
+         *
+         *     The user must be one of the account's customer's own users. A grant is the customer-staff
+         *     door, so naming anybody else — one of your own staff, or another customer's user — is
+         *     refused with a 422.
          */
         post: operations["createFaxAccountUser"];
         delete?: never;
