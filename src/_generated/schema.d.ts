@@ -2387,7 +2387,7 @@ export interface paths {
          * @description Your customers' call log, newest first.
          *
          *     **The date range picks the months that are read.** The switch keeps one table per month, so
-         *     `filter[started-after]` and `filter[started-before]` decide which are opened at all. With no
+         *     `filter[startedAfter]` and `filter[startedBefore]` decide which are opened at all. With no
          *     range you get the current and previous month; a range wider than **13 months** is refused
          *     with a 400 carrying `meta: {filter: {maxMonths: 13}}`.
          *
@@ -2435,7 +2435,7 @@ export interface paths {
          * List a call record's recordings, each with a download link
          * @description One call can be captured more than once — the phone system keys a recording by
          *     `(call id, capture id)`, and a call record names BOTH of its legs' call ids — so this
-         *     answers a **collection**, not a single link. Use it whenever `has-recording` is true on the
+         *     answers a **collection**, not a single link. Use it whenever `hasRecording` is true on the
          *     call record.
          *
          *     **Each item carries its own `content-url`**, a time-limited link on your own API host.
@@ -6151,14 +6151,17 @@ export interface components {
             };
         };
         /**
-         * @description Which way the call went. The phone system records ONE integer carrying both this and
-         *     `disposition`; an integer we have no word for is published as its own digits rather than as
-         *     null, so a vocabulary that grows at the switch's end never erases a call.
+         * @description Which way the call went. `inbound` covers both an answered and a missed inbound call — read
+         *     `disposition` for that half. `onNet` is extension to extension.
+         *
+         *     The phone system records ONE integer carrying both this and `disposition`; an integer we have
+         *     no word for is published as its own digits rather than as null, so a vocabulary that grows at
+         *     the switch's end never erases a call.
          * @enum {string|null}
          */
-        CallDirection: "outbound" | "inbound" | "on-net" | null;
+        CallType: "inbound" | "outbound" | "onNet" | null;
         /**
-         * @description Whether anybody answered. Derived from the same integer as `direction`.
+         * @description Whether anybody answered. Derived from the same integer as `type`.
          * @enum {string|null}
          */
         CallDisposition: "answered" | "missed" | null;
@@ -6353,120 +6356,185 @@ export interface components {
             meta?: components["schemas"]["DocumentMeta"];
         };
         /**
-         * @description One call, as the phone system recorded it. The three instants are RFC 3339 **in UTC** — the
-         *     switch stores them as Unix epochs, which is the one timestamp shape that carries no zone
-         *     ambiguity.
+         * @description One call, as the phone system recorded it.
          *
-         *     **Use `from-number` and `to-number` for who called whom.** They answer the same question on
-         *     every call — inbound, outbound, extension to extension and forwarded — and they are E.164
-         *     (`+14075550101`), so you can group, join and de-duplicate on them. **A value that is not a
-         *     telephone number is served as the phone system wrote it**: an extension stays `101`, a star
-         *     code stays `*97`, and a number we cannot read as North American is left alone. Read them as
-         *     "E.164 when it is a number we are sure of, the raw value otherwise".
+         *     **Two tiers.** Everything down to `hidden` is the STANDARD set and is on every response. The
+         *     fields after it are EXTENDED — the phone system's own raw values — and are served only when
+         *     you name them in `fields[call-records]`. See that parameter for the syntax.
          *
-         *     **Every other field below is the phone system's own column, unchanged.** `from-user`,
-         *     `from-uri`, `to-user`, `to-uri` and `dialed` are what the switch recorded, in whichever
-         *     spelling it recorded them, and they are what a support desk asks you to quote. They are not
-         *     interchangeable with the two above: `from-user` is the *subscriber* who placed the call, so
-         *     it is empty on every inbound call, and `to-uri` is where the call finally *landed* rather
-         *     than what was dialled.
+         *     **The three instants are RFC 3339 in UTC**, ending in `Z`. The switch stores them as Unix
+         *     epochs, which is the one timestamp shape that carries no zone ambiguity.
+         *
+         *     **A field that does not apply is `null`, never an empty string.** A missed call has a null
+         *     `answeredAt`; a call with no caller ID has a null `fromNumber`.
+         *
+         *     **A `*Number` field is E.164 or nothing.** `fromNumber`, `toNumber` and `dialedNumber` carry
+         *     `+14075550101` or null — never an extension, a dial code or a star code. Those are not
+         *     telephone numbers, and a field named for a number must not carry one. An extension is in
+         *     `fromExtension`, `routedByExtension` or `answeringExtension`; the raw value the switch wrote
+         *     is in the extended tier. So you can group, join and de-duplicate on these three without
+         *     checking their shape first.
          */
         CallRecordAttributes: {
-            direction?: components["schemas"]["CallDirection"];
+            type?: components["schemas"]["CallType"];
             disposition?: components["schemas"]["CallDisposition"];
             /**
-             * @description The phone system's own integer, unmodified — `direction` and `disposition` are both read
-             *     off it. Published so a support conversation can quote what the switch actually recorded.
+             * Format: uuid
+             * @description The reseller this call log was read as.
              */
-            "vendor-type"?: number | null;
+            tenantId?: string | null;
+            /** @description The phone system domain the call is on. */
             domain?: string | null;
+            /** @description The phone system territory the domain belongs to. */
+            territory?: string | null;
             /**
-             * @description **Who called**, in E.164 — or the extension when the caller was one. Read `direction` to
-             *     know what it names:
+             * @description **Who called**, in E.164. Read `type` to know what it names:
              *
              *     - `inbound` — the **outside caller's** number.
-             *     - `outbound` — the **caller ID your customer sent**, which is the extension itself when
-             *       that extension has no caller-ID number.
-             *     - `on-net` — the **extension that placed the call**.
+             *     - `outbound` and `onNet` — the **caller ID your customer sent**.
              *
-             *     This is the field to read for the calling party. `from-user` is empty on every inbound
-             *     call, because an outside caller is not a subscriber of the phone system.
+             *     Null when the calling party had no telephone number at all, which is the ordinary case on
+             *     an extension-to-extension call and on an extension with no caller ID configured. The
+             *     extension itself is `fromExtension`.
              * @example +17406495415
              */
-            "from-number"?: string | null;
+            fromNumber?: string | null;
             /**
-             * @description **Who was dialled**, in E.164 — or the extension, dial code or star code when that is
-             *     what was dialled. The same on every `direction`: on `inbound` it is the number the
-             *     outside caller rang, on `outbound` the number your customer rang, on `on-net` the
-             *     extension.
-             *
-             *     It is what the caller **asked for**, not where the call ended up. Where it finally landed
-             *     after forwarding, hunting or voicemail is `to-uri`, and on a forwarded call the two
-             *     differ.
-             * @example +17402084385
-             */
-            "to-number"?: string | null;
-            /**
-             * @description The phone system's own column. The extension that placed the call, empty when an outside
-             *     caller did — so it is empty on every inbound call.
+             * @description The extension that placed the call. Null on every inbound call — an outside caller is not
+             *     a subscriber of the phone system.
              * @example 101
              */
-            "from-user"?: string | null;
+            fromExtension?: string | null;
+            /** @description The caller-ID name, as the switch recorded it. */
+            fromName?: string | null;
             /**
-             * @description The phone system's own column. The originating SIP URI, as it recorded it.
-             * @example sip:+17406495415@carrier.example
+             * @description **The number the call was placed to**, in E.164 — on an inbound call the DID the outside
+             *     caller dialled, on an outbound call the number your customer rang.
+             *
+             *     It is what the caller **asked for**, not where the call ended up. Where it finally landed
+             *     after forwarding, hunting or voicemail is `terminatedTo` in the extended tier, and on a
+             *     forwarded call the two differ. Null when nothing telephone-shaped was dialled.
+             * @example +17402084385
              */
-            "from-uri"?: string | null;
-            "from-name"?: string | null;
+            toNumber?: string | null;
             /**
-             * @description The phone system's own column, in whichever spelling it recorded — the same switch writes
-             *     both `5132935243` and `18884339987` here. Use `to-number` to compare calls.
-             * @example 17402084385
+             * @description **What was actually dialled**, in E.164 — kept beside `toNumber` because the dial plan
+             *     rewrites what a user types. Seven-digit and ten-digit dialling both reach the same
+             *     destination as an eleven-digit one, so the two fields agree on most calls and differ on
+             *     those.
+             *
+             *     Null when what was typed cannot be read as a telephone number with certainty — a
+             *     seven-digit local dial names no area code, so it has no E.164 spelling we can be sure
+             *     of. `rawRequestUser` in the extended tier has the digits as typed.
+             * @example +14075550101
              */
-            "to-user"?: string | null;
+            dialedNumber?: string | null;
             /**
-             * @description The phone system's own column. Where the call LANDED after the dial plan — an extension,
-             *     a forward target, or `VMail`. Not what was dialled; that is `to-number`.
-             * @example sip:106@acme.example
+             * @description The first extension the call landed on — the queue, hunt group or forwarding extension
+             *     whose rule fired. Null when the call simply rang its destination.
+             * @example 500
              */
-            "to-uri"?: string | null;
+            routedByExtension?: string | null;
             /**
-             * @description The phone system's own column. What was dialled, as it recorded it.
-             * @example 17402084385
+             * @description The extension the call terminated at. On a queue dispatch this is the agent who answered,
+             *     not the queue. On a forwarded call it stays the forwarding extension, and `terminatedTo`
+             *     is where the call actually went.
+             * @example 101
              */
-            dialed?: string | null;
-            /** @description The extension that acted on somebody else's behalf, if any. */
-            "by-user"?: string | null;
-            /** @description The extension that took the call. */
-            "term-user"?: string | null;
-            /** Format: date-time */
-            "started-at"?: string | null;
+            answeringExtension?: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-09-12T14:00:00Z
+             */
+            startedAt?: string | null;
             /**
              * Format: date-time
              * @description Null when nobody answered.
+             * @example 2026-09-12T14:00:04Z
              */
-            "answered-at"?: string | null;
-            /** Format: date-time */
-            "released-at"?: string | null;
+            answeredAt?: string | null;
+            /**
+             * Format: date-time
+             * @example 2026-09-12T14:01:04Z
+             */
+            releasedAt?: string | null;
             /** @description Seconds, end to end. */
-            duration?: number | null;
+            durationSeconds?: number | null;
             /** @description Seconds anybody was actually talking. */
-            "talk-time"?: number | null;
-            tag?: string | null;
-            /** @description Does the phone system hide this record from its own call log? */
-            hidden?: boolean;
+            talkSeconds?: number | null;
+            /**
+             * @description The phone system's own code for how the call ended.
+             * @example end
+             */
+            releaseCode?: string | null;
+            /**
+             * @description The phone system's own sentence for how the call ended.
+             * @example Orig: Bye
+             */
+            releaseText?: string | null;
             /**
              * @description Is a recording held for this call? Existence only in this release — the media endpoint
              *     that hands the audio back is a later one.
              */
-            "has-recording"?: boolean;
-            /** @description The phone system's own id for the call, for support conversations. */
-            "vendor-id"?: string | null;
+            hasRecording?: boolean;
+            /** @description Does the phone system hide this record from its own call log? */
+            hidden?: boolean;
+            /**
+             * @description EXTENDED. The phone system's own id for the call — the first thing a support desk asks
+             *     you to quote.
+             * @example 20260912000000000001c0ffee0123456789abcdef
+             */
+            vendorId?: string | null;
+            /** @description EXTENDED. The SIP Call-ID of the originating leg. */
+            origCallId?: string | null;
+            /** @description EXTENDED. The SIP Call-ID of the terminating leg. */
+            termCallId?: string | null;
+            /**
+             * @description EXTENDED. Which feature produced `routedByExtension` — for example `QueueSDispatch`,
+             *     `ForwardAlways` or `ForwardNoAns`.
+             * @example ForwardNoAns
+             */
+            byAction?: string | null;
+            /**
+             * @description EXTENDED. Where the call LANDED after the dial plan, exactly as the switch wrote it. Often
+             *     not a telephone number: an internal `sip:106@acme.example`, a carrier URI for a forward
+             *     off-net, or the literal `VMail` when the call dropped to voicemail.
+             * @example sip:106@acme.example
+             */
+            terminatedTo?: string | null;
+            /**
+             * @description EXTENDED. The audio codec.
+             * @example PCMU
+             */
+            codec?: string | null;
+            /** @description EXTENDED. The switch host that wrote the record. */
+            hostname?: string | null;
+            /**
+             * @description EXTENDED. The originating SIP URI, as the switch recorded it.
+             * @example sip:+17406495415@carrier.example
+             */
+            rawFromUri?: string | null;
+            /**
+             * @description EXTENDED. The originating user part, as the switch recorded it.
+             * @example 17406495415
+             */
+            rawFromUser?: string | null;
+            /**
+             * @description EXTENDED. The dialled user part, in whichever spelling the switch recorded — the same
+             *     switch writes both `5132935243` and `18884339987` here. Use `toNumber` to compare calls.
+             * @example 17402084385
+             */
+            rawToUser?: string | null;
+            /**
+             * @description EXTENDED. What was dialled, as the switch recorded it.
+             * @example 17402084385
+             */
+            rawRequestUser?: string | null;
         };
         CallRecordRelationships: {
             customer?: components["schemas"]["RelationshipToOne"];
-            "from-pbx-user"?: components["schemas"]["RelationshipToOne"];
-            "to-pbx-user"?: components["schemas"]["RelationshipToOne"];
+            fromPbxUser?: components["schemas"]["RelationshipToOne"];
+            toPbxUser?: components["schemas"]["RelationshipToOne"];
         };
         CallRecordResource: {
             /** @enum {string} */
@@ -12877,22 +12945,42 @@ export interface operations {
                  *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
                  */
                 "page[before]"?: components["parameters"]["PageBefore"];
-                /** @description `-started-at` (the default, newest first) or `started-at`. */
-                sort?: "-started-at" | "started-at";
+                /** @description `-startedAt` (the default, newest first) or `startedAt`. */
+                sort?: "-startedAt" | "startedAt";
                 /** @description Only the calls on this customer's PBX domain. */
                 "filter[customer]"?: string;
                 /**
                  * @description Calls that started at or after this moment, RFC 3339.
                  * @example 2026-09-01T00:00:00Z
                  */
-                "filter[started-after]"?: string;
+                "filter[startedAfter]"?: string;
                 /**
                  * @description Calls that started at or before this moment, RFC 3339.
                  * @example 2026-09-30T23:59:59Z
                  */
-                "filter[started-before]"?: string;
-                /** @description A word outside this list is refused with a 400, never answered with an empty page. */
-                "filter[direction]"?: components["schemas"]["CallDirection"];
+                "filter[startedBefore]"?: string;
+                /**
+                 * @description A word outside this list is refused with a 400, never answered with an empty page.
+                 *     `inbound` selects both answered and missed inbound calls.
+                 */
+                "filter[type]"?: components["schemas"]["CallType"];
+                /**
+                 * @description **Ask for the extended fields here.** A call record has a standard set, which you get on
+                 *     every response, and an extended set of the phone system's own raw values, which you get
+                 *     only by naming them:
+                 *
+                 *     `?fields[call-records]=type,startedAt,origCallId,terminatedTo`
+                 *
+                 *     This is the JSON:API sparse-fieldset parameter, so it **narrows** rather than adds: the
+                 *     response carries exactly the fields you name and nothing else. List every field you want,
+                 *     standard ones included. Send nothing and you get the standard set.
+                 *
+                 *     The extended fields are `vendorId`, `origCallId`, `termCallId`, `byAction`,
+                 *     `terminatedTo`, `codec`, `hostname`, `rawFromUri`, `rawFromUser`, `rawToUser` and
+                 *     `rawRequestUser`. Naming a field that does not exist is a 400.
+                 * @example type,startedAt,vendorId,terminatedTo
+                 */
+                "fields[call-records]"?: string;
                 /** @description Calls with this PBX **user id** on either leg — placed by them or taken by them. */
                 "filter[user]"?: string;
                 /**
@@ -12905,7 +12993,7 @@ export interface operations {
                  *     both.
                  *
                  *     **The date range still applies.** Only the months in the range are searched — this month
-                 *     and last unless you send `filter[started-after]` or `filter[started-before]` — so look up
+                 *     and last unless you send `filter[startedAfter]` or `filter[startedBefore]` — so look up
                  *     an older call with a range that covers it.
                  *
                  *     An id that names no call answers an empty page, not an error.
@@ -12934,29 +13022,27 @@ export interface operations {
                      *           "type": "call-records",
                      *           "id": "e4837703-48c1-5c9e-8699-bbaafb17bb84",
                      *           "attributes": {
-                     *             "direction": "inbound",
+                     *             "type": "inbound",
                      *             "disposition": "answered",
-                     *             "vendor-type": 1,
+                     *             "tenantId": "0198c4a1-1111-7222-8333-444455556666",
                      *             "domain": "acme.example",
-                     *             "from-number": "+13025556789",
-                     *             "to-number": "+14075550101",
-                     *             "from-user": "",
-                     *             "from-uri": "sip:+13025556789@carrier.example",
-                     *             "from-name": "Dr Bell",
-                     *             "to-user": "14075550101",
-                     *             "to-uri": "sip:101@acme.example",
-                     *             "dialed": "14075550101",
-                     *             "by-user": "",
-                     *             "term-user": "101",
-                     *             "started-at": "2026-09-12T14:00:00+00:00",
-                     *             "answered-at": "2026-09-12T14:00:04+00:00",
-                     *             "released-at": "2026-09-12T14:01:04+00:00",
-                     *             "duration": 64,
-                     *             "talk-time": 60,
-                     *             "tag": "clinic",
-                     *             "hidden": false,
-                     *             "has-recording": true,
-                     *             "vendor-id": "20260912000000000001c0ffee0123456789abcdef"
+                     *             "territory": "telimatic",
+                     *             "fromNumber": "+13025556789",
+                     *             "fromExtension": null,
+                     *             "fromName": "Dr Bell",
+                     *             "toNumber": "+14075550101",
+                     *             "dialedNumber": "+14075550101",
+                     *             "routedByExtension": null,
+                     *             "answeringExtension": "101",
+                     *             "startedAt": "2026-09-12T14:00:00Z",
+                     *             "answeredAt": "2026-09-12T14:00:04Z",
+                     *             "releasedAt": "2026-09-12T14:01:04Z",
+                     *             "durationSeconds": 64,
+                     *             "talkSeconds": 60,
+                     *             "releaseCode": "end",
+                     *             "releaseText": "Orig: Bye",
+                     *             "hasRecording": true,
+                     *             "hidden": false
                      *           },
                      *           "relationships": {
                      *             "customer": {
@@ -12965,10 +13051,10 @@ export interface operations {
                      *                 "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f"
                      *               }
                      *             },
-                     *             "from-pbx-user": {
+                     *             "fromPbxUser": {
                      *               "data": null
                      *             },
-                     *             "to-pbx-user": {
+                     *             "toPbxUser": {
                      *               "data": {
                      *                 "type": "users",
                      *                 "id": "6f98cc5d-5248-5100-9967-8606e2993077"
