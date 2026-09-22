@@ -6289,12 +6289,14 @@ paths:
                       disposition: answered
                       vendor-type: 1
                       domain: acme.example
+                      from-number: '+13025556789'
+                      to-number: '+14075550101'
                       from-user: ''
                       from-uri: sip:+13025556789@carrier.example
                       from-name: Dr Bell
-                      to-user: '101'
+                      to-user: '14075550101'
                       to-uri: sip:101@acme.example
-                      dialed: '+14075550101'
+                      dialed: '14075550101'
                       by-user: ''
                       term-user: '101'
                       started-at: '2026-09-12T14:00:00+00:00'
@@ -11886,6 +11888,20 @@ components:
         One call, as the phone system recorded it. The three instants are RFC 3339 **in UTC** — the
         switch stores them as Unix epochs, which is the one timestamp shape that carries no zone
         ambiguity.
+
+        **Use `from-number` and `to-number` for who called whom.** They answer the same question on
+        every call — inbound, outbound, extension to extension and forwarded — and they are E.164
+        (`+14075550101`), so you can group, join and de-duplicate on them. **A value that is not a
+        telephone number is served as the phone system wrote it**: an extension stays `101`, a star
+        code stays `*97`, and a number we cannot read as North American is left alone. Read them as
+        "E.164 when it is a number we are sure of, the raw value otherwise".
+
+        **Every other field below is the phone system's own column, unchanged.** `from-user`,
+        `from-uri`, `to-user`, `to-uri` and `dialed` are what the switch recorded, in whichever
+        spelling it recorded them, and they are what a support desk asks you to quote. They are not
+        interchangeable with the two above: `from-user` is the *subscriber* who placed the call, so
+        it is empty on every inbound call, and `to-uri` is where the call finally *landed* rather
+        than what was dialled.
       properties:
         direction:
           $ref: '#/components/schemas/CallDirection'
@@ -11897,12 +11913,59 @@ components:
             The phone system's own integer, unmodified — `direction` and `disposition` are both read
             off it. Published so a support conversation can quote what the switch actually recorded.
         domain: { type: [string, 'null'] }
-        from-user: { type: [string, 'null'], description: 'The extension that placed the call, empty when an outside caller did.' }
-        from-uri: { type: [string, 'null'] }
+        from-number:
+          type: [string, 'null']
+          description: |
+            **Who called**, in E.164 — or the extension when the caller was one. Read `direction` to
+            know what it names:
+
+            - `inbound` — the **outside caller's** number.
+            - `outbound` — the **caller ID your customer sent**, which is the extension itself when
+              that extension has no caller-ID number.
+            - `on-net` — the **extension that placed the call**.
+
+            This is the field to read for the calling party. `from-user` is empty on every inbound
+            call, because an outside caller is not a subscriber of the phone system.
+          example: '+17406495415'
+        to-number:
+          type: [string, 'null']
+          description: |
+            **Who was dialled**, in E.164 — or the extension, dial code or star code when that is
+            what was dialled. The same on every `direction`: on `inbound` it is the number the
+            outside caller rang, on `outbound` the number your customer rang, on `on-net` the
+            extension.
+
+            It is what the caller **asked for**, not where the call ended up. Where it finally landed
+            after forwarding, hunting or voicemail is `to-uri`, and on a forwarded call the two
+            differ.
+          example: '+17402084385'
+        from-user:
+          type: [string, 'null']
+          description: |
+            The phone system's own column. The extension that placed the call, empty when an outside
+            caller did — so it is empty on every inbound call.
+          example: '101'
+        from-uri:
+          type: [string, 'null']
+          description: The phone system's own column. The originating SIP URI, as it recorded it.
+          example: sip:+17406495415@carrier.example
         from-name: { type: [string, 'null'] }
-        to-user: { type: [string, 'null'] }
-        to-uri: { type: [string, 'null'] }
-        dialed: { type: [string, 'null'], description: 'What was actually dialled.' }
+        to-user:
+          type: [string, 'null']
+          description: |
+            The phone system's own column, in whichever spelling it recorded — the same switch writes
+            both `5132935243` and `18884339987` here. Use `to-number` to compare calls.
+          example: '17402084385'
+        to-uri:
+          type: [string, 'null']
+          description: |
+            The phone system's own column. Where the call LANDED after the dial plan — an extension,
+            a forward target, or `VMail`. Not what was dialled; that is `to-number`.
+          example: sip:106@acme.example
+        dialed:
+          type: [string, 'null']
+          description: The phone system's own column. What was dialled, as it recorded it.
+          example: '17402084385'
         by-user: { type: [string, 'null'], description: 'The extension that acted on somebody else''s behalf, if any.' }
         term-user: { type: [string, 'null'], description: 'The extension that took the call.' }
         started-at: { type: [string, 'null'], format: date-time }
