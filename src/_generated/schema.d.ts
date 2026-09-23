@@ -2316,10 +2316,10 @@ export interface paths {
          *     else about the call is knowable at this point, which is why `status` is always `requested`.
          *
          *     **Find the call's records with this id.** A call record's own id comes from the phone
-         *     system's CDR row, so the two ids differ: send this one as `filter[call-id]` on
+         *     system's CDR row, so the two ids differ: send this one as `filter[callId]` on
          *     `GET /v1/pbx/call-records` once the call ends. One call writes two records; the phone system
          *     records the leg that rang the user as hidden, so the list answers the outbound leg alone
-         *     unless you add `filter[include-hidden]=true`.
+         *     unless you add `filter[includeHidden]=true`.
          *
          *     **`device` must belong to `{user}`.** A device id that names a registration owned by
          *     somebody else — including a user of the same name on another domain — is refused with a
@@ -2392,7 +2392,7 @@ export interface paths {
          *     with a 400 carrying `meta: {filter: {maxMonths: 13}}`.
          *
          *     **Hidden records are left out of this list** and served on a direct read, which is what the
-         *     phone system's own portal does. `filter[include-hidden]=true` puts them back.
+         *     phone system's own portal does. `filter[includeHidden]=true` puts them back.
          */
         get: operations["listCallRecords"];
         put?: never;
@@ -6152,16 +6152,19 @@ export interface components {
         };
         /**
          * @description Which way the call went. `inbound` covers both an answered and a missed inbound call — read
-         *     `disposition` for that half. `onNet` is extension to extension.
+         *     `disposition` for that half. `internal` is a call that stayed inside one domain: extension
+         *     to extension, a call to voicemail, or a call into a conference. A call between two of your
+         *     customers' domains is not `internal` — it is recorded twice, `outbound` on the caller's side
+         *     and `inbound` on the called side.
          *
          *     The phone system records ONE integer carrying both this and `disposition`; an integer we have
          *     no word for is published as its own digits rather than as null, so a vocabulary that grows at
          *     the switch's end never erases a call.
          * @enum {string|null}
          */
-        CallType: "inbound" | "outbound" | "onNet" | null;
+        CallDirection: "inbound" | "outbound" | "internal" | null;
         /**
-         * @description Whether anybody answered. Derived from the same integer as `type`.
+         * @description Whether anybody answered. Derived from the same integer as `direction`.
          * @enum {string|null}
          */
         CallDisposition: "answered" | "missed" | null;
@@ -6188,12 +6191,12 @@ export interface components {
              * @example +14074366118
              * @example 4074366118
              */
-            "caller-id"?: string | null;
+            callerId?: string | null;
             /**
              * @description Ask the user's own phone to go off-hook by itself instead of ringing.
              * @default false
              */
-            "auto-answer": boolean;
+            autoAnswer: boolean;
             /**
              * Format: uuid
              * @description Which of the user's registered devices to call from — a `devices` id. It MUST belong to
@@ -6204,26 +6207,26 @@ export interface components {
         };
         /**
          * @description The call as it was requested. Every value is what was actually sent to the phone system,
-         *     which is not always what was typed: `caller-id` comes back in the spelling the called party
+         *     which is not always what was typed: `callerId` comes back in the spelling the called party
          *     will see.
          */
         PbxCallAttributes: {
             /** @description Who was called, as sent. */
             destination?: string;
             /** @description The number presented, E.164 without the `+`. Null when the user's own was used. */
-            "caller-id"?: string | null;
-            "auto-answer"?: boolean;
+            callerId?: string | null;
+            autoAnswer?: boolean;
             /** @description The `devices` id the call originates from, as sent. Null when none was named. */
             device?: string | null;
             /**
              * @description Always `requested` from this endpoint: it is the REQUEST's state, not the call's, because
              *     the phone system has taken the command and nothing about the call is knowable yet. Find
-             *     the call's records with `filter[call-id]` on `/v1/pbx/call-records`.
+             *     the call's records with `filter[callId]` on `/v1/pbx/call-records`.
              * @enum {string}
              */
             status?: "requested";
             /** Format: date-time */
-            "requested-at"?: string;
+            requestedAt?: string;
         };
         PbxCallResource: {
             /** @enum {string} */
@@ -6232,7 +6235,7 @@ export interface components {
              * Format: uuid
              * @description Minted by this API before the call was placed, and handed to the phone system as the SIP
              *     Call-ID it places the call under. It names the call on the PHONE SYSTEM, and
-             *     `filter[call-id]` on `/v1/pbx/call-records` finds the records the call wrote — whose own
+             *     `filter[callId]` on `/v1/pbx/call-records` finds the records the call wrote — whose own
              *     ids come from the CDR row instead.
              */
             id: string;
@@ -6250,9 +6253,9 @@ export interface components {
             user?: string | null;
             /** @description The customer's PBX domain. */
             domain?: string | null;
-            "display-name"?: string | null;
-            "first-name"?: string | null;
-            "last-name"?: string | null;
+            displayName?: string | null;
+            firstName?: string | null;
+            lastName?: string | null;
             email?: string | null;
             /** @description The phone system's own permission tier for this person. */
             scope?: string | null;
@@ -6264,16 +6267,16 @@ export interface components {
              *     is yours to decide, not ours to freeze into this contract.
              */
             presence?: string | null;
-            "caller-id-number"?: string | null;
-            "caller-id-name"?: string | null;
-            "time-zone"?: string | null;
+            callerIdNumber?: string | null;
+            callerIdName?: string | null;
+            timeZone?: string | null;
             /**
              * @description As the phone system stores it — TEXT, not RFC 3339. It is served unparsed because the
              *     switch has never published the format, and a mis-parse would be silent.
              */
-            "created-at"?: string | null;
+            createdAt?: string | null;
             /** @description As the phone system stores it. */
-            "updated-at"?: string | null;
+            updatedAt?: string | null;
         };
         PbxUserRelationships: {
             customer?: components["schemas"]["RelationshipToOne"];
@@ -6316,24 +6319,24 @@ export interface components {
             domain?: string | null;
             mode?: string | null;
             /** @description What the phone said it is. */
-            "user-agent"?: string | null;
+            userAgent?: string | null;
             contact?: string | null;
             transport?: string | null;
             /** @description The address the registration arrived from. */
-            "received-from"?: string | null;
+            receivedFrom?: string | null;
             /** @description As the phone system stores it — text, not RFC 3339. */
-            "registered-at"?: string | null;
+            registeredAt?: string | null;
             /** @description As the phone system stores it. */
-            "registration-expires-at"?: string | null;
-            /** @description Derived — is `registration-expires-at` still in the future? */
+            registrationExpiresAt?: string | null;
+            /** @description Derived — is `registrationExpiresAt` still in the future? */
             registered?: boolean;
-            "auto-answer"?: boolean;
+            autoAnswer?: boolean;
             /** @description As the phone system stores it. */
-            "created-at"?: string | null;
+            createdAt?: string | null;
         };
         PbxDeviceRelationships: {
             customer?: components["schemas"]["RelationshipToOne"];
-            "pbx-user"?: components["schemas"]["RelationshipToOne"];
+            pbxUser?: components["schemas"]["RelationshipToOne"];
         };
         PbxDeviceResource: {
             /** @enum {string} */
@@ -6376,7 +6379,7 @@ export interface components {
          *     checking their shape first.
          */
         CallRecordAttributes: {
-            type?: components["schemas"]["CallType"];
+            direction?: components["schemas"]["CallDirection"];
             disposition?: components["schemas"]["CallDisposition"];
             /**
              * Format: uuid
@@ -6388,10 +6391,10 @@ export interface components {
             /** @description The phone system territory the domain belongs to. */
             territory?: string | null;
             /**
-             * @description **Who called**, in E.164. Read `type` to know what it names:
+             * @description **Who called**, in E.164. Read `direction` to know what it names:
              *
              *     - `inbound` — the **outside caller's** number.
-             *     - `outbound` and `onNet` — the **caller ID your customer sent**.
+             *     - `outbound` and `internal` — the **caller ID your customer sent**.
              *
              *     Null when the calling party had no telephone number at all, which is the ordinary case on
              *     an extension-to-extension call and on an extension with no caller ID configured. The
@@ -6703,20 +6706,31 @@ export interface components {
             id: string;
             attributes?: components["schemas"]["TranscriptAttributes"];
         };
+        /** @description Everything `TranscriptAttributes` carries, plus the turns. */
+        TranscriptWithSegmentsAttributes: components["schemas"]["TranscriptAttributes"] & {
+            /**
+             * @description The turns of the conversation, in the order they were spoken. An EMPTY array is a
+             *     real answer: nobody spoke, or the provider heard nothing it could separate into
+             *     turns.
+             */
+            segments?: components["schemas"]["TranscriptSegment"][];
+        };
         /**
          * @description A transcript as the single-transcript endpoint serves it: everything the list carries, plus
          *     the turns. `segments` is the one member the list leaves out, because deriving the turns means
          *     reading the stored document and the list would pay that per capture.
          */
-        TranscriptWithSegmentsResource: components["schemas"]["TranscriptResource"] & {
-            attributes?: components["schemas"]["TranscriptAttributes"] & {
-                /**
-                 * @description The turns of the conversation, in the order they were spoken. An EMPTY array
-                 *     is a real answer: nobody spoke, or the provider heard nothing it could
-                 *     separate into turns.
-                 */
-                segments?: components["schemas"]["TranscriptSegment"][];
-            };
+        TranscriptWithSegmentsResource: {
+            /** @enum {string} */
+            type: "transcripts";
+            /**
+             * Format: uuid
+             * @description The RECORDING's id — a transcript is keyed by the capture it is of, one to one — so
+             *     it is the same id the recordings list publishes and the same id in every region.
+             */
+            id: string;
+        } & {
+            attributes?: components["schemas"]["TranscriptWithSegmentsAttributes"];
         };
         TranscriptCollectionDocument: {
             /**
@@ -12644,12 +12658,12 @@ export interface operations {
                  */
                 "page[before]"?: components["parameters"]["PageBefore"];
                 /**
-                 * @description `user` (the default) or `display-name`, either reversible with a leading `-`. The id is
+                 * @description `user` (the default) or `displayName`, either reversible with a leading `-`. The id is
                  *     appended as a tiebreaker, so the order is always total and a page boundary cannot fall
                  *     inside a tie.
-                 * @example display-name
+                 * @example displayName
                  */
-                sort?: "user" | "-user" | "display-name" | "-display-name";
+                sort?: "user" | "-user" | "displayName" | "-displayName";
                 /** @description Only the subscribers of this customer's PBX domain. */
                 "filter[customer]"?: string;
                 /**
@@ -12685,19 +12699,19 @@ export interface operations {
                      *           "attributes": {
                      *             "user": "101",
                      *             "domain": "acme.example",
-                     *             "display-name": "Ann Perkins",
-                     *             "first-name": "Ann",
-                     *             "last-name": "Perkins",
+                     *             "displayName": "Ann Perkins",
+                     *             "firstName": "Ann",
+                     *             "lastName": "Perkins",
                      *             "email": "ann@acme.example",
                      *             "scope": "Basic User",
                      *             "group": "sales",
                      *             "site": "HQ",
                      *             "presence": "open",
-                     *             "caller-id-number": "+14075550101",
-                     *             "caller-id-name": "Ann Perkins",
-                     *             "time-zone": "US/Eastern",
-                     *             "created-at": "2026-01-02 03:04:05",
-                     *             "updated-at": "2026-09-01 10:00:00"
+                     *             "callerIdNumber": "+14075550101",
+                     *             "callerIdName": "Ann Perkins",
+                     *             "timeZone": "US/Eastern",
+                     *             "createdAt": "2026-01-02 03:04:05",
+                     *             "updatedAt": "2026-09-01 10:00:00"
                      *           },
                      *           "relationships": {
                      *             "customer": {
@@ -12852,15 +12866,15 @@ export interface operations {
                      *             "user": "101",
                      *             "domain": "acme.example",
                      *             "mode": "register",
-                     *             "user-agent": "Polycom/6.4.2",
+                     *             "userAgent": "Polycom/6.4.2",
                      *             "contact": "sip:101@198.51.100.7:5060",
                      *             "transport": "udp",
-                     *             "received-from": "198.51.100.7:5060",
-                     *             "registered-at": "2026-09-14 08:00:00",
-                     *             "registration-expires-at": "2026-09-14 09:00:00",
+                     *             "receivedFrom": "198.51.100.7:5060",
+                     *             "registeredAt": "2026-09-14 08:00:00",
+                     *             "registrationExpiresAt": "2026-09-14 09:00:00",
                      *             "registered": true,
-                     *             "auto-answer": false,
-                     *             "created-at": "2026-01-02 03:04:05"
+                     *             "autoAnswer": false,
+                     *             "createdAt": "2026-01-02 03:04:05"
                      *           },
                      *           "relationships": {
                      *             "customer": {
@@ -12869,7 +12883,7 @@ export interface operations {
                      *                 "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f"
                      *               }
                      *             },
-                     *             "pbx-user": {
+                     *             "pbxUser": {
                      *               "data": {
                      *                 "type": "users",
                      *                 "id": "6f98cc5d-5248-5100-9967-8606e2993077"
@@ -12961,15 +12975,16 @@ export interface operations {
                 "filter[startedBefore]"?: string;
                 /**
                  * @description A word outside this list is refused with a 400, never answered with an empty page.
-                 *     `inbound` selects both answered and missed inbound calls.
+                 *     `inbound` selects both answered and missed inbound calls; `internal` selects calls that
+                 *     stayed inside one domain.
                  */
-                "filter[type]"?: components["schemas"]["CallType"];
+                "filter[direction]"?: components["schemas"]["CallDirection"];
                 /**
                  * @description **Ask for the extended fields here.** A call record has a standard set, which you get on
                  *     every response, and an extended set of the phone system's own raw values, which you get
                  *     only by naming them:
                  *
-                 *     `?fields[call-records]=type,startedAt,origCallId,terminatedTo`
+                 *     `?fields[call-records]=direction,startedAt,origCallId,terminatedTo`
                  *
                  *     This is the JSON:API sparse-fieldset parameter, so it **narrows** rather than adds: the
                  *     response carries exactly the fields you name and nothing else. List every field you want,
@@ -12978,7 +12993,7 @@ export interface operations {
                  *     The extended fields are `vendorId`, `origCallId`, `termCallId`, `byAction`,
                  *     `terminatedTo`, `codec`, `hostname`, `rawFromUri`, `rawFromUser`, `rawToUser` and
                  *     `rawRequestUser`. Naming a field that does not exist is a 400.
-                 * @example type,startedAt,vendorId,terminatedTo
+                 * @example direction,startedAt,vendorId,terminatedTo
                  */
                 "fields[call-records]"?: string;
                 /** @description Calls with this PBX **user id** on either leg — placed by them or taken by them. */
@@ -12989,7 +13004,7 @@ export interface operations {
                  *
                  *     **One call writes two records.** The phone system rings the user first and then dials
                  *     out, and it records each leg once the call ends. It records the leg that rang the user as
-                 *     hidden, so this list answers the outbound leg alone; add `filter[include-hidden]=true` for
+                 *     hidden, so this list answers the outbound leg alone; add `filter[includeHidden]=true` for
                  *     both.
                  *
                  *     **The date range still applies.** Only the months in the range are searched — this month
@@ -12999,9 +13014,9 @@ export interface operations {
                  *     An id that names no call answers an empty page, not an error.
                  * @example 01a0a62e-bd9e-73a1-89ec-127a80d6dd4c
                  */
-                "filter[call-id]"?: string;
+                "filter[callId]"?: string;
                 /** @description `true` also returns records the phone system marks hidden. */
-                "filter[include-hidden]"?: boolean;
+                "filter[includeHidden]"?: boolean;
             };
             header?: never;
             path?: never;
@@ -13022,7 +13037,7 @@ export interface operations {
                      *           "type": "call-records",
                      *           "id": "e4837703-48c1-5c9e-8699-bbaafb17bb84",
                      *           "attributes": {
-                     *             "type": "inbound",
+                     *             "direction": "inbound",
                      *             "disposition": "answered",
                      *             "tenantId": "0198c4a1-1111-7222-8333-444455556666",
                      *             "domain": "acme.example",

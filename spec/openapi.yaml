@@ -285,7 +285,7 @@ tags:
       read scopes do not imply it — the act has a cost and a caller ID attached. It answers **202**,
       never 201: the phone system takes the command onto its own bus and the call has not happened
       yet, which is why `status` reports the REQUEST's state, not the call's. Once the call ends, find
-      its records by sending its `id` as `filter[call-id]` on `/v1/pbx/call-records`.
+      its records by sending its `id` as `filter[callId]` on `/v1/pbx/call-records`.
   - name: Call records
     description: |
       Your customers' call log.
@@ -5939,13 +5939,13 @@ paths:
           in: query
           required: false
           description: |
-            `user` (the default) or `display-name`, either reversible with a leading `-`. The id is
+            `user` (the default) or `displayName`, either reversible with a leading `-`. The id is
             appended as a tiebreaker, so the order is always total and a page boundary cannot fall
             inside a tie.
           schema:
             type: string
-            enum: [user, -user, display-name, -display-name]
-          example: display-name
+            enum: [user, -user, displayName, -displayName]
+          example: displayName
         - name: filter[customer]
           in: query
           required: false
@@ -5979,19 +5979,19 @@ paths:
                     attributes:
                       user: '101'
                       domain: acme.example
-                      display-name: Ann Perkins
-                      first-name: Ann
-                      last-name: Perkins
+                      displayName: Ann Perkins
+                      firstName: Ann
+                      lastName: Perkins
                       email: ann@acme.example
                       scope: Basic User
                       group: sales
                       site: HQ
                       presence: open
-                      caller-id-number: '+14075550101'
-                      caller-id-name: Ann Perkins
-                      time-zone: US/Eastern
-                      created-at: '2026-01-02 03:04:05'
-                      updated-at: '2026-09-01 10:00:00'
+                      callerIdNumber: '+14075550101'
+                      callerIdName: Ann Perkins
+                      timeZone: US/Eastern
+                      createdAt: '2026-01-02 03:04:05'
+                      updatedAt: '2026-09-01 10:00:00'
                     relationships:
                       customer:
                         data: { type: customers, id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f }
@@ -6048,10 +6048,10 @@ paths:
         else about the call is knowable at this point, which is why `status` is always `requested`.
 
         **Find the call's records with this id.** A call record's own id comes from the phone
-        system's CDR row, so the two ids differ: send this one as `filter[call-id]` on
+        system's CDR row, so the two ids differ: send this one as `filter[callId]` on
         `GET /v1/pbx/call-records` once the call ends. One call writes two records; the phone system
         records the leg that rang the user as hidden, so the list answers the outbound leg alone
-        unless you add `filter[include-hidden]=true`.
+        unless you add `filter[includeHidden]=true`.
 
         **`device` must belong to `{user}`.** A device id that names a registration owned by
         somebody else — including a user of the same name on another domain — is refused with a
@@ -6144,19 +6144,19 @@ paths:
                       user: '101'
                       domain: acme.example
                       mode: register
-                      user-agent: Polycom/6.4.2
+                      userAgent: Polycom/6.4.2
                       contact: sip:101@198.51.100.7:5060
                       transport: udp
-                      received-from: 198.51.100.7:5060
-                      registered-at: '2026-09-14 08:00:00'
-                      registration-expires-at: '2026-09-14 09:00:00'
+                      receivedFrom: 198.51.100.7:5060
+                      registeredAt: '2026-09-14 08:00:00'
+                      registrationExpiresAt: '2026-09-14 09:00:00'
                       registered: true
-                      auto-answer: false
-                      created-at: '2026-01-02 03:04:05'
+                      autoAnswer: false
+                      createdAt: '2026-01-02 03:04:05'
                     relationships:
                       customer:
                         data: { type: customers, id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f }
-                      pbx-user:
+                      pbxUser:
                         data: { type: users, id: 6f98cc5d-5248-5100-9967-8606e2993077 }
                 meta:
                   page:
@@ -6206,7 +6206,7 @@ paths:
         with a 400 carrying `meta: {filter: {maxMonths: 13}}`.
 
         **Hidden records are left out of this list** and served on a direct read, which is what the
-        phone system's own portal does. `filter[include-hidden]=true` puts them back.
+        phone system's own portal does. `filter[includeHidden]=true` puts them back.
       security:
         - bearerAuth: [pbx-call-records:read]
       parameters:
@@ -6237,14 +6237,15 @@ paths:
           description: Calls that started at or before this moment, RFC 3339.
           schema: { type: string, format: date-time }
           example: '2026-09-30T23:59:59Z'
-        - name: filter[type]
+        - name: filter[direction]
           in: query
           required: false
           description: |
             A word outside this list is refused with a 400, never answered with an empty page.
-            `inbound` selects both answered and missed inbound calls.
+            `inbound` selects both answered and missed inbound calls; `internal` selects calls that
+            stayed inside one domain.
           schema:
-            $ref: '#/components/schemas/CallType'
+            $ref: '#/components/schemas/CallDirection'
         - name: fields[call-records]
           in: query
           required: false
@@ -6253,7 +6254,7 @@ paths:
             every response, and an extended set of the phone system's own raw values, which you get
             only by naming them:
 
-            `?fields[call-records]=type,startedAt,origCallId,terminatedTo`
+            `?fields[call-records]=direction,startedAt,origCallId,terminatedTo`
 
             This is the JSON:API sparse-fieldset parameter, so it **narrows** rather than adds: the
             response carries exactly the fields you name and nothing else. List every field you want,
@@ -6263,14 +6264,14 @@ paths:
             `terminatedTo`, `codec`, `hostname`, `rawFromUri`, `rawFromUser`, `rawToUser` and
             `rawRequestUser`. Naming a field that does not exist is a 400.
           schema: { type: string }
-          example: type,startedAt,vendorId,terminatedTo
+          example: direction,startedAt,vendorId,terminatedTo
         - name: filter[user]
           in: query
           required: false
           description: |
             Calls with this PBX **user id** on either leg — placed by them or taken by them.
           schema: { type: string, format: uuid }
-        - name: filter[call-id]
+        - name: filter[callId]
           in: query
           required: false
           description: |
@@ -6279,7 +6280,7 @@ paths:
 
             **One call writes two records.** The phone system rings the user first and then dials
             out, and it records each leg once the call ends. It records the leg that rang the user as
-            hidden, so this list answers the outbound leg alone; add `filter[include-hidden]=true` for
+            hidden, so this list answers the outbound leg alone; add `filter[includeHidden]=true` for
             both.
 
             **The date range still applies.** Only the months in the range are searched — this month
@@ -6289,7 +6290,7 @@ paths:
             An id that names no call answers an empty page, not an error.
           schema: { type: string, format: uuid }
           example: 01a0a62e-bd9e-73a1-89ec-127a80d6dd4c
-        - name: filter[include-hidden]
+        - name: filter[includeHidden]
           in: query
           required: false
           description: '`true` also returns records the phone system marks hidden.'
@@ -6306,7 +6307,7 @@ paths:
                   - type: call-records
                     id: e4837703-48c1-5c9e-8699-bbaafb17bb84
                     attributes:
-                      type: inbound
+                      direction: inbound
                       disposition: answered
                       tenantId: 0198c4a1-1111-7222-8333-444455556666
                       domain: acme.example
@@ -11662,19 +11663,22 @@ components:
             id: { type: string, format: uuid }
             attributes:
               $ref: '#/components/schemas/SipTrunkTargetWritableAttributes'
-    CallType:
+    CallDirection:
       type: [string, 'null']
       description: |
         Which way the call went. `inbound` covers both an answered and a missed inbound call — read
-        `disposition` for that half. `onNet` is extension to extension.
+        `disposition` for that half. `internal` is a call that stayed inside one domain: extension
+        to extension, a call to voicemail, or a call into a conference. A call between two of your
+        customers' domains is not `internal` — it is recorded twice, `outbound` on the caller's side
+        and `inbound` on the called side.
 
         The phone system records ONE integer carrying both this and `disposition`; an integer we have
         no word for is published as its own digits rather than as null, so a vocabulary that grows at
         the switch's end never erases a call.
-      enum: [inbound, outbound, onNet]
+      enum: [inbound, outbound, internal]
     CallDisposition:
       type: [string, 'null']
-      description: Whether anybody answered. Derived from the same integer as `type`.
+      description: Whether anybody answered. Derived from the same integer as `direction`.
       enum: [answered, missed]
     # -- Click-to-dial (POST /v1/pbx/users/{user}/calls) -------------------------------------------
     PbxCallRequest:
@@ -11698,7 +11702,7 @@ components:
             Who to call: an E.164 number with its `+`, or an extension of 2 to 7 digits on the
             user's own domain. The phone system completes an extension against that domain itself.
           examples: ['+13025046250', '2002']
-        caller-id:
+        callerId:
           type: [string, 'null']
           description: |
             The number the called party sees. E.164, with or without the `+`; a ten-digit North
@@ -11706,7 +11710,7 @@ components:
             platform stores every caller ID as E.164 **without** the plus. A value that is not a
             telephone number is refused rather than ignored. Omit it to use the user's own caller ID.
           examples: ['+14074366118', '4074366118']
-        auto-answer:
+        autoAnswer:
           type: boolean
           default: false
           description: Ask the user's own phone to go off-hook by itself instead of ringing.
@@ -11721,14 +11725,14 @@ components:
       type: object
       description: |
         The call as it was requested. Every value is what was actually sent to the phone system,
-        which is not always what was typed: `caller-id` comes back in the spelling the called party
+        which is not always what was typed: `callerId` comes back in the spelling the called party
         will see.
       properties:
         destination: { type: string, description: 'Who was called, as sent.' }
-        caller-id:
+        callerId:
           type: [string, 'null']
           description: 'The number presented, E.164 without the `+`. Null when the user''s own was used.'
-        auto-answer: { type: boolean }
+        autoAnswer: { type: boolean }
         device:
           type: [string, 'null']
           description: 'The `devices` id the call originates from, as sent. Null when none was named.'
@@ -11738,8 +11742,8 @@ components:
           description: |
             Always `requested` from this endpoint: it is the REQUEST's state, not the call's, because
             the phone system has taken the command and nothing about the call is knowable yet. Find
-            the call's records with `filter[call-id]` on `/v1/pbx/call-records`.
-        requested-at: { type: string, format: date-time }
+            the call's records with `filter[callId]` on `/v1/pbx/call-records`.
+        requestedAt: { type: string, format: date-time }
     PbxCallResource:
       type: object
       required: [type, id]
@@ -11751,7 +11755,7 @@ components:
           description: |
             Minted by this API before the call was placed, and handed to the phone system as the SIP
             Call-ID it places the call under. It names the call on the PHONE SYSTEM, and
-            `filter[call-id]` on `/v1/pbx/call-records` finds the records the call wrote — whose own
+            `filter[callId]` on `/v1/pbx/call-records` finds the records the call wrote — whose own
             ids come from the CDR row instead.
         attributes:
           $ref: '#/components/schemas/PbxCallAttributes'
@@ -11769,9 +11773,9 @@ components:
       properties:
         user: { type: [string, 'null'], description: 'The extension.' }
         domain: { type: [string, 'null'], description: 'The customer''s PBX domain.' }
-        display-name: { type: [string, 'null'] }
-        first-name: { type: [string, 'null'] }
-        last-name: { type: [string, 'null'] }
+        displayName: { type: [string, 'null'] }
+        firstName: { type: [string, 'null'] }
+        lastName: { type: [string, 'null'] }
         email: { type: [string, 'null'] }
         scope: { type: [string, 'null'], description: 'The phone system''s own permission tier for this person.' }
         group: { type: [string, 'null'] }
@@ -11782,15 +11786,15 @@ components:
             The phone system's own presence word, verbatim. There is deliberately no derived
             `online` flag: the vocabulary is longer than two states and which words mean "available"
             is yours to decide, not ours to freeze into this contract.
-        caller-id-number: { type: [string, 'null'] }
-        caller-id-name: { type: [string, 'null'] }
-        time-zone: { type: [string, 'null'] }
-        created-at:
+        callerIdNumber: { type: [string, 'null'] }
+        callerIdName: { type: [string, 'null'] }
+        timeZone: { type: [string, 'null'] }
+        createdAt:
           type: [string, 'null']
           description: |
             As the phone system stores it — TEXT, not RFC 3339. It is served unparsed because the
             switch has never published the format, and a mis-parse would be silent.
-        updated-at: { type: [string, 'null'], description: 'As the phone system stores it.' }
+        updatedAt: { type: [string, 'null'], description: 'As the phone system stores it.' }
     PbxUserRelationships:
       type: object
       properties:
@@ -11850,23 +11854,23 @@ components:
         user: { type: [string, 'null'], description: 'The subscriber''s extension.' }
         domain: { type: [string, 'null'] }
         mode: { type: [string, 'null'] }
-        user-agent: { type: [string, 'null'], description: 'What the phone said it is.' }
+        userAgent: { type: [string, 'null'], description: 'What the phone said it is.' }
         contact: { type: [string, 'null'] }
         transport: { type: [string, 'null'] }
-        received-from: { type: [string, 'null'], description: 'The address the registration arrived from.' }
-        registered-at: { type: [string, 'null'], description: 'As the phone system stores it — text, not RFC 3339.' }
-        registration-expires-at: { type: [string, 'null'], description: 'As the phone system stores it.' }
+        receivedFrom: { type: [string, 'null'], description: 'The address the registration arrived from.' }
+        registeredAt: { type: [string, 'null'], description: 'As the phone system stores it — text, not RFC 3339.' }
+        registrationExpiresAt: { type: [string, 'null'], description: 'As the phone system stores it.' }
         registered:
           type: boolean
-          description: Derived — is `registration-expires-at` still in the future?
-        auto-answer: { type: boolean }
-        created-at: { type: [string, 'null'], description: 'As the phone system stores it.' }
+          description: Derived — is `registrationExpiresAt` still in the future?
+        autoAnswer: { type: boolean }
+        createdAt: { type: [string, 'null'], description: 'As the phone system stores it.' }
     PbxDeviceRelationships:
       type: object
       properties:
         customer:
           $ref: '#/components/schemas/RelationshipToOne'
-        pbx-user:
+        pbxUser:
           $ref: '#/components/schemas/RelationshipToOne'
     PbxDeviceResource:
       type: object
@@ -11926,8 +11930,8 @@ components:
         is in the extended tier. So you can group, join and de-duplicate on these three without
         checking their shape first.
       properties:
-        type:
-          $ref: '#/components/schemas/CallType'
+        direction:
+          $ref: '#/components/schemas/CallDirection'
         disposition:
           $ref: '#/components/schemas/CallDisposition'
         tenantId:
@@ -11939,10 +11943,10 @@ components:
         fromNumber:
           type: [string, 'null']
           description: |
-            **Who called**, in E.164. Read `type` to know what it names:
+            **Who called**, in E.164. Read `direction` to know what it names:
 
             - `inbound` — the **outside caller's** number.
-            - `outbound` and `onNet` — the **caller ID your customer sent**.
+            - `outbound` and `internal` — the **caller ID your customer sent**.
 
             Null when the calling party had no telephone number at all, which is the ordinary case on
             an extension-to-extension call and on an extension with no caller ID configured. The
@@ -12178,9 +12182,9 @@ components:
     TranscriptAttributes:
       type: object
       # NOT A CLOSED SET, and the one member that proves it is `segments`: the single-transcript
-      # endpoint composes this schema with it (`TranscriptWithSegmentsResource`), so a validator that
-      # treated these ten as the whole of a transcript's attributes would reject that endpoint's own
-      # response. Redocly's example check is such a validator.
+      # endpoint composes this schema with it (`TranscriptWithSegmentsAttributes`), so a validator
+      # that treated these ten as the whole of a transcript's attributes would reject that
+      # endpoint's own response. Redocly's example check is such a validator.
       unevaluatedProperties: true
       properties:
         ccc-id:
@@ -12251,28 +12255,68 @@ components:
             the same id the recordings list publishes and the same id in every region.
         attributes:
           $ref: '#/components/schemas/TranscriptAttributes'
+    TranscriptWithSegmentsAttributes:
+      description: |
+        Everything `TranscriptAttributes` carries, plus the turns.
+      # COMPOSED HERE, INSIDE `attributes`, and never by overriding the `attributes` PROPERTY on a
+      # resource that already declares it — see `TranscriptWithSegmentsResource` below for what that
+      # cost. This `allOf` only ADDS a member to the set, which every generator models as an
+      # ordinary extension.
+      allOf:
+        - $ref: '#/components/schemas/TranscriptAttributes'
+        - type: object
+          properties:
+            segments:
+              type: array
+              description: |
+                The turns of the conversation, in the order they were spoken. An EMPTY array is a
+                real answer: nobody spoke, or the provider heard nothing it could separate into
+                turns.
+              items:
+                $ref: '#/components/schemas/TranscriptSegment'
     TranscriptWithSegmentsResource:
       description: |
         A transcript as the single-transcript endpoint serves it: everything the list carries, plus
         the turns. `segments` is the one member the list leaves out, because deriving the turns means
         reading the stored document and the list would pay that per capture.
+      # THIS COMPOSES TWO ANONYMOUS PARTS, and it does NOT `allOf` `TranscriptResource`, which is
+      # what it used to do. Both halves of that shape are load-bearing, and each is owed to a gate
+      # that the other one breaks:
+      #
+      # NOT `allOf: [TranscriptResource, {attributes: …}]`, because that narrows the INHERITED
+      # `attributes` property to a different type. A generator models it as a subclass re-declaring
+      # a mutable member, and a mutable member's type is invariant — so it reached the Ringivo
+      # Python SDK as `"attributes" overrides symbol of same name in class "TranscriptResource"`
+      # and red CI, while this repo's own generator smokes stayed green and could not see it
+      # (Ringivo/ringivo-python #77, 2026-09-22).
+      #
+      # NOT a plain `type: object` spelling it all out either, however much cleaner that reads: a
+      # top-level `properties.type.enum` is exactly how `openApiResourceAttributes()` recognises a
+      # resource schema, so a second one pinning `transcripts` trips its "two schemas pin the
+      # resource type" guard — the guard that stops layer 3 comparing a request against whichever
+      # attribute set was written last. Under `allOf` this schema has no top-level `properties`, so
+      # it stays what it has always been to that check: invisible, with `TranscriptResource` the one
+      # schema that pins the type.
+      #
+      # NOTHING ON THE WIRE CHANGED. The old and new spellings were fully dereferenced and
+      # allOf-merged and the normalised documents are byte-identical. Keep `type` and `id` below in
+      # step with `TranscriptResource` by hand — they are one contract in two places, which is the
+      # price of the composition that satisfies both gates.
       allOf:
-        - $ref: '#/components/schemas/TranscriptResource'
+        - type: object
+          required: [type, id]
+          properties:
+            type: { type: string, enum: [transcripts] }
+            id:
+              type: string
+              format: uuid
+              description: |
+                The RECORDING's id — a transcript is keyed by the capture it is of, one to one — so
+                it is the same id the recordings list publishes and the same id in every region.
         - type: object
           properties:
             attributes:
-              allOf:
-                - $ref: '#/components/schemas/TranscriptAttributes'
-                - type: object
-                  properties:
-                    segments:
-                      type: array
-                      description: |
-                        The turns of the conversation, in the order they were spoken. An EMPTY array
-                        is a real answer: nobody spoke, or the provider heard nothing it could
-                        separate into turns.
-                      items:
-                        $ref: '#/components/schemas/TranscriptSegment'
+              $ref: '#/components/schemas/TranscriptWithSegmentsAttributes'
     TranscriptCollectionDocument:
       type: object
       required: [data]
