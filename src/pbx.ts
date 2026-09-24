@@ -22,7 +22,7 @@
  * Narrow to one customer with `customer`.
  *
  * -- WHAT IS SPEC-TYPED, AND WHAT IS HAND-BUILT -----------------------------
- * The six reads go through the `openapi-fetch` client in client.ts, so
+ * The eight reads go through the `openapi-fetch` client in client.ts, so
  * `src/_generated/schema.d.ts` type-checks their paths, their query members
  * and their response bodies at compile time.
  *
@@ -53,6 +53,8 @@ import {
   type PbxUser,
   type PbxUserPage,
   type RawJson,
+  type Recording,
+  type Transcript,
   callRecordFromResource,
   callRecordPageFromDocument,
   isRecord,
@@ -61,6 +63,8 @@ import {
   pbxDevicePageFromDocument,
   pbxUserFromResource,
   pbxUserPageFromDocument,
+  recordingsFromDocument,
+  transcriptsFromDocument,
 } from "./models.js";
 
 /** What `pbx.callRecords.list()` accepts. Every member narrows the log. */
@@ -291,6 +295,75 @@ export class CallRecords {
     });
 
     return callRecordFromResource(dataObject(data));
+  }
+
+  /**
+   * Every capture of one call, each with a freshly minted content link.
+   *
+   * **NOT PAGINATED, and deliberately so**: this is the captures of ONE
+   * call — bounded by its two legs, not a walk over a growing table — so
+   * there is no `after`/`before` cursor to pass and nothing beyond this
+   * array to walk. The console's own schema agrees: its collection
+   * document carries no `links.next` or `meta.page` at all.
+   *
+   * Each `Recording.contentUrl` is short-lived. Call this again for a
+   * fresh one rather than caching a URL past its `expiresAt`.
+   *
+   * A call outside your customers' domains answers **404**, not 403 — the
+   * same posture `get()` has, so a stranger's call cannot be told apart
+   * from one that does not exist anywhere.
+   *
+   * Needs `pbx-call-records:read` — the same scope `get()` and `list()`
+   * need. Recording media is not a second resource to be granted: it is
+   * the audio of a call log entry you can already read.
+   */
+  async recordings(callRecordId: string): Promise<readonly Recording[]> {
+    const { data } = await transportOf(this.client)[
+      "/v1/pbx/call-records/{callRecord}/recordings"
+    ].GET({
+      params: { path: { callRecord: idParam(callRecordId, "a call record id is required") } },
+    });
+
+    return recordingsFromDocument(isRecord(data) ? data : {});
+  }
+
+  /**
+   * One item per capture of the call, with the state of its transcript.
+   *
+   * **One item per RECORDING, not one per transcript that exists**: a
+   * capture with no words yet still appears, as a `Transcript` with
+   * `status: "pending"` and every other field null, so you can tell "no
+   * transcript yet" from "no recording at all". **NOT PAGINATED**, for the
+   * same reason `recordings()` is not: the console's own transcript
+   * collection document carries no `links.next` or `meta.page`.
+   *
+   * Each `Transcript.contentUrl` is short-lived, the same rule
+   * `Recording.contentUrl` follows: call this again for a fresh one.
+   *
+   * This is the collection read only — one HTTP call, one indexed query —
+   * and it never distinguishes a permanent failure from a wait; both
+   * currently read `pending` on the array this returns. Telling the two
+   * apart, and reading the turns of the conversation, needs the
+   * single-transcript endpoint, which this client does not yet wrap.
+   *
+   * A call outside your customers' domains answers **404**, not 403 — the
+   * same posture `get()` and `recordings()` have.
+   *
+   * Needs BOTH `pbx-call-records:read` AND `pbx-transcripts:read`, asked
+   * in that order: the first decides whether you may see the call at all,
+   * and the second — a separate grant, because the words of a call are
+   * searchable and cheap to mine at scale in a way the call log itself is
+   * not — decides whether you may see that anyone spoke. A caller without
+   * it learns nothing about which captures have words.
+   */
+  async transcripts(callRecordId: string): Promise<readonly Transcript[]> {
+    const { data } = await transportOf(this.client)[
+      "/v1/pbx/call-records/{callRecord}/transcripts"
+    ].GET({
+      params: { path: { callRecord: idParam(callRecordId, "a call record id is required") } },
+    });
+
+    return transcriptsFromDocument(isRecord(data) ? data : {});
   }
 }
 

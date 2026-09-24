@@ -41,6 +41,9 @@ const CUSTOMER_ID = "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f";
 const CALL_ID = "0198c4a1-b425-7601-92e3-0405060708a9";
 
 const CALL_RECORD_URL = `${CALL_RECORDS_URL}/${CALL_RECORD_ID}`;
+const CALL_RECORD_RECORDINGS_URL = `${CALL_RECORD_URL}/recordings`;
+const CALL_RECORD_TRANSCRIPTS_URL = `${CALL_RECORD_URL}/transcripts`;
+const RECORDING_ID = "0198c9aa-1111-7000-8000-0000000000b1";
 const PBX_USER_URL = `${PBX_USERS_URL}/${PBX_USER_ID}`;
 const PBX_DEVICE_URL = `${PBX_DEVICES_URL}/${PBX_DEVICE_ID}`;
 const PLACE_CALL_URL = `${PBX_USERS_URL}/${PBX_USER_ID}/calls`;
@@ -63,7 +66,12 @@ function client(): Ringivo {
     clientId: "cid",
     clientSecret: "csecret",
     tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
-    scopes: ["pbx-call-records:read", "pbx-users:read", "pbx-calls:write"],
+    scopes: [
+      "pbx-call-records:read",
+      "pbx-transcripts:read",
+      "pbx-users:read",
+      "pbx-calls:write",
+    ],
   });
 }
 
@@ -99,6 +107,54 @@ function callRecordResource(attributeOverrides: Record<string, unknown> = {}): o
       customer: { data: { type: "customers", id: CUSTOMER_ID } },
       "from-pbx-user": { data: null },
       "to-pbx-user": { data: { type: "users", id: PBX_USER_ID } },
+    },
+  };
+}
+
+/**
+ * One `recordings` resource object, KEBAB-CASE attributes and all — this
+ * endpoint's own spelling, unlike the camelCase call-records block.
+ */
+function recordingResource(
+  attributeOverrides: Record<string, unknown> = {},
+  resourceId: string = RECORDING_ID,
+): object {
+  return {
+    type: "recordings",
+    id: resourceId,
+    attributes: {
+      "ccc-id": "00b1",
+      duration: 64,
+      "byte-size": 512000,
+      sha256: "a".repeat(64),
+      superseded: false,
+      "content-url": `${BASE_URL}/v1/pbx/recordings-content/signed-token`,
+      "expires-at": "2026-09-12T15:00:00Z",
+      ...attributeOverrides,
+    },
+  };
+}
+
+/** One `transcripts` resource object in the `ready` state. */
+function transcriptResource(
+  attributeOverrides: Record<string, unknown> = {},
+  resourceId: string = RECORDING_ID,
+): object {
+  return {
+    type: "transcripts",
+    id: resourceId,
+    attributes: {
+      "ccc-id": "00b1",
+      status: "ready",
+      language: "en-US",
+      duration: 64,
+      "byte-size": 2048,
+      sha256: "b".repeat(64),
+      provider: "deepgram",
+      model: "nova-3",
+      "content-url": `${BASE_URL}/v1/pbx/transcripts-content/signed-token`,
+      "expires-at": "2026-09-12T15:00:00Z",
+      ...attributeOverrides,
     },
   };
 }
@@ -502,6 +558,201 @@ describe("callRecords.get", () => {
     await expect(
       client().pbx.callRecords.list({ startedAfter: "2020-01-01T00:00:00Z" }),
     ).rejects.toMatchObject({ statusCode: 400, code: "bad_query" });
+  });
+});
+
+describe("callRecords.recordings", () => {
+  it("reads a kebab-case document into a plain array of camelCase objects", async () => {
+    server.use(
+      http.get(CALL_RECORD_RECORDINGS_URL, () =>
+        HttpResponse.json({ data: [recordingResource()] }),
+      ),
+    );
+
+    const recordings = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
+
+    expect(Array.isArray(recordings)).toBe(true);
+    expect(recordings).toHaveLength(1);
+    const [recording] = recordings;
+    expect(recording?.id).toBe(RECORDING_ID);
+    expect(recording?.cccId).toBe("00b1");
+    expect(recording?.duration).toBe(64);
+    expect(recording?.byteSize).toBe(512000);
+    expect(recording?.sha256).toBe("a".repeat(64));
+    expect(recording?.superseded).toBe(false);
+    expect(recording?.contentUrl).toBe(`${BASE_URL}/v1/pbx/recordings-content/signed-token`);
+    expect(recording?.expiresAt?.toISOString()).toBe("2026-09-12T15:00:00.000Z");
+    expect(Object.isFrozen(recording)).toBe(true);
+  });
+
+  it("returns every capture in the server's own order", async () => {
+    // Vendor key order `(call_id, ccc_id)`, not chronological — this client
+    // does not reorder what the server sent.
+    const secondId = "0198c9aa-1111-7000-8000-0000000000b2";
+    server.use(
+      http.get(CALL_RECORD_RECORDINGS_URL, () =>
+        HttpResponse.json({
+          data: [
+            recordingResource(),
+            recordingResource({ "ccc-id": "00b2" }, secondId),
+          ],
+        }),
+      ),
+    );
+
+    const recordings = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
+
+    expect(recordings.map((recording) => recording.id)).toEqual([RECORDING_ID, secondId]);
+  });
+
+  it("returns an empty array rather than an error when there are no captures", async () => {
+    server.use(http.get(CALL_RECORD_RECORDINGS_URL, () => HttpResponse.json({ data: [] })));
+
+    const recordings = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
+
+    expect(recordings).toEqual([]);
+  });
+
+  it("keeps a call record id inside its own path segment", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(`${BASE_URL}/*`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [recordingResource()] });
+      }),
+    );
+
+    await client().pbx.callRecords.recordings("../../faxes/secret");
+
+    expect(calls.last.url.pathname).toBe(
+      "/v1/pbx/call-records/..%2F..%2Ffaxes%2Fsecret/recordings",
+    );
+  });
+
+  it("refuses an empty id rather than reading the whole collection", async () => {
+    await expect(client().pbx.callRecords.recordings("")).rejects.toThrow(
+      /a call record id is required/,
+    );
+  });
+
+  it("raises a typed 404 for a call outside the caller's domains", async () => {
+    server.use(
+      http.get(CALL_RECORD_RECORDINGS_URL, () =>
+        HttpResponse.json(errorBody(404, "not_found", "No such record."), { status: 404 }),
+      ),
+    );
+
+    await expect(client().pbx.callRecords.recordings(CALL_RECORD_ID)).rejects.toMatchObject({
+      statusCode: 404,
+      code: "not_found",
+    });
+  });
+});
+
+describe("callRecords.transcripts", () => {
+  it("reads the ready state into a plain array of camelCase objects", async () => {
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json({ data: [transcriptResource()] }),
+      ),
+    );
+
+    const transcripts = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    expect(transcripts).toHaveLength(1);
+    const [transcript] = transcripts;
+    expect(transcript?.id).toBe(RECORDING_ID);
+    expect(transcript?.cccId).toBe("00b1");
+    expect(transcript?.status).toBe("ready");
+    expect(transcript?.language).toBe("en-US");
+    expect(transcript?.duration).toBe(64);
+    expect(transcript?.byteSize).toBe(2048);
+    expect(transcript?.sha256).toBe("b".repeat(64));
+    expect(transcript?.provider).toBe("deepgram");
+    expect(transcript?.model).toBe("nova-3");
+    expect(transcript?.contentUrl).toBe(`${BASE_URL}/v1/pbx/transcripts-content/signed-token`);
+    expect(transcript?.expiresAt?.toISOString()).toBe("2026-09-12T15:00:00.000Z");
+    expect(Object.isFrozen(transcript)).toBe(true);
+  });
+
+  it("reads the pending state with every other field null", async () => {
+    // A capture with no words yet is still an ITEM in this collection —
+    // `status: "pending"` and every field below it null — so a caller can
+    // tell "no transcript yet" from "no recording at all".
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json({
+          data: [
+            transcriptResource({
+              status: "pending",
+              language: null,
+              duration: null,
+              "byte-size": null,
+              sha256: null,
+              provider: null,
+              model: null,
+              "content-url": null,
+              "expires-at": null,
+            }),
+          ],
+        }),
+      ),
+    );
+
+    const [transcript] = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    expect(transcript?.status).toBe("pending");
+    expect(transcript?.language).toBeNull();
+    expect(transcript?.duration).toBeNull();
+    expect(transcript?.byteSize).toBeNull();
+    expect(transcript?.sha256).toBeNull();
+    expect(transcript?.provider).toBeNull();
+    expect(transcript?.model).toBeNull();
+    expect(transcript?.contentUrl).toBeNull();
+    expect(transcript?.expiresAt).toBeNull();
+  });
+
+  it("returns an empty array rather than an error when there are no captures", async () => {
+    server.use(http.get(CALL_RECORD_TRANSCRIPTS_URL, () => HttpResponse.json({ data: [] })));
+
+    const transcripts = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    expect(transcripts).toEqual([]);
+  });
+
+  it("keeps a call record id inside its own path segment", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(`${BASE_URL}/*`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [transcriptResource()] });
+      }),
+    );
+
+    await client().pbx.callRecords.transcripts("../../faxes/secret");
+
+    expect(calls.last.url.pathname).toBe(
+      "/v1/pbx/call-records/..%2F..%2Ffaxes%2Fsecret/transcripts",
+    );
+  });
+
+  it("refuses an empty id rather than reading the whole collection", async () => {
+    await expect(client().pbx.callRecords.transcripts("")).rejects.toThrow(
+      /a call record id is required/,
+    );
+  });
+
+  it("raises a typed 404 for a call outside the caller's domains", async () => {
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json(errorBody(404, "not_found", "No such record."), { status: 404 }),
+      ),
+    );
+
+    await expect(client().pbx.callRecords.transcripts(CALL_RECORD_ID)).rejects.toMatchObject({
+      statusCode: 404,
+      code: "not_found",
+    });
   });
 });
 

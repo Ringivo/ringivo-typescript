@@ -816,8 +816,12 @@ export interface PbxDevicePage {
  * `direction` FILTER accepts. Compare against the words you know and treat
  * anything else as unrecognised rather than assuming it cannot happen.
  *
- * `hasRecording` says a recording is HELD for this call. Fetching the audio
- * is a later release; this one only answers the question.
+ * `hasRecording` says a recording is HELD for this call; it is not itself
+ * the audio. Fetch the call's captures with
+ * `pbx.callRecords.recordings(record.id)` — each `Recording` carries its
+ * own short-lived `contentUrl` to download from. A transcript, when one
+ * was requested, comes back the same way from
+ * `pbx.callRecords.transcripts(record.id)`.
  *
  * `fromPbxUserId` and `toPbxUserId` are the `pbx.users` resources on the two
  * legs, when the extensions resolve on the call's own domain. Null when they
@@ -868,6 +872,84 @@ export interface CallRecordPage {
   readonly callRecords: readonly CallRecord[];
   readonly nextUrl: string | null;
   readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One capture of a call, from `pbx.callRecords.recordings()`.
+ *
+ * **There is no page here, on purpose.** `recordings()` answers every
+ * capture of ONE call — bounded by that call's own two legs, never a
+ * growing table — so this package returns a plain `readonly Recording[]`
+ * rather than a `...Page` with a cursor. The console's own schema calls
+ * this out the same way: its collection document carries no `links` or
+ * `meta.page` member to walk.
+ *
+ * `id` is derived from the phone system's own `(call id, capture id)`
+ * pair, so it is stable across regions and a supersede reuses it rather
+ * than minting a new one.
+ *
+ * `contentUrl` is a signed, time-limited link to the audio, freshly minted
+ * on every call to `recordings()` — do not cache it past `expiresAt` or
+ * hand it to anyone else; whoever holds the URL can fetch the audio with
+ * no further authorization. `duration` is null when the phone system never
+ * reported one for this capture, which is not the same as a missing
+ * recording — `byteSize` still describes real bytes.
+ *
+ * `superseded` is false on a first capture and becomes true once a longer
+ * capture of the same call replaced the audio behind this same `id` — the
+ * id does not change, but `byteSize` and `sha256` do.
+ */
+export interface Recording {
+  readonly id: string;
+  readonly cccId: string | null;
+  readonly duration: number | null;
+  readonly byteSize: number | null;
+  readonly sha256: string | null;
+  readonly superseded: boolean | null;
+  readonly contentUrl: string | null;
+  readonly expiresAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * The transcript of one capture, from `pbx.callRecords.transcripts()`.
+ *
+ * **One item per RECORDING of the call, not one per transcript that
+ * exists**: a capture with no words yet still appears here, with
+ * `status: "pending"` and every other field null, so a caller can tell
+ * "no transcript yet" from "no recording at all". There is a third state,
+ * `failed`, but this collection never reports it — telling a permanent
+ * failure from a wait costs a lookup this list does not pay; that
+ * distinction belongs to the single-transcript endpoint, which this
+ * client does not yet wrap.
+ *
+ * **No page here either**, for the same reason `Recording` has none: this
+ * is the captures of one call, and the console's own transcript collection
+ * document carries no `links` or `meta.page` to walk.
+ *
+ * `id` is the RECORDING's id, not a separate transcript id — a transcript
+ * is keyed one-to-one by the capture it is of, so it is the same id
+ * `recordings()` published for the same capture.
+ *
+ * `contentUrl` is a signed, time-limited link to the stored transcript
+ * document (the speech-to-text provider's own response, not the audio) —
+ * the same rule as `Recording.contentUrl`: do not cache it past
+ * `expiresAt`. Every field but `id`, `cccId` and `status` is null while
+ * `status` is `"pending"`.
+ */
+export interface Transcript {
+  readonly id: string;
+  readonly cccId: string | null;
+  readonly status: string | null;
+  readonly language: string | null;
+  readonly duration: number | null;
+  readonly byteSize: number | null;
+  readonly sha256: string | null;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly contentUrl: string | null;
+  readonly expiresAt: Date | null;
   readonly raw: RawJson;
 }
 
@@ -1040,6 +1122,70 @@ export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
     nextCursor: nextCursorOf(document),
     raw: document,
   });
+}
+
+/**
+ * Build from one `recordings` resource object.
+ *
+ * The attribute keys are KEBAB-CASE on the wire (`ccc-id`, `byte-size`,
+ * `content-url`, `expires-at`) — this endpoint's own spelling, the same as
+ * every other `/v1/pbx/` resource in this module.
+ */
+export function recordingFromResource(resource: RawJson): Recording {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    cccId: text(attributes, "ccc-id"),
+    duration: integer(attributes, "duration"),
+    byteSize: integer(attributes, "byte-size"),
+    sha256: text(attributes, "sha256"),
+    superseded: boolean(attributes, "superseded"),
+    contentUrl: text(attributes, "content-url"),
+    expiresAt: instant(attributes["expires-at"]),
+    raw: resource,
+  });
+}
+
+/** The `recordings` resources in one `pbx.callRecords.recordings()` document. */
+export function recordingsFromDocument(document: RawJson): readonly Recording[] {
+  const data = document.data;
+  return Object.freeze(
+    (Array.isArray(data) ? data : []).filter(isRecord).map(recordingFromResource),
+  );
+}
+
+/**
+ * Build from one `transcripts` resource object.
+ *
+ * KEBAB-CASE attribute keys, the same as `recordingFromResource` and for
+ * the same reason: this is that endpoint's own spelling.
+ */
+export function transcriptFromResource(resource: RawJson): Transcript {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    cccId: text(attributes, "ccc-id"),
+    status: text(attributes, "status"),
+    language: text(attributes, "language"),
+    duration: integer(attributes, "duration"),
+    byteSize: integer(attributes, "byte-size"),
+    sha256: text(attributes, "sha256"),
+    provider: text(attributes, "provider"),
+    model: text(attributes, "model"),
+    contentUrl: text(attributes, "content-url"),
+    expiresAt: instant(attributes["expires-at"]),
+    raw: resource,
+  });
+}
+
+/** The `transcripts` resources in one `pbx.callRecords.transcripts()` document. */
+export function transcriptsFromDocument(document: RawJson): readonly Transcript[] {
+  const data = document.data;
+  return Object.freeze(
+    (Array.isArray(data) ? data : []).filter(isRecord).map(transcriptFromResource),
+  );
 }
 
 /** Build from the JSON:API resource the 202 carries — `pbx.users.call()`. */
