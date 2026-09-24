@@ -9,7 +9,7 @@
  *
  * -- WHAT A CUSTOMER ID IS FOR ----------------------------------------------
  * A customer's `id` is what other resources ask for: `customer` on
- * `client.pbx.callRecords.list()`, `pbx.users.list()` and
+ * `client.pbx.callRecords.list()`, `pbx.subscribers.list()` and
  * `pbx.devices.list()`, and on `faxAccounts.list()` and `create()`.
  *
  * -- WHAT IS SPEC-TYPED -----------------------------------------------------

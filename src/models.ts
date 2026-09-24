@@ -686,7 +686,20 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
 }
 
 /**
- * One subscriber on a customer's phone system.
+ * One subscriber on a customer's phone system — a person or a machine.
+ *
+ * -- `kind` SAYS WHAT THIS ROW IS -------------------------------------------
+ * A phone system holds people AND machines: auto attendants, call queues, AI
+ * agents, the domain's settings template. `kind` is `user` for a person, and
+ * otherwise one of `autoAttendant`, `callQueue`, `aiAgent`, `conference`,
+ * `department`, `site`, `ringGroup`, `trunk`, `timeOfDay`, `domain` or
+ * `system`. `system` is any machine the platform has no word for yet — an
+ * unknown marker is never read as `user`. It is a `string`, WIDE ON PURPOSE
+ * like `CallRecord.direction`: a word the API adds later arrives as itself.
+ * Read a word you do not know as `system`.
+ *
+ * For a click-to-call picker, list with `{ kind: "user", hasDevices: true }`:
+ * a subscriber with no device cannot place a call.
  *
  * -- WHY THE TIMESTAMPS HERE ARE STRINGS ------------------------------------
  * `createdAt` and `updatedAt` are `string`, not `Date`, and they are the only
@@ -706,7 +719,7 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
  * EMPTY `deviceIds` array is different: it means this subscriber has no
  * registration at all.
  */
-export interface PbxUser {
+export interface PbxSubscriber {
   readonly id: string;
   /** The extension. */
   readonly user: string | null;
@@ -727,20 +740,22 @@ export interface PbxUser {
   readonly createdAt: string | null;
   /** As the phone system stores it — TEXT, not RFC 3339. See above. */
   readonly updatedAt: string | null;
+  /** What this subscriber is — `user` for a person. See above. */
+  readonly kind: string | null;
   readonly customerId: string | null;
   readonly deviceIds: readonly string[] | null;
   readonly raw: RawJson;
 }
 
 /**
- * One page of `pbx.users.list()`, by extension.
+ * One page of `pbx.subscribers.list()`, by extension.
  *
  * `nextCursor` is the server's own cursor, lifted out of `meta.page` — never
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface PbxUserPage {
-  readonly users: readonly PbxUser[];
+export interface PbxSubscriberPage {
+  readonly subscribers: readonly PbxSubscriber[];
   readonly nextUrl: string | null;
   readonly nextCursor: string | null;
   readonly raw: RawJson;
@@ -756,12 +771,10 @@ export interface PbxUserPage {
  * `registered` is derived by the server — is `registrationExpiresAt` still in
  * the future? — which is why it is worth reading rather than recomputing:
  * the three timestamps on this model are the phone system's own TEXT and
- * carry no zone, exactly as on `PbxUser`.
+ * carry no zone, exactly as on `PbxSubscriber`.
  *
- * `pbxUserId` is the `pbx.users` resource this registration belongs to. It is
- * spelled `pbx-user` on the wire rather than `user`, because `user` is
- * already an ATTRIBUTE here — the extension — and JSON:API forbids the two
- * from sharing a name.
+ * `subscriberId` is the `pbx.subscribers` resource this registration belongs
+ * to, off the `subscriber` relationship. `user` beside it is the extension.
  */
 export interface PbxDevice {
   readonly id: string;
@@ -787,7 +800,7 @@ export interface PbxDevice {
   /** As the phone system stores it — TEXT, not RFC 3339. */
   readonly createdAt: string | null;
   readonly customerId: string | null;
-  readonly pbxUserId: string | null;
+  readonly subscriberId: string | null;
   readonly raw: RawJson;
 }
 
@@ -802,68 +815,90 @@ export interface PbxDevicePage {
 /**
  * One call, as the phone system recorded it.
  *
- * -- THESE THREE INSTANTS ARE REAL DATES ------------------------------------
- * Unlike `PbxUser` and `PbxDevice`, whose timestamps are the switch's own
- * text, `startedAt`, `answeredAt` and `releasedAt` are RFC 3339 in UTC: the
- * switch stores them as Unix epochs, which is the one timestamp shape that
- * carries no zone ambiguity. So they are `Date`s here.
+ * **0.11.0 rebuilt this model to the API's one clean camelCase shape.**
+ * `vendorType`, `fromUser`, `fromUri`, `toUser`, `toUri`, `dialed`, `byUser`,
+ * `termUser`, `tag`, `duration` and `talkTime` are gone; reach for the
+ * extended tier below for the raw values they carried.
+ *
+ * -- TWO TIERS ---------------------------------------------------------------
+ * Everything from `direction` through `hidden` is the STANDARD set and is on
+ * every response. `vendorId` onward through `rawRequestUser` is the EXTENDED
+ * tier — the phone system's own raw values — and each is null unless you
+ * named it in `fields` on `list()`. A sparse fieldset NARROWS rather than
+ * adds, so naming one extended field without the standard ones you want
+ * leaves the rest of this object null too.
+ *
+ * -- THE THREE INSTANTS ARE REAL DATES --------------------------------------
+ * Unlike `PbxSubscriber` and `PbxDevice`, whose timestamps are the switch's
+ * own text, `startedAt`, `answeredAt` and `releasedAt` are RFC 3339 in UTC:
+ * the switch stores them as Unix epochs. `answeredAt` is null when nobody
+ * answered.
  *
  * -- direction AND disposition ARE WIDE ON PURPOSE --------------------------
- * Both are read off ONE integer the switch records, which `vendorType`
- * publishes unmodified. An integer this API has no word for is served as its
- * own digits rather than as null — a vocabulary that grows at the switch's
- * end never erases a call — so these are `string`, not the narrow set the
- * `direction` FILTER accepts. Compare against the words you know and treat
- * anything else as unrecognised rather than assuming it cannot happen.
+ * The switch records ONE integer carrying which way the call went and whether
+ * anybody answered. `direction` is `inbound`, `outbound` or `internal` (a
+ * call that stayed inside one domain); `disposition` is `answered` or
+ * `missed`. An integer this API has no word for is served as its own digits
+ * in `direction` rather than as null, so these are `string`: compare against
+ * the words you know and treat anything else as unrecognised.
+ *
+ * -- A `*Number` FIELD IS E.164 OR NOTHING -----------------------------------
+ * `fromNumber`, `toNumber` and `dialedNumber` carry `+14075550101` or null —
+ * never an extension, a dial code or a star code. An extension is in
+ * `fromExtension`, `routedByExtension` or `answeringExtension` instead.
  *
  * `hasRecording` says a recording is HELD for this call; it is not itself
  * the audio. Fetch the call's captures with
- * `pbx.callRecords.recordings(record.id)` — each `Recording` carries its
- * own short-lived `contentUrl` to download from. A transcript, when one
- * was requested, comes back the same way from
- * `pbx.callRecords.transcripts(record.id)`.
+ * `pbx.callRecords.recordings(record.id)`, and a transcript the same way
+ * from `pbx.callRecords.transcripts(record.id)`.
  *
- * `fromPbxUserId` and `toPbxUserId` are the `pbx.users` resources on the two
- * legs, when the extensions resolve on the call's own domain. Null when they
- * do not — an outside caller has no extension — and also null when the server
- * answered the relationship with `links` alone.
+ * `fromSubscriberId` and `toSubscriberId` are the `pbx.subscribers`
+ * resources on the two legs, off the `fromSubscriber` and `toSubscriber`
+ * relationships. Null when a leg has no subscriber — an outside caller — and
+ * also null when the server answered the relationship with `links` alone.
  */
 export interface CallRecord {
   readonly id: string;
   readonly direction: string | null;
   readonly disposition: string | null;
-  /** The phone system's own integer, unmodified. */
-  readonly vendorType: number | null;
+  readonly tenantId: string | null;
   readonly domain: string | null;
-  /** The extension that placed the call, empty when an outside caller did. */
-  readonly fromUser: string | null;
-  readonly fromUri: string | null;
+  readonly territory: string | null;
+  readonly fromNumber: string | null;
+  readonly fromExtension: string | null;
   readonly fromName: string | null;
-  readonly toUser: string | null;
-  readonly toUri: string | null;
-  /** What was actually dialled. */
-  readonly dialed: string | null;
-  /** The extension that acted on somebody else's behalf, if any. */
-  readonly byUser: string | null;
-  /** The extension that took the call. */
-  readonly termUser: string | null;
+  readonly toNumber: string | null;
+  readonly dialedNumber: string | null;
+  readonly routedByExtension: string | null;
+  readonly answeringExtension: string | null;
   readonly startedAt: Date | null;
   /** Null when nobody answered. */
   readonly answeredAt: Date | null;
   readonly releasedAt: Date | null;
   /** Seconds, end to end. */
-  readonly duration: number | null;
+  readonly durationSeconds: number | null;
   /** Seconds anybody was actually talking. */
-  readonly talkTime: number | null;
-  readonly tag: string | null;
+  readonly talkSeconds: number | null;
+  readonly releaseCode: string | null;
+  readonly releaseText: string | null;
+  readonly hasRecording: boolean | null;
   /** Does the phone system hide this record from its own call log? */
   readonly hidden: boolean | null;
-  readonly hasRecording: boolean | null;
-  /** The phone system's own id for the call, for support conversations. */
+  // -- EXTENDED: served only when named in `fields` on list() ---------------
   readonly vendorId: string | null;
+  readonly origCallId: string | null;
+  readonly termCallId: string | null;
+  readonly byAction: string | null;
+  readonly terminatedTo: string | null;
+  readonly codec: string | null;
+  readonly hostname: string | null;
+  readonly rawFromUri: string | null;
+  readonly rawFromUser: string | null;
+  readonly rawToUser: string | null;
+  readonly rawRequestUser: string | null;
   readonly customerId: string | null;
-  readonly fromPbxUserId: string | null;
-  readonly toPbxUserId: string | null;
+  readonly fromSubscriberId: string | null;
+  readonly toSubscriberId: string | null;
   readonly raw: RawJson;
 }
 
@@ -954,7 +989,7 @@ export interface Transcript {
 }
 
 /**
- * A call this client ASKED FOR — the answer to `pbx.users.call()`.
+ * A call this client ASKED FOR — the answer to `pbx.subscribers.call()`.
  *
  * It is an intent, not a call that happened. The server answers **202** the
  * moment it has accepted the request, so `status` is `requested` here and
@@ -989,7 +1024,7 @@ export interface Transcript {
  * endpoint.
  *
  * `requestedAt` is a real instant: the API declares it RFC 3339, unlike a
- * `PbxUser`'s timestamps, which come from the phone system as unparsed text.
+ * `PbxSubscriber`'s timestamps, which come from the phone system as unparsed text.
  */
 export interface PbxCall {
   readonly id: string;
@@ -1002,39 +1037,42 @@ export interface PbxCall {
   readonly raw: RawJson;
 }
 
-/** Build from a JSON:API resource object — every PBX-user call. */
-export function pbxUserFromResource(resource: RawJson): PbxUser {
+/** Build from a JSON:API resource object — every PBX-subscriber read. */
+export function pbxSubscriberFromResource(resource: RawJson): PbxSubscriber {
   const attributes = nested(resource, "attributes") ?? {};
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
     user: text(attributes, "user"),
     domain: text(attributes, "domain"),
-    displayName: text(attributes, "display-name"),
-    firstName: text(attributes, "first-name"),
-    lastName: text(attributes, "last-name"),
+    displayName: text(attributes, "displayName"),
+    firstName: text(attributes, "firstName"),
+    lastName: text(attributes, "lastName"),
     email: text(attributes, "email"),
     scope: text(attributes, "scope"),
     group: text(attributes, "group"),
     site: text(attributes, "site"),
     presence: text(attributes, "presence"),
-    callerIdNumber: text(attributes, "caller-id-number"),
-    callerIdName: text(attributes, "caller-id-name"),
-    timeZone: text(attributes, "time-zone"),
-    createdAt: text(attributes, "created-at"),
-    updatedAt: text(attributes, "updated-at"),
+    callerIdNumber: text(attributes, "callerIdNumber"),
+    callerIdName: text(attributes, "callerIdName"),
+    timeZone: text(attributes, "timeZone"),
+    createdAt: text(attributes, "createdAt"),
+    updatedAt: text(attributes, "updatedAt"),
+    kind: text(attributes, "kind"),
     customerId: relationshipId(resource, "customer"),
     deviceIds: relationshipIds(resource, "devices"),
     raw: resource,
   });
 }
 
-export function pbxUserPageFromDocument(document: RawJson): PbxUserPage {
+export function pbxSubscriberPageFromDocument(document: RawJson): PbxSubscriberPage {
   const data = document.data;
-  const users = (Array.isArray(data) ? data : []).filter(isRecord).map(pbxUserFromResource);
+  const subscribers = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map(pbxSubscriberFromResource);
 
   return Object.freeze({
-    users: Object.freeze(users),
+    subscribers: Object.freeze(subscribers),
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
@@ -1051,17 +1089,17 @@ export function pbxDeviceFromResource(resource: RawJson): PbxDevice {
     user: text(attributes, "user"),
     domain: text(attributes, "domain"),
     mode: text(attributes, "mode"),
-    userAgent: text(attributes, "user-agent"),
+    userAgent: text(attributes, "userAgent"),
     contact: text(attributes, "contact"),
     transport: text(attributes, "transport"),
-    receivedFrom: text(attributes, "received-from"),
-    registeredAt: text(attributes, "registered-at"),
-    registrationExpiresAt: text(attributes, "registration-expires-at"),
+    receivedFrom: text(attributes, "receivedFrom"),
+    registeredAt: text(attributes, "registeredAt"),
+    registrationExpiresAt: text(attributes, "registrationExpiresAt"),
     registered: boolean(attributes, "registered"),
-    autoAnswer: boolean(attributes, "auto-answer"),
-    createdAt: text(attributes, "created-at"),
+    autoAnswer: boolean(attributes, "autoAnswer"),
+    createdAt: text(attributes, "createdAt"),
     customerId: relationshipId(resource, "customer"),
-    pbxUserId: relationshipId(resource, "pbx-user"),
+    subscriberId: relationshipId(resource, "subscriber"),
     raw: resource,
   });
 }
@@ -1078,7 +1116,7 @@ export function pbxDevicePageFromDocument(document: RawJson): PbxDevicePage {
   });
 }
 
-/** Build from a JSON:API resource object — every call-record call. */
+/** Build from a JSON:API resource object — every call-record read. */
 export function callRecordFromResource(resource: RawJson): CallRecord {
   const attributes = nested(resource, "attributes") ?? {};
 
@@ -1086,28 +1124,39 @@ export function callRecordFromResource(resource: RawJson): CallRecord {
     id: text(resource, "id") ?? "",
     direction: text(attributes, "direction"),
     disposition: text(attributes, "disposition"),
-    vendorType: integer(attributes, "vendor-type"),
+    tenantId: text(attributes, "tenantId"),
     domain: text(attributes, "domain"),
-    fromUser: text(attributes, "from-user"),
-    fromUri: text(attributes, "from-uri"),
-    fromName: text(attributes, "from-name"),
-    toUser: text(attributes, "to-user"),
-    toUri: text(attributes, "to-uri"),
-    dialed: text(attributes, "dialed"),
-    byUser: text(attributes, "by-user"),
-    termUser: text(attributes, "term-user"),
-    startedAt: instant(attributes["started-at"]),
-    answeredAt: instant(attributes["answered-at"]),
-    releasedAt: instant(attributes["released-at"]),
-    duration: integer(attributes, "duration"),
-    talkTime: integer(attributes, "talk-time"),
-    tag: text(attributes, "tag"),
+    territory: text(attributes, "territory"),
+    fromNumber: text(attributes, "fromNumber"),
+    fromExtension: text(attributes, "fromExtension"),
+    fromName: text(attributes, "fromName"),
+    toNumber: text(attributes, "toNumber"),
+    dialedNumber: text(attributes, "dialedNumber"),
+    routedByExtension: text(attributes, "routedByExtension"),
+    answeringExtension: text(attributes, "answeringExtension"),
+    startedAt: instant(attributes.startedAt),
+    answeredAt: instant(attributes.answeredAt),
+    releasedAt: instant(attributes.releasedAt),
+    durationSeconds: integer(attributes, "durationSeconds"),
+    talkSeconds: integer(attributes, "talkSeconds"),
+    releaseCode: text(attributes, "releaseCode"),
+    releaseText: text(attributes, "releaseText"),
+    hasRecording: boolean(attributes, "hasRecording"),
     hidden: boolean(attributes, "hidden"),
-    hasRecording: boolean(attributes, "has-recording"),
-    vendorId: text(attributes, "vendor-id"),
+    vendorId: text(attributes, "vendorId"),
+    origCallId: text(attributes, "origCallId"),
+    termCallId: text(attributes, "termCallId"),
+    byAction: text(attributes, "byAction"),
+    terminatedTo: text(attributes, "terminatedTo"),
+    codec: text(attributes, "codec"),
+    hostname: text(attributes, "hostname"),
+    rawFromUri: text(attributes, "rawFromUri"),
+    rawFromUser: text(attributes, "rawFromUser"),
+    rawToUser: text(attributes, "rawToUser"),
+    rawRequestUser: text(attributes, "rawRequestUser"),
     customerId: relationshipId(resource, "customer"),
-    fromPbxUserId: relationshipId(resource, "from-pbx-user"),
-    toPbxUserId: relationshipId(resource, "to-pbx-user"),
+    fromSubscriberId: relationshipId(resource, "fromSubscriber"),
+    toSubscriberId: relationshipId(resource, "toSubscriber"),
     raw: resource,
   });
 }
@@ -1128,8 +1177,8 @@ export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
  * Build from one `recordings` resource object.
  *
  * The attribute keys are KEBAB-CASE on the wire (`ccc-id`, `byte-size`,
- * `content-url`, `expires-at`) — this endpoint's own spelling, the same as
- * every other `/v1/pbx/` resource in this module.
+ * `content-url`, `expires-at`) — this endpoint's own spelling, unlike the
+ * camelCase of the other `/v1/pbx/` resources in this module.
  */
 export function recordingFromResource(resource: RawJson): Recording {
   const attributes = nested(resource, "attributes") ?? {};
@@ -1188,18 +1237,18 @@ export function transcriptsFromDocument(document: RawJson): readonly Transcript[
   );
 }
 
-/** Build from the JSON:API resource the 202 carries — `pbx.users.call()`. */
+/** Build from the JSON:API resource the 202 carries — `pbx.subscribers.call()`. */
 export function pbxCallFromResource(resource: RawJson): PbxCall {
   const attributes = nested(resource, "attributes") ?? {};
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
     destination: text(attributes, "destination"),
-    callerId: text(attributes, "caller-id"),
-    autoAnswer: boolean(attributes, "auto-answer"),
+    callerId: text(attributes, "callerId"),
+    autoAnswer: boolean(attributes, "autoAnswer"),
     device: text(attributes, "device"),
     status: text(attributes, "status"),
-    requestedAt: instant(attributes["requested-at"]),
+    requestedAt: instant(attributes.requestedAt),
     raw: resource,
   });
 }
@@ -1208,7 +1257,7 @@ export function pbxCallFromResource(resource: RawJson): PbxCall {
  * One of your customers: a business you sell to.
  *
  * `id` is what the other resources take as `customer` — the filter on
- * `client.pbx.callRecords.list()`, `pbx.users.list()` and `pbx.devices.list()`,
+ * `client.pbx.callRecords.list()`, `pbx.subscribers.list()` and `pbx.devices.list()`,
  * and the owner named on a fax account.
  *
  * `code` is the short code the platform assigns: five lowercase letters and

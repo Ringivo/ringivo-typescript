@@ -14,6 +14,39 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
+## Before you install 0.11.0
+
+**0.11.0 breaks the whole `client.pbx` surface, on purpose.** The API renamed
+it, and this release catches up in one step:
+
+- **`pbx.users` is `pbx.subscribers`.** The API path `/v1/pbx/users` is gone,
+  with no alias. `PbxUser`/`PbxUserPage`/`PbxUsers`/`ListPbxUsersOptions` are
+  `PbxSubscriber`/`PbxSubscriberPage`/`PbxSubscribers`/
+  `ListPbxSubscribersOptions`, and a page's rows are `page.subscribers`. The
+  list now returns machines too — auto attendants, queues, AI agents — so a
+  people-only list needs `{ kind: "user" }`. See
+  [Who is on the phone system](#who-is-on-the-phone-system-and-what-is-registered).
+- **The links back to a subscriber moved:** `PbxDevice.pbxUserId` is
+  `subscriberId`, `CallRecord.fromPbxUserId`/`toPbxUserId` are
+  `fromSubscriberId`/`toSubscriberId`, and `user` on `devices.list()` and
+  `callRecords.list()` is `subscriber`. `user` on `subscribers.list()` is still
+  the extension.
+- **`CallRecord` is the API's one clean shape.** `vendorType`, `fromUser`,
+  `fromUri`, `toUser`, `toUri`, `dialed`, `byUser`, `termUser`, `tag`,
+  `duration` and `talkTime` are gone. It now carries `fromNumber`, `toNumber`
+  and `dialedNumber` (E.164 or `null`), `fromExtension`, `routedByExtension`,
+  `answeringExtension`, `durationSeconds`, `talkSeconds`, `releaseCode`,
+  `releaseText`, `tenantId` and `territory`, plus an extended tier you ask for
+  with `fields`. See [Call records](#call-records-subscribers-devices-and-click-to-dial).
+- **The `direction` filter word `on-net` is `internal`** (a call that stayed
+  inside one domain).
+- **The wire moved to camelCase.** 0.10.x read the old kebab-case member
+  names, which the current API no longer sends. Nothing to change in your code
+  for this one beyond the renames above.
+
+The scopes are unchanged: `pbx-users:read` still covers subscribers and their
+devices.
+
 ## Before you install 0.8.0
 
 **0.8.0 carries a webhook break you did not ask for.** It is the release that
@@ -527,7 +560,7 @@ if (clinic) {
 ```
 
 **A customer's `id` is what the other resources take as `customer`** —
-`client.pbx.callRecords.list({ customer })`, `pbx.users.list` and
+`client.pbx.callRecords.list({ customer })`, `pbx.subscribers.list` and
 `pbx.devices.list`, and the fax-account calls. `code` is the platform's short
 code for a customer: five lowercase letters and digits that never change, so
 it finds one customer or none.
@@ -555,7 +588,7 @@ The list is newest first and walks by cursor like every other list here —
 `after`, `before`, `pageSize`. A customer that is not on your account answers
 **404**, not 403.
 
-## Call records, users, devices and click-to-dial
+## Call records, subscribers, devices and click-to-dial
 
 `client.pbx` is your customers' phone systems: who holds which extension,
 what their phones have registered, what was called — and asking one of
@@ -572,8 +605,25 @@ const page = await client.pbx.callRecords.list({
 });
 
 for (const call of page.callRecords) {
-  console.log(call.startedAt, call.fromUri, call.toUser, call.duration);
+  console.log(call.startedAt, call.fromNumber, call.answeringExtension, call.durationSeconds);
 }
+```
+
+**A `*Number` member is E.164 or `null`** — `fromNumber`, `toNumber` and
+`dialedNumber` carry `+14075550101`, never an extension, a dial code or a star
+code. An extension is in `fromExtension`, `routedByExtension` or
+`answeringExtension` instead.
+
+**Ask for the extended tier with `fields`.** `vendorId`, `origCallId`,
+`termCallId`, `byAction`, `terminatedTo`, `codec`, `hostname`, `rawFromUri`,
+`rawFromUser`, `rawToUser` and `rawRequestUser` are the phone system's own raw
+values, served only when named. A sparse fieldset NARROWS rather than adds, so
+name the standard members you still want beside them:
+
+```ts
+const raw = await client.pbx.callRecords.list({
+  fields: ["direction", "startedAt", "vendorId", "terminatedTo"],
+});
 ```
 
 **Name a date range unless you mean the last two months.** The phone system
@@ -585,7 +635,7 @@ everything. A range wider than 13 months is refused with a 400.
 `get()`.** That asymmetry is its own portal's, not ours. Pass
 `includeHidden: true` to put them back into a listing.
 
-`direction` is `inbound`, `outbound` or `on-net`; a word outside those is a
+`direction` is `inbound`, `outbound` or `internal`; a word outside those is a
 400 rather than an empty page. On a record you read back, though, `direction`
 and `disposition` are both plain strings — the switch records one integer
 carrying the pair, and one it has no word for arrives as its own digits.
@@ -626,31 +676,50 @@ spoke.
 ### Who is on the phone system, and what is registered
 
 ```ts
-const people = await client.pbx.users.list({ customer: clinic, search: "perkins" });
-for (const person of people.users) {
-  console.log(person.user, person.displayName, person.email);
+const people = await client.pbx.subscribers.list({ customer: clinic, search: "perkins" });
+for (const person of people.subscribers) {
+  console.log(person.user, person.displayName, person.kind);
 }
 
-const [person] = people.users;
+const [person] = people.subscribers;
 if (person) {
-  const phones = await client.pbx.devices.list({ user: person.id, registered: true });
+  const phones = await client.pbx.devices.list({ subscriber: person.id, registered: true });
   for (const phone of phones.devices) {
     console.log(phone.aor, phone.userAgent, phone.registrationExpiresAt);
   }
 }
 ```
 
+**`kind` says what a subscriber is.** A phone system holds people and
+machines. `kind` is `user` for a person, and otherwise one of
+`autoAttendant`, `callQueue`, `aiAgent`, `conference`, `department`, `site`,
+`ringGroup`, `trunk`, `timeOfDay`, `domain` (the domain's settings template)
+or `system`. `system` is any machine the platform has no word for yet — an
+unknown marker is never read as `user`. `kind` is a plain `string`, so a word
+added later arrives as itself; read one you do not know as `system`.
+
+**For a click-to-call picker, ask for the people who have a phone:**
+
+```ts
+const callable = await client.pbx.subscribers.list({ kind: "user", hasDevices: true });
+```
+
+`kind` takes one word, a comma list (`"callQueue,autoAttendant"`) or an array
+of words; a word the API does not know is a 400 that names the accepted
+words. `hasDevices: false` asks for the subscribers with no registered device.
+A subscriber's own devices are `subscriber.deviceIds`.
+
 `search` is the directory box — one substring across the display name, both
-halves of the person's name and the extension. `user` on `pbx.users` is the
-exact EXTENSION instead, and `101` does not match `1010`; `user` on
-`pbx.devices` is a **users id**, not an extension.
+halves of the person's name and the extension. `user` on `pbx.subscribers` is
+the exact EXTENSION instead, and `101` does not match `1010`; `subscriber` on
+`pbx.devices` is a **subscribers id**, not an extension.
 
 **A device is one REGISTRATION, not one handset.** The row exists because
 something sent a SIP REGISTER and it disappears when nothing does, so an
 unplugged phone leaves no device at all and a phone that registered twice
 leaves two. `registered: false` asks for the expired ones.
 
-**A PBX user's and a device's timestamps are strings, not `Date`s** — the
+**A subscriber's and a device's timestamps are strings, not `Date`s** — the
 only ones in this package that are. They come straight out of the phone
 system, which has never published the format it writes them in, so the API
 serves them unparsed and so do we: a date a year out would read exactly like
@@ -660,7 +729,7 @@ a date that is right. A call record's `startedAt`, `answeredAt` and
 ### Asking somebody's phone to dial
 
 ```ts
-const call = await client.pbx.users.call(personId, {
+const call = await client.pbx.subscribers.call(personId, {
   destination: "+13025556789",
   callerId: "+14075550101",
 });
@@ -687,8 +756,8 @@ second phone call to a real person.**
 
 The device must be that subscriber's own — one that is not is refused with a
 422, whether it belongs to somebody else or does not exist, and nothing is
-dialled. The pointer is `/data/attributes/device`. The check covers a user of
-the same name on another domain, which is the case that would otherwise reach
+dialled. The pointer is `/data/attributes/device`. The check covers a
+subscriber with the same extension on another domain, which is the case that would otherwise reach
 a stranger.
 
 A phone system that refuses or cannot be reached is a 502, with its own status
@@ -703,16 +772,16 @@ subscriber's own caller ID was used.
 ### Finding the call a click-to-dial became
 
 ```ts
-const call = await client.pbx.users.call(personId, { destination: "+13025556789" });
+const call = await client.pbx.subscribers.call(personId, { destination: "+13025556789" });
 
 // Later, once the call has ended — and inside the date range, see below:
 const records = await client.pbx.callRecords.list({ callId: call.id });
 for (const record of records.callRecords) {
-  console.log(record.disposition, record.talkTime);
+  console.log(record.disposition, record.talkSeconds);
 }
 ```
 
-`callId` takes the `id` that `users.call()` returned. The record appears once
+`callId` takes the `id` that `subscribers.call()` returned. The record appears once
 the call has ended.
 
 **The date range still applies.** The call id is matched only inside the
@@ -845,14 +914,14 @@ decision and not a library's.
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
 | `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `ids` reads several customers by id in one request; `code` finds one customer. |
 | `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
-| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, user?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `callId` finds what a click-to-dial became. |
+| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds what a click-to-dial became. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
 | `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "pending"` and every other field `null` for one with no words yet. Also NOT paginated. |
-| `client.pbx.users.list({ customer?, user?, search?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxUserPage`: `users` plus `nextCursor`. `user` is the exact extension; `search` is the directory box. |
-| `client.pbx.users.get(pbxUserId)` | `pbx-users:read` | One `PbxUser`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
-| `client.pbx.users.call(pbxUserId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
-| `client.pbx.devices.list({ customer?, user?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `user` is a users id, not an extension. |
+| `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxSubscriberPage`: `subscribers` plus `nextCursor`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
+| `client.pbx.subscribers.get(subscriberId)` | `pbx-users:read` | One `PbxSubscriber`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
+| `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
+| `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `subscriber` is a subscribers id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
@@ -860,7 +929,7 @@ decision and not a library's.
 `CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
-`PbxDevice`, `PbxDevicePage`, `PbxUser`, `PbxUserPage`, `Recording`,
+`PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
 `Transcript`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
 `WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
 built from in `.raw` — so a member the API adds after this release reaches
