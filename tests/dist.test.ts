@@ -58,7 +58,7 @@ interface Surface {
     faxAccountUsers: object;
     webhookEndpoints: object;
     webhookDeliveries: object;
-    pbx: { callRecords: object; users: object; devices: object };
+    pbx: { callRecords: object; subscribers: object; devices: object };
     customers: object;
     request: unknown;
   };
