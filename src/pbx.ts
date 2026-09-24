@@ -3,22 +3,21 @@
  * what was called — and asking somebody's phone to place a call.
  *
  * -- ONE NAMESPACE, THREE COLLECTIONS AND AN ACTION -------------------------
- * `client.pbx.users` are the subscribers, `client.pbx.devices` the SIP
- * registrations they made, and `client.pbx.callRecords` the call log.
- * `client.pbx.users.call()` is the only write on the whole surface: it has a
- * subscriber's phone place a call, so the call goes out as them.
+ * `client.pbx.subscribers` are every extension on the phone system — people
+ * AND machines, told apart by `kind` — `client.pbx.devices` the SIP
+ * registrations their phones made, and `client.pbx.callRecords` the call log.
+ * `client.pbx.subscribers.call()` is the only write on the whole surface: it
+ * has a subscriber's phone place a call, so the call goes out as them.
  *
- * They sit under `client.pbx` rather than at the top level because `users`
- * and `devices` are words this API uses elsewhere for other things — a
- * `users` resource is a PERSON with a console login, and a PBX user is an
- * extension on a switch. One namespace keeps the two from reading as the
- * same collection.
+ * They sit under `client.pbx` rather than at the top level because `devices`
+ * is a word other products use for other things. One namespace keeps the
+ * phone system's collections reading as one subject.
  *
  * -- EVERY READ IS SCOPED, AND THERE IS NO UNSCOPED FORM --------------------
  * A `/v1/pbx/` read reaches the PBX domains of the customers your credential
  * may read, and nothing else. A credential that reaches no customer with a
  * phone system is refused with a **400** rather than handed an empty page, so
- * "nobody has a phone system yet" never reads as "nobody has any users".
+ * "nobody has a phone system yet" never reads as "nobody has any subscribers".
  * Narrow to one customer with `customer`.
  *
  * -- WHAT IS SPEC-TYPED, AND WHAT IS HAND-BUILT -----------------------------
@@ -26,7 +25,7 @@
  * `src/_generated/schema.d.ts` type-checks their paths, their query members
  * and their response bodies at compile time.
  *
- * `users.call()` sends its document through `client.request()` instead, for
+ * `subscribers.call()` sends its document through `client.request()` instead, for
  * the one reason `faxAccountUsers.create()` does: a JSON:API resource route
  * answers 415 to the `application/json` a body with no explicit type gets,
  * and the shared transport is built with `Accept` alone. ITS BODY IS
@@ -34,12 +33,12 @@
  * `PbxCallRequest`, so a member this package spells wrongly is a compile
  * error rather than a 422 somebody reads out of a log.
  *
- * -- THE WIRE IS KEBAB-CASE HERE --------------------------------------------
- * `/v1/pbx/` attributes and filters are spelled `started-after`,
- * `display-name`, `include-hidden` — not the `camelCase` attributes and
- * `snake_case` filters of the fax surface. That is the API's own spelling for
- * these resources and this module writes it verbatim; the camelCase is on
- * this package's side of the boundary, in src/models.ts.
+ * -- THE WIRE IS camelCase HERE, EXCEPT FOR TWO SUB-COLLECTIONS --------------
+ * `/v1/pbx/` attributes and filters are spelled `startedAfter`,
+ * `displayName`, `includeHidden` — the API's own spelling since its 2026-09
+ * rename, which 0.11.0 of this package follows. The recordings and
+ * transcripts documents still spell their attributes in kebab-case
+ * (`ccc-id`, `content-url`); src/models.ts reads each as the API writes it.
  */
 import type { components } from "./_generated/schema.js";
 import type { Ringivo } from "./client.js";
@@ -50,8 +49,8 @@ import {
   type PbxCall,
   type PbxDevice,
   type PbxDevicePage,
-  type PbxUser,
-  type PbxUserPage,
+  type PbxSubscriber,
+  type PbxSubscriberPage,
   type RawJson,
   type Recording,
   type Transcript,
@@ -61,8 +60,8 @@ import {
   pbxCallFromResource,
   pbxDeviceFromResource,
   pbxDevicePageFromDocument,
-  pbxUserFromResource,
-  pbxUserPageFromDocument,
+  pbxSubscriberFromResource,
+  pbxSubscriberPageFromDocument,
   recordingsFromDocument,
   transcriptsFromDocument,
 } from "./models.js";
@@ -91,15 +90,24 @@ export interface ListCallRecordsOptions {
    * own `direction` IS wide, because the switch may record an integer this
    * API has no word for — the two differ deliberately.
    */
-  direction?: "inbound" | "outbound" | "on-net";
+  direction?: "inbound" | "outbound" | "internal";
   /**
-   * Calls with this PBX **user id** on either leg — placed by them or taken
-   * by them. The id of a `pbx.users` row, never an extension.
+   * Ask for the EXTENDED tier: the member names to serve, in the API's own
+   * camelCase — `["direction", "startedAt", "vendorId", "terminatedTo"]`.
+   *
+   * **A sparse fieldset NARROWS rather than adds**: name the standard members
+   * you still want beside the extended ones, or they come back null. Leave it
+   * off for the standard tier. A name the API does not publish is a 400.
    */
-  user?: string;
+  fields?: readonly string[];
+  /**
+   * Calls with this PBX **subscriber id** on either leg — placed by them or
+   * taken by them. The id of a `pbx.subscribers` row, never an extension.
+   */
+  subscriber?: string;
   /**
    * The records of ONE click-to-dial call: pass the `id` that
-   * `pbx.users.call()` returned. The call record appears once the call has
+   * `pbx.subscribers.call()` returned. The call record appears once the call has
    * ended.
    *
    * **The date range still applies.** The call id is matched only inside the
@@ -138,8 +146,8 @@ export interface ListCallRecordsOptions {
   pageSize?: number;
 }
 
-/** What `pbx.users.list()` accepts. Every member narrows the collection. */
-export interface ListPbxUsersOptions {
+/** What `pbx.subscribers.list()` accepts. Every member narrows the collection. */
+export interface ListPbxSubscribersOptions {
   /** Only the subscribers of this customer's PBX domain. */
   customer?: string;
   /** Exact match on the EXTENSION. `101` does not match `1010`. */
@@ -150,7 +158,24 @@ export interface ListPbxUsersOptions {
    */
   search?: string;
   /**
-   * Walk forward: the previous page's `PbxUserPage.nextCursor`. Cannot be
+   * Only these kinds: one word (`"user"`), a comma list
+   * (`"call_queue,auto_attendant"`) or an array of words. See
+   * `PbxSubscriber.kind` for the words. A word the API does not know is
+   * refused with a 400 that names the accepted words, never answered with an
+   * empty page.
+   *
+   * `string` rather than a union on purpose: the vocabulary may grow, and a
+   * word the server accepts tomorrow should not need a new SDK today.
+   */
+  kind?: string | readonly string[];
+  /**
+   * `true` for subscribers with at least one device registration, `false`
+   * for those with none. A click-to-call picker sends
+   * `{ kind: "user", hasDevices: true }`.
+   */
+  hasDevices?: boolean;
+  /**
+   * Walk forward: the previous page's `PbxSubscriberPage.nextCursor`. Cannot be
    * combined with `before`.
    */
   after?: string;
@@ -168,11 +193,11 @@ export interface ListPbxDevicesOptions {
   /** Only the registrations on this customer's PBX domain. */
   customer?: string;
   /**
-   * Only the registrations belonging to this PBX **user id** — the id of a
-   * `pbx.users` row, not an extension. An id you cannot reach answers an
-   * empty page rather than a refusal.
+   * Only the registrations belonging to this PBX **subscriber id** — the id
+   * of a `pbx.subscribers` row, not an extension. An id you cannot reach
+   * answers an empty page rather than a refusal.
    */
-  user?: string;
+  subscriber?: string;
   /** `true` for registrations that have not expired, `false` for the rest. */
   registered?: boolean;
   /**
@@ -189,7 +214,7 @@ export interface ListPbxDevicesOptions {
   pageSize?: number;
 }
 
-/** What `pbx.users.call()` accepts. Only `destination` is required. */
+/** What `pbx.subscribers.call()` accepts. Only `destination` is required. */
 export interface PlaceCallOptions {
   /**
    * Who to call: E.164 with a leading `+`, or an extension of 2 to 7 digits.
@@ -222,8 +247,8 @@ export interface PlaceCallOptions {
    * belongs to somebody else or does not exist, and nothing is dialled. The
    * two are deliberately one answer: a device id is a client-supplied name
    * for hardware on a shared platform, and telling them apart would say
-   * whose it is. The check includes a user of the SAME NAME on another
-   * domain, which is the case that would otherwise reach a stranger. Omit
+   * whose it is. The check includes a subscriber with the SAME EXTENSION on
+   * another domain, which is the case that would otherwise reach a stranger. Omit
    * it and the platform chooses.
    */
   device?: string;
@@ -254,7 +279,7 @@ export class CallRecords {
    * Hidden records are left out here and served by `get()`.
    *
    * `callId` finds what a click-to-dial became: pass the `id` that
-   * `pbx.users.call()` returned, once the call has ended. The date range above
+   * `pbx.subscribers.call()` returned, once the call has ended. The date range above
    * still applies to it, so name one that covers an older call.
    *
    * Needs `pbx-call-records:read`.
@@ -267,12 +292,13 @@ export class CallRecords {
           "page[before]": options.before,
           "page[size]": options.pageSize,
           "filter[customer]": options.customer,
-          "filter[started-after]": options.startedAfter,
-          "filter[started-before]": options.startedBefore,
+          "filter[startedAfter]": options.startedAfter,
+          "filter[startedBefore]": options.startedBefore,
           "filter[direction]": options.direction,
-          "filter[user]": options.user,
-          "filter[call-id]": options.callId,
-          "filter[include-hidden]": options.includeHidden,
+          "fields[call-records]": joinedList(options.fields),
+          "filter[subscriber]": options.subscriber,
+          "filter[callId]": options.callId,
+          "filter[includeHidden]": options.includeHidden,
         },
       },
     });
@@ -367,21 +393,23 @@ export class CallRecords {
   }
 }
 
-/** The `client.pbx.users` namespace. */
-export class PbxUsers {
+/** The `client.pbx.subscribers` namespace. */
+export class PbxSubscribers {
   constructor(private readonly client: Ringivo) {}
 
   /**
-   * One page of subscribers, by extension.
+   * One page of subscribers — people and machines — by extension.
    *
    * `search` is the directory box — one substring across the display name,
    * both parts of the person's name and the extension. `user` is the exact
-   * extension instead, and `101` does not match `1010`.
+   * extension instead, and `101` does not match `1010`. `kind` and
+   * `hasDevices` narrow to the rows a click-to-call picker wants:
+   * `{ kind: "user", hasDevices: true }`.
    *
    * Needs `pbx-users:read`.
    */
-  async list(options: ListPbxUsersOptions = {}): Promise<PbxUserPage> {
-    const { data } = await transportOf(this.client)["/v1/pbx/users"].GET({
+  async list(options: ListPbxSubscribersOptions = {}): Promise<PbxSubscriberPage> {
+    const { data } = await transportOf(this.client)["/v1/pbx/subscribers"].GET({
       params: {
         query: {
           "page[after]": options.after,
@@ -390,11 +418,13 @@ export class PbxUsers {
           "filter[customer]": options.customer,
           "filter[user]": options.user,
           "filter[search]": options.search,
+          "filter[kind]": joinedList(options.kind),
+          "filter[hasDevices]": options.hasDevices,
         },
       },
     });
 
-    return pbxUserPageFromDocument(isRecord(data) ? data : {});
+    return pbxSubscriberPageFromDocument(isRecord(data) ? data : {});
   }
 
   /**
@@ -405,12 +435,14 @@ export class PbxUsers {
    *
    * Needs `pbx-users:read`.
    */
-  async get(pbxUserId: string): Promise<PbxUser> {
-    const { data } = await transportOf(this.client)["/v1/pbx/users/{user}"].GET({
-      params: { path: { user: idParam(pbxUserId, "a pbx user id is required") } },
+  async get(subscriberId: string): Promise<PbxSubscriber> {
+    const { data } = await transportOf(this.client)["/v1/pbx/subscribers/{subscriber}"].GET({
+      params: {
+        path: { subscriber: idParam(subscriberId, "a pbx subscriber id is required") },
+      },
     });
 
-    return pbxUserFromResource(dataObject(data));
+    return pbxSubscriberFromResource(dataObject(data));
   }
 
   /**
@@ -439,19 +471,19 @@ export class PbxUsers {
    *
    * A subscriber outside your customers' domains answers **404**, not 403.
    * A `device` that is not this subscriber's own is a **422** pointing at
-   * `/data/attributes/device` — including one that belongs to a user of the
-   * same name on another domain — and nothing is dialled. A phone system
+   * `/data/attributes/device` — including one that belongs to a subscriber
+   * with the same extension on another domain — and nothing is dialled. A phone system
    * that refuses or cannot be reached answers **502**, with its own status
    * in `errors[0].meta.vendor_status`.
    *
    * Needs `pbx-calls:write`.
    */
-  async call(pbxUserId: string, options: PlaceCallOptions): Promise<PbxCall> {
-    const id = idParam(pbxUserId, "a pbx user id is required");
+  async call(subscriberId: string, options: PlaceCallOptions): Promise<PbxCall> {
+    const id = idParam(subscriberId, "a pbx subscriber id is required");
 
-    // `auto-answer` IS ALWAYS SENT, and the other two only when named.
+    // `autoAnswer` IS ALWAYS SENT, and the other two only when named.
     //
-    // The spec requires `destination` alone and gives `auto-answer` a
+    // The spec requires `destination` alone and gives `autoAnswer` a
     // `default: false`, which openapi-typescript renders as a NON-optional
     // member — a property with a default always has a value once the server
     // has read the document. Spelling our own `false` is therefore the one
@@ -459,10 +491,10 @@ export class PbxUsers {
     // says the same thing to the server as leaving it out.
     const attributes: CallRequest["data"]["attributes"] = {
       destination: options.destination,
-      "auto-answer": options.autoAnswer ?? false,
+      autoAnswer: options.autoAnswer ?? false,
     };
     if (options.callerId !== undefined) {
-      attributes["caller-id"] = options.callerId;
+      attributes.callerId = options.callerId;
     }
     if (options.device !== undefined) {
       attributes.device = options.device;
@@ -471,7 +503,7 @@ export class PbxUsers {
     const document: CallRequest = { data: { type: "calls", attributes } };
 
     const response = await this.client.request(
-      new Request(`${this.client.baseUrl}/v1/pbx/users/${encodeURIComponent(id)}/calls`, {
+      new Request(`${this.client.baseUrl}/v1/pbx/subscribers/${encodeURIComponent(id)}/calls`, {
         method: "POST",
         headers: new Headers({
           Accept: JSONAPI_MEDIA_TYPE,
@@ -506,7 +538,7 @@ export class PbxDevices {
           "page[before]": options.before,
           "page[size]": options.pageSize,
           "filter[customer]": options.customer,
-          "filter[user]": options.user,
+          "filter[subscriber]": options.subscriber,
           "filter[registered]": options.registered,
         },
       },
@@ -538,15 +570,15 @@ export class Pbx {
   /** Your customers' call log. */
   readonly callRecords: CallRecords;
 
-  /** The subscribers on their phone systems, and click-to-dial. */
-  readonly users: PbxUsers;
+  /** Every subscriber on their phone systems, and click-to-dial. */
+  readonly subscribers: PbxSubscribers;
 
   /** The SIP registrations their phones have made. */
   readonly devices: PbxDevices;
 
   constructor(client: Ringivo) {
     this.callRecords = new CallRecords(client);
-    this.users = new PbxUsers(client);
+    this.subscribers = new PbxSubscribers(client);
     this.devices = new PbxDevices(client);
   }
 }
@@ -561,16 +593,30 @@ export class Pbx {
  * read with this client's token.
  *
  * What this adds is the REFUSAL. An empty id would collapse
- * `/v1/pbx/users/{user}` into `/v1/pbx/users` — the COLLECTION, which answers
- * 200 with a page a caller would read as the one row they asked for. On
- * `call()` it would collapse `/v1/pbx/users//calls` instead, which is a
- * request nobody meant to send.
+ * `/v1/pbx/subscribers/{subscriber}` into `/v1/pbx/subscribers` — the
+ * COLLECTION, which answers 200 with a page a caller would read as the one
+ * row they asked for. On `call()` it would collapse
+ * `/v1/pbx/subscribers//calls` instead, which is a request nobody meant to
+ * send.
  */
 function idParam(value: string, refusal: string): string {
   if (!value) {
     throw new Error(refusal);
   }
   return value;
+}
+
+/**
+ * A list-valued query member as the one comma-joined string the API reads,
+ * or left off. A `string` passes through as it is, so `"user"` and
+ * `"call_queue,auto_attendant"` both work; an empty array is "no opinion", the
+ * member left off rather than sent empty (an empty word would be a 400).
+ */
+function joinedList(value: string | readonly string[] | undefined): string | undefined {
+  if (value === undefined || typeof value === "string") {
+    return value === "" ? undefined : value;
+  }
+  return value.length > 0 ? value.join(",") : undefined;
 }
 
 function dataObject(payload: unknown): RawJson {

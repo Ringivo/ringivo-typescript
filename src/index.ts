@@ -37,8 +37,9 @@
  *
  * Your customers' phone systems are `client.pbx` — `pbx.callRecords` for the
  * call log, plus `pbx.callRecords.recordings()`/`.transcripts()` for what
- * was captured of one call, `pbx.users` for the subscribers, `pbx.devices`
- * for what their phones have registered, and `pbx.users.call()` to ask one
+ * was captured of one call, `pbx.subscribers` for every extension (people
+ * and machines, told apart by `kind`), `pbx.devices` for what their phones
+ * have registered, and `pbx.subscribers.call()` to ask one
  * of those phones to dial out. Reading needs `pbx-call-records:read` and
  * `pbx-users:read`; transcripts need `pbx-transcripts:read` too;
  * click-to-dial needs `pbx-calls:write`.
@@ -96,8 +97,8 @@ export type {
   PbxCall,
   PbxDevice,
   PbxDevicePage,
-  PbxUser,
-  PbxUserPage,
+  PbxSubscriber,
+  PbxSubscriberPage,
   Recording,
   Transcript,
   WebhookDelivery,
@@ -105,11 +106,11 @@ export type {
   WebhookEndpoint,
   WebhookEndpointPage,
 } from "./models.js";
-export { CallRecords, Pbx, PbxDevices, PbxUsers } from "./pbx.js";
+export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
 export type {
   ListCallRecordsOptions,
   ListPbxDevicesOptions,
-  ListPbxUsersOptions,
+  ListPbxSubscribersOptions,
   PlaceCallOptions,
 } from "./pbx.js";
 export { VERSION } from "./version.js";

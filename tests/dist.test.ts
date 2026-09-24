@@ -58,7 +58,7 @@ interface Surface {
     faxAccountUsers: object;
     webhookEndpoints: object;
     webhookDeliveries: object;
-    pbx: { callRecords: object; users: object; devices: object };
+    pbx: { callRecords: object; subscribers: object; devices: object };
     customers: object;
     request: unknown;
   };
@@ -197,21 +197,21 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       scopes: ["pbx-users:read"],
     });
 
-    // Three collections hung off one namespace, and `call()` on the users
-    // one — the only write on the whole surface.
+    // Three collections hung off one namespace, and `call()` on the
+    // subscribers one — the only write on the whole surface.
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx))
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual([]);
-    expect(Object.keys(client.pbx).sort()).toEqual(["callRecords", "devices", "users"]);
+    expect(Object.keys(client.pbx).sort()).toEqual(["callRecords", "devices", "subscribers"]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.callRecords))
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["get", "list", "recordings", "transcripts"]);
     expect(
-      Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.users))
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.subscribers))
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["call", "get", "list"]);

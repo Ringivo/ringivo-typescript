@@ -6,17 +6,17 @@
  * return value alone. Three things here are worth more than the usual
  * round-trip check:
  *
- * - **The wire is kebab-case on this surface.** `filter[started-after]`, not
- *   `filter[started_after]`; `display-name`, not `displayName`. The fax
- *   surface spells both the other way, so a reader who pattern-matched off
- *   `faxes.ts` would get these wrong and nothing but a test would say so.
+ * - **The wire is camelCase on this surface** (since 0.11.0):
+ *   `filter[startedAfter]`, `displayName`. The recordings and transcripts
+ *   documents are the exception and stay kebab-case (`ccc-id`), so each is
+ *   asserted in the spelling the API actually writes.
  * - **`false` is a value, not an absence.** `registered: false` and
  *   `includeHidden: false` are the halves of those filters somebody actually
  *   wants — expired registrations, and the default hidden-records behaviour
  *   stated explicitly. A serialiser that drops falsy query members would turn
  *   both into "no filter at all" and answer 200 with the wrong rows, so the
  *   literal `"false"` is asserted rather than assumed.
- * - **A PBX user's timestamps are STRINGS.** Every other model in this package
+ * - **A PBX subscriber's timestamps are STRINGS.** Every other model in this package
  *   parses `createdAt` into a `Date`, and these two deliberately do not; a
  *   test that only checked the value would pass against a `Date` built from
  *   the same text.
@@ -31,7 +31,7 @@ const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
 
 const CALL_RECORDS_URL = `${BASE_URL}/v1/pbx/call-records`;
-const PBX_USERS_URL = `${BASE_URL}/v1/pbx/users`;
+const PBX_USERS_URL = `${BASE_URL}/v1/pbx/subscribers`;
 const PBX_DEVICES_URL = `${BASE_URL}/v1/pbx/devices`;
 
 const CALL_RECORD_ID = "e4837703-48c1-5c9e-8699-bbaafb17bb84";
@@ -82,39 +82,38 @@ function callRecordResource(attributeOverrides: Record<string, unknown> = {}): o
     attributes: {
       direction: "inbound",
       disposition: "answered",
-      "vendor-type": 1,
+      tenantId: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
       domain: "acme.example",
-      "from-user": "",
-      "from-uri": "sip:+13025556789@carrier.example",
-      "from-name": "Dr Bell",
-      "to-user": "101",
-      "to-uri": "sip:101@acme.example",
-      dialed: "+14075550101",
-      "by-user": "",
-      "term-user": "101",
-      "started-at": "2026-09-12T14:00:00+00:00",
-      "answered-at": "2026-09-12T14:00:04+00:00",
-      "released-at": "2026-09-12T14:01:04+00:00",
-      duration: 64,
-      "talk-time": 60,
-      tag: "clinic",
+      territory: "reseller-1",
+      fromNumber: "+13025556789",
+      fromExtension: null,
+      fromName: "Dr Bell",
+      toNumber: "+14075550101",
+      dialedNumber: "+14075550101",
+      routedByExtension: null,
+      answeringExtension: "101",
+      startedAt: "2026-09-12T14:00:00+00:00",
+      answeredAt: "2026-09-12T14:00:04+00:00",
+      releasedAt: "2026-09-12T14:01:04+00:00",
+      durationSeconds: 64,
+      talkSeconds: 60,
+      releaseCode: "16",
+      releaseText: "Normal Clearing",
+      hasRecording: true,
       hidden: false,
-      "has-recording": true,
-      "vendor-id": "20260912000000000001c0ffee0123456789abcdef",
       ...attributeOverrides,
     },
     relationships: {
       customer: { data: { type: "customers", id: CUSTOMER_ID } },
-      "from-pbx-user": { data: null },
-      "to-pbx-user": { data: { type: "users", id: PBX_USER_ID } },
+      fromSubscriber: { data: null },
+      toSubscriber: { data: { type: "subscribers", id: PBX_USER_ID } },
     },
   };
 }
 
 /**
- * One `recordings` resource object, KEBAB-CASE attributes and all — the
- * same spelling every other `/v1/pbx/` resource in this file uses,
- * `callRecordResource` above included.
+ * One `recordings` resource object, KEBAB-CASE attributes and all — this
+ * document's own spelling, unlike the camelCase of `callRecordResource`.
  */
 function recordingResource(
   attributeOverrides: Record<string, unknown> = {},
@@ -162,24 +161,25 @@ function transcriptResource(
 
 function pbxUserResource(attributeOverrides: Record<string, unknown> = {}): object {
   return {
-    type: "users",
+    type: "subscribers",
     id: PBX_USER_ID,
     attributes: {
       user: "101",
       domain: "acme.example",
-      "display-name": "Ann Perkins",
-      "first-name": "Ann",
-      "last-name": "Perkins",
+      displayName: "Ann Perkins",
+      firstName: "Ann",
+      lastName: "Perkins",
       email: "ann@acme.example",
       scope: "Basic User",
       group: "sales",
       site: "HQ",
       presence: "open",
-      "caller-id-number": "+14075550101",
-      "caller-id-name": "Ann Perkins",
-      "time-zone": "US/Eastern",
-      "created-at": "2026-01-02 03:04:05",
-      "updated-at": "2026-09-01 10:00:00",
+      callerIdNumber: "+14075550101",
+      callerIdName: "Ann Perkins",
+      timeZone: "US/Eastern",
+      createdAt: "2026-01-02 03:04:05",
+      updatedAt: "2026-09-01 10:00:00",
+      kind: "user",
       ...attributeOverrides,
     },
     relationships: {
@@ -198,20 +198,20 @@ function pbxDeviceResource(attributeOverrides: Record<string, unknown> = {}): ob
       user: "101",
       domain: "acme.example",
       mode: "register",
-      "user-agent": "Polycom/6.4.2",
+      userAgent: "Polycom/6.4.2",
       contact: "sip:101@198.51.100.7:5060",
       transport: "udp",
-      "received-from": "198.51.100.7:5060",
-      "registered-at": "2026-09-14 08:00:00",
-      "registration-expires-at": "2026-09-14 09:00:00",
+      receivedFrom: "198.51.100.7:5060",
+      registeredAt: "2026-09-14 08:00:00",
+      registrationExpiresAt: "2026-09-14 09:00:00",
       registered: true,
-      "auto-answer": false,
-      "created-at": "2026-01-02 03:04:05",
+      autoAnswer: false,
+      createdAt: "2026-01-02 03:04:05",
       ...attributeOverrides,
     },
     relationships: {
       customer: { data: { type: "customers", id: CUSTOMER_ID } },
-      "pbx-user": { data: { type: "users", id: PBX_USER_ID } },
+      subscriber: { data: { type: "subscribers", id: PBX_USER_ID } },
     },
   };
 }
@@ -221,7 +221,7 @@ function errorBody(status: number, code: string, detail: string, source?: object
 }
 
 describe("callRecords.list", () => {
-  it("spells every filter the way this surface spells them — kebab-case", async () => {
+  it("spells every filter the way this surface spells them — camelCase", async () => {
     const calls = new Calls();
     server.use(
       http.get(CALL_RECORDS_URL, async ({ request }) => {
@@ -234,8 +234,8 @@ describe("callRecords.list", () => {
       customer: CUSTOMER_ID,
       startedAfter: "2026-09-01T00:00:00Z",
       startedBefore: "2026-09-30T23:59:59Z",
-      direction: "inbound",
-      user: PBX_USER_ID,
+      direction: "internal",
+      subscriber: PBX_USER_ID,
       callId: CALL_ID,
       includeHidden: true,
       pageSize: 100,
@@ -245,12 +245,14 @@ describe("callRecords.list", () => {
     const params = calls.last.url.searchParams;
 
     expect(params.get("filter[customer]")).toBe(CUSTOMER_ID);
-    expect(params.get("filter[started-after]")).toBe("2026-09-01T00:00:00Z");
-    expect(params.get("filter[started-before]")).toBe("2026-09-30T23:59:59Z");
-    expect(params.get("filter[direction]")).toBe("inbound");
-    expect(params.get("filter[user]")).toBe(PBX_USER_ID);
-    expect(params.get("filter[call-id]")).toBe(CALL_ID);
-    expect(params.get("filter[include-hidden]")).toBe("true");
+    expect(params.get("filter[startedAfter]")).toBe("2026-09-01T00:00:00Z");
+    expect(params.get("filter[startedBefore]")).toBe("2026-09-30T23:59:59Z");
+    expect(params.get("filter[direction]")).toBe("internal");
+    expect(params.get("filter[subscriber]")).toBe(PBX_USER_ID);
+    expect(params.get("filter[callId]")).toBe(CALL_ID);
+    expect(params.get("filter[includeHidden]")).toBe("true");
+    expect(params.has("filter[user]")).toBe(false);
+    expect(params.has("fields[call-records]")).toBe(false);
     expect(params.get("page[size]")).toBe("100");
     expect(params.get("page[after]")).toBe("0198c4a1-cursor");
     // An unset filter is absent, not empty.
@@ -260,7 +262,7 @@ describe("callRecords.list", () => {
 
   it("sends includeHidden: false as a value rather than dropping it", async () => {
     // `false` is falsy, and a serialiser that skipped it would send NO
-    // include-hidden filter — which happens to be the same behaviour here, so
+    // includeHidden filter — which happens to be the same behaviour here, so
     // this assertion is about the wire staying explicit rather than about the
     // rows. The `registered` filter below is the one where the two differ.
     const calls = new Calls();
@@ -273,7 +275,27 @@ describe("callRecords.list", () => {
 
     await client().pbx.callRecords.list({ includeHidden: false });
 
-    expect(calls.last.url.searchParams.get("filter[include-hidden]")).toBe("false");
+    expect(calls.last.url.searchParams.get("filter[includeHidden]")).toBe("false");
+  });
+
+  it("asks for the extended tier as one comma-joined fields[call-records]", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(CALL_RECORDS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().pbx.callRecords.list({ fields: ["direction", "startedAt", "vendorId"] });
+    await client().pbx.callRecords.list({ fields: [] });
+
+    expect(calls.count).toBe(2);
+    expect(calls.all[0]?.url.searchParams.get("fields[call-records]")).toBe(
+      "direction,startedAt,vendorId",
+    );
+    // An empty list is "the standard tier", the member left off.
+    expect(calls.last.url.searchParams.has("fields[call-records]")).toBe(false);
   });
 
   it("sends no filter at all when none was named", async () => {
@@ -317,8 +339,8 @@ describe("callRecords.list", () => {
   });
 
   it("finds a click-to-dial call's records by the id call() answered", async () => {
-    // The join this release adds: the `id` of the 202 goes back out,
-    // unchanged, as `filter[call-id]`.
+    // The join: the `id` of the 202 goes back out, unchanged, as
+    // `filter[callId]`.
     const calls = new Calls();
     server.use(
       http.post(PLACE_CALL_URL, () =>
@@ -340,11 +362,11 @@ describe("callRecords.list", () => {
     );
 
     const ringivo = client();
-    const call = await ringivo.pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
+    const call = await ringivo.pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
     const page = await ringivo.pbx.callRecords.list({ callId: call.id });
 
     expect(calls.count).toBe(1);
-    expect([...calls.last.url.searchParams.entries()]).toEqual([["filter[call-id]", CALL_ID]]);
+    expect([...calls.last.url.searchParams.entries()]).toEqual([["filter[callId]", CALL_ID]]);
     expect(page.callRecords).toHaveLength(1);
   });
 
@@ -401,7 +423,7 @@ describe("callRecords.list", () => {
 });
 
 describe("callRecords.get", () => {
-  it("reads a kebab-case document into the camelCase public object", async () => {
+  it("reads the standard tier into the public object", async () => {
     server.use(http.get(CALL_RECORD_URL, () => HttpResponse.json({ data: callRecordResource() })));
 
     const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
@@ -409,23 +431,62 @@ describe("callRecords.get", () => {
     expect(record.id).toBe(CALL_RECORD_ID);
     expect(record.direction).toBe("inbound");
     expect(record.disposition).toBe("answered");
-    expect(record.vendorType).toBe(1);
+    expect(record.tenantId).toBe("0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8");
     expect(record.domain).toBe("acme.example");
-    expect(record.fromUser).toBe("");
-    expect(record.fromUri).toBe("sip:+13025556789@carrier.example");
+    expect(record.territory).toBe("reseller-1");
+    expect(record.fromNumber).toBe("+13025556789");
+    expect(record.fromExtension).toBeNull();
     expect(record.fromName).toBe("Dr Bell");
-    expect(record.toUser).toBe("101");
-    expect(record.toUri).toBe("sip:101@acme.example");
-    expect(record.dialed).toBe("+14075550101");
-    expect(record.byUser).toBe("");
-    expect(record.termUser).toBe("101");
-    expect(record.duration).toBe(64);
-    expect(record.talkTime).toBe(60);
-    expect(record.tag).toBe("clinic");
+    expect(record.toNumber).toBe("+14075550101");
+    expect(record.dialedNumber).toBe("+14075550101");
+    expect(record.routedByExtension).toBeNull();
+    expect(record.answeringExtension).toBe("101");
+    expect(record.durationSeconds).toBe(64);
+    expect(record.talkSeconds).toBe(60);
+    expect(record.releaseCode).toBe("16");
+    expect(record.releaseText).toBe("Normal Clearing");
     expect(record.hidden).toBe(false);
     expect(record.hasRecording).toBe(true);
-    expect(record.vendorId).toBe("20260912000000000001c0ffee0123456789abcdef");
+    // The extended tier was not asked for, so it is null — by design.
+    expect(record.vendorId).toBeNull();
+    expect(record.rawRequestUser).toBeNull();
     expect(Object.isFrozen(record)).toBe(true);
+  });
+
+  it("reads every extended member when the server sent them", async () => {
+    server.use(
+      http.get(CALL_RECORD_URL, () =>
+        HttpResponse.json({
+          data: callRecordResource({
+            vendorId: "20260912000000000001c0ffee0123456789abcdef",
+            origCallId: "orig-1",
+            termCallId: "term-1",
+            byAction: "forward",
+            terminatedTo: "sip:101@acme.example",
+            codec: "PCMU",
+            hostname: "core1-usw1a",
+            rawFromUri: "sip:+13025556789@carrier.example",
+            rawFromUser: "13025556789",
+            rawToUser: "101",
+            rawRequestUser: "14075550101",
+          }),
+        }),
+      ),
+    );
+
+    const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
+
+    expect(record.vendorId).toBe("20260912000000000001c0ffee0123456789abcdef");
+    expect(record.origCallId).toBe("orig-1");
+    expect(record.termCallId).toBe("term-1");
+    expect(record.byAction).toBe("forward");
+    expect(record.terminatedTo).toBe("sip:101@acme.example");
+    expect(record.codec).toBe("PCMU");
+    expect(record.hostname).toBe("core1-usw1a");
+    expect(record.rawFromUri).toBe("sip:+13025556789@carrier.example");
+    expect(record.rawFromUser).toBe("13025556789");
+    expect(record.rawToUser).toBe("101");
+    expect(record.rawRequestUser).toBe("14075550101");
   });
 
   it("parses the three instants, which ARE RFC 3339 on this resource", async () => {
@@ -446,9 +507,8 @@ describe("callRecords.get", () => {
           data: callRecordResource({
             direction: "inbound",
             disposition: "missed",
-            "vendor-type": 2,
-            "answered-at": null,
-            "talk-time": 0,
+            answeredAt: null,
+            talkSeconds: 0,
           }),
         }),
       ),
@@ -458,7 +518,7 @@ describe("callRecords.get", () => {
 
     expect(record.disposition).toBe("missed");
     expect(record.answeredAt).toBeNull();
-    expect(record.talkTime).toBe(0);
+    expect(record.talkSeconds).toBe(0);
   });
 
   it("passes a direction word this SDK does not know straight through", async () => {
@@ -468,25 +528,24 @@ describe("callRecords.get", () => {
     // switch's end never erases a call.
     server.use(
       http.get(CALL_RECORD_URL, () =>
-        HttpResponse.json({ data: callRecordResource({ direction: "9", "vendor-type": 9 }) }),
+        HttpResponse.json({ data: callRecordResource({ direction: "9" }) }),
       ),
     );
 
     const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
 
     expect(record.direction).toBe("9");
-    expect(record.vendorType).toBe(9);
   });
 
-  it("reads both legs' user relationships, and a null linkage as null", async () => {
+  it("reads both legs' subscriber relationships, and a null linkage as null", async () => {
     server.use(http.get(CALL_RECORD_URL, () => HttpResponse.json({ data: callRecordResource() })));
 
     const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
 
     expect(record.customerId).toBe(CUSTOMER_ID);
     // An outside caller has no extension, so this leg resolves to nothing.
-    expect(record.fromPbxUserId).toBeNull();
-    expect(record.toPbxUserId).toBe(PBX_USER_ID);
+    expect(record.fromSubscriberId).toBeNull();
+    expect(record.toSubscriberId).toBe(PBX_USER_ID);
   });
 
   it("serves a hidden record, which the list leaves out", async () => {
@@ -757,8 +816,8 @@ describe("callRecords.transcripts", () => {
   });
 });
 
-describe("users.list", () => {
-  it("builds the three filters and the page query", async () => {
+describe("subscribers.list", () => {
+  it("builds the filters and the page query", async () => {
     const calls = new Calls();
     server.use(
       http.get(PBX_USERS_URL, async ({ request }) => {
@@ -767,22 +826,62 @@ describe("users.list", () => {
       }),
     );
 
-    await client().pbx.users.list({
+    await client().pbx.subscribers.list({
       customer: CUSTOMER_ID,
       user: "101",
       search: "perkins",
+      kind: "user",
+      hasDevices: true,
       pageSize: 50,
       after: "0198c4a1-cursor",
     });
 
     const params = calls.last.url.searchParams;
 
+    expect(calls.last.url.pathname).toBe("/v1/pbx/subscribers");
     expect(params.get("filter[customer]")).toBe(CUSTOMER_ID);
     expect(params.get("filter[user]")).toBe("101");
     expect(params.get("filter[search]")).toBe("perkins");
+    expect(params.get("filter[kind]")).toBe("user");
+    expect(params.get("filter[hasDevices]")).toBe("true");
     expect(params.get("page[size]")).toBe("50");
     expect(params.get("page[after]")).toBe("0198c4a1-cursor");
     expect(params.has("page[before]")).toBe(false);
+  });
+
+  it("sends kind as one comma list, from a string or an array", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(PBX_USERS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().pbx.subscribers.list({ kind: "call_queue,auto_attendant" });
+    await client().pbx.subscribers.list({ kind: ["call_queue", "auto_attendant"] });
+    await client().pbx.subscribers.list({ kind: [] });
+
+    expect(calls.count).toBe(3);
+    expect(calls.all[0]?.url.searchParams.get("filter[kind]")).toBe("call_queue,auto_attendant");
+    expect(calls.all[1]?.url.searchParams.get("filter[kind]")).toBe("call_queue,auto_attendant");
+    // An empty list is every kind: the member left off, never `filter[kind]=`.
+    expect(calls.last.url.searchParams.has("filter[kind]")).toBe(false);
+  });
+
+  it("sends hasDevices: false as a value rather than dropping it", async () => {
+    // `false` is "who has no phone"; dropping it would answer "everybody".
+    const calls = new Calls();
+    server.use(
+      http.get(PBX_USERS_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: [] });
+      }),
+    );
+
+    await client().pbx.subscribers.list({ hasDevices: false });
+
+    expect(calls.last.url.searchParams.get("filter[hasDevices]")).toBe("false");
   });
 
   it("sends no filter at all when none was named", async () => {
@@ -794,13 +893,13 @@ describe("users.list", () => {
       }),
     );
 
-    await client().pbx.users.list();
+    await client().pbx.subscribers.list();
 
     expect(calls.count).toBe(1);
     expect([...calls.last.url.searchParams.keys()]).toEqual([]);
   });
 
-  it("reads the users and the nextCursor from meta.page", async () => {
+  it("reads the subscribers and the nextCursor from meta.page", async () => {
     server.use(
       http.get(PBX_USERS_URL, () =>
         HttpResponse.json({
@@ -811,19 +910,20 @@ describe("users.list", () => {
       ),
     );
 
-    const page = await client().pbx.users.list();
+    const page = await client().pbx.subscribers.list();
 
-    expect(page.users).toHaveLength(1);
-    expect(page.users[0]?.displayName).toBe("Ann Perkins");
+    expect(page.subscribers).toHaveLength(1);
+    expect(page.subscribers[0]?.displayName).toBe("Ann Perkins");
+    expect(page.subscribers[0]?.kind).toBe("user");
     expect(page.nextCursor).toBe("0198c4a1-next");
   });
 });
 
-describe("users.get", () => {
-  it("reads a kebab-case document into the camelCase public object", async () => {
+describe("subscribers.get", () => {
+  it("reads the document into the public object", async () => {
     server.use(http.get(PBX_USER_URL, () => HttpResponse.json({ data: pbxUserResource() })));
 
-    const user = await client().pbx.users.get(PBX_USER_ID);
+    const user = await client().pbx.subscribers.get(PBX_USER_ID);
 
     expect(user.id).toBe(PBX_USER_ID);
     expect(user.user).toBe("101");
@@ -839,7 +939,22 @@ describe("users.get", () => {
     expect(user.callerIdNumber).toBe("+14075550101");
     expect(user.callerIdName).toBe("Ann Perkins");
     expect(user.timeZone).toBe("US/Eastern");
+    expect(user.kind).toBe("user");
     expect(Object.isFrozen(user)).toBe(true);
+  });
+
+  it("passes a kind this SDK does not know straight through", async () => {
+    // WIDE ON PURPOSE, like `CallRecord.direction`: a word the API adds later
+    // must arrive as itself rather than fail the read.
+    server.use(
+      http.get(PBX_USER_URL, () =>
+        HttpResponse.json({ data: pbxUserResource({ kind: "paging_group" }) }),
+      ),
+    );
+
+    const subscriber = await client().pbx.subscribers.get(PBX_USER_ID);
+
+    expect(subscriber.kind).toBe("paging_group");
   });
 
   it("hands the phone system's timestamps back as UNPARSED TEXT", async () => {
@@ -849,7 +964,7 @@ describe("users.get", () => {
     // the same string would read as a different instant in another timezone.
     server.use(http.get(PBX_USER_URL, () => HttpResponse.json({ data: pbxUserResource() })));
 
-    const user = await client().pbx.users.get(PBX_USER_ID);
+    const user = await client().pbx.subscribers.get(PBX_USER_ID);
 
     expect(user.createdAt).toBe("2026-01-02 03:04:05");
     expect(user.updatedAt).toBe("2026-09-01 10:00:00");
@@ -860,7 +975,7 @@ describe("users.get", () => {
   it("reads the customer and the to-many devices linkage", async () => {
     server.use(http.get(PBX_USER_URL, () => HttpResponse.json({ data: pbxUserResource() })));
 
-    const user = await client().pbx.users.get(PBX_USER_ID);
+    const user = await client().pbx.subscribers.get(PBX_USER_ID);
 
     expect(user.customerId).toBe(CUSTOMER_ID);
     expect(user.deviceIds).toEqual([PBX_DEVICE_ID]);
@@ -878,7 +993,7 @@ describe("users.get", () => {
       ),
     );
 
-    const none = await client().pbx.users.get(PBX_USER_ID);
+    const none = await client().pbx.subscribers.get(PBX_USER_ID);
     expect(none.deviceIds).toEqual([]);
 
     server.use(
@@ -892,11 +1007,11 @@ describe("users.get", () => {
       ),
     );
 
-    const unsaid = await client().pbx.users.get(PBX_USER_ID);
+    const unsaid = await client().pbx.subscribers.get(PBX_USER_ID);
     expect(unsaid.deviceIds).toBeNull();
   });
 
-  it("keeps a user id inside its own path segment", async () => {
+  it("keeps a subscriber id inside its own path segment", async () => {
     const calls = new Calls();
     server.use(
       http.get(`${BASE_URL}/*`, async ({ request }) => {
@@ -905,13 +1020,13 @@ describe("users.get", () => {
       }),
     );
 
-    await client().pbx.users.get("../devices/secret");
+    await client().pbx.subscribers.get("../devices/secret");
 
-    expect(calls.last.url.pathname).toBe("/v1/pbx/users/..%2Fdevices%2Fsecret");
+    expect(calls.last.url.pathname).toBe("/v1/pbx/subscribers/..%2Fdevices%2Fsecret");
   });
 
   it("refuses an empty id rather than reading the whole collection", async () => {
-    await expect(client().pbx.users.get("")).rejects.toThrow(/a pbx user id is required/);
+    await expect(client().pbx.subscribers.get("")).rejects.toThrow(/a pbx subscriber id is required/);
   });
 
   it("raises a typed 404 for a subscriber outside the caller's domains", async () => {
@@ -921,7 +1036,7 @@ describe("users.get", () => {
       ),
     );
 
-    await expect(client().pbx.users.get(PBX_USER_ID)).rejects.toMatchObject({
+    await expect(client().pbx.subscribers.get(PBX_USER_ID)).rejects.toMatchObject({
       statusCode: 404,
       code: "not_found",
     });
@@ -940,7 +1055,7 @@ describe("devices.list", () => {
 
     await client().pbx.devices.list({
       customer: CUSTOMER_ID,
-      user: PBX_USER_ID,
+      subscriber: PBX_USER_ID,
       registered: true,
       pageSize: 10,
       before: "0198c4a1-earlier",
@@ -949,7 +1064,8 @@ describe("devices.list", () => {
     const params = calls.last.url.searchParams;
 
     expect(params.get("filter[customer]")).toBe(CUSTOMER_ID);
-    expect(params.get("filter[user]")).toBe(PBX_USER_ID);
+    expect(params.get("filter[subscriber]")).toBe(PBX_USER_ID);
+    expect(params.has("filter[user]")).toBe(false);
     expect(params.get("filter[registered]")).toBe("true");
     expect(params.get("page[size]")).toBe("10");
     expect(params.get("page[before]")).toBe("0198c4a1-earlier");
@@ -1007,7 +1123,7 @@ describe("devices.list", () => {
 });
 
 describe("devices.get", () => {
-  it("reads a kebab-case document into the camelCase public object", async () => {
+  it("reads the document into the public object", async () => {
     server.use(http.get(PBX_DEVICE_URL, () => HttpResponse.json({ data: pbxDeviceResource() })));
 
     const device = await client().pbx.devices.get(PBX_DEVICE_ID);
@@ -1037,15 +1153,15 @@ describe("devices.get", () => {
     expect(typeof device.registeredAt).toBe("string");
   });
 
-  it("reads the pbx-user relationship, which is NOT called `user`", async () => {
+  it("reads the subscriber relationship beside the `user` extension attribute", async () => {
     // `user` is already an attribute here — the extension — and JSON:API
-    // forbids a relationship sharing the name, so the linkage is `pbx-user`.
+    // forbids a relationship sharing the name, so the linkage is `subscriber`.
     server.use(http.get(PBX_DEVICE_URL, () => HttpResponse.json({ data: pbxDeviceResource() })));
 
     const device = await client().pbx.devices.get(PBX_DEVICE_ID);
 
     expect(device.user).toBe("101");
-    expect(device.pbxUserId).toBe(PBX_USER_ID);
+    expect(device.subscriberId).toBe(PBX_USER_ID);
     expect(device.customerId).toBe(CUSTOMER_ID);
   });
 
@@ -1081,7 +1197,7 @@ describe("devices.get", () => {
   });
 });
 
-describe("users.call", () => {
+describe("subscribers.call", () => {
   function accepted(attributeOverrides: Record<string, unknown> = {}): object {
     return {
       data: {
@@ -1089,11 +1205,11 @@ describe("users.call", () => {
         id: CALL_ID,
         attributes: {
           destination: "+13025556789",
-          "caller-id": null,
-          "auto-answer": false,
+          callerId: null,
+          autoAnswer: false,
           device: null,
           status: "requested",
-          "requested-at": "2026-09-15T04:30:00.000000Z",
+          requestedAt: "2026-09-15T04:30:00.000000Z",
           ...attributeOverrides,
         },
       },
@@ -1109,10 +1225,10 @@ describe("users.call", () => {
       }),
     );
 
-    await client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
+    await client().pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
 
     expect(calls.last.request.method).toBe("POST");
-    expect(calls.last.url.pathname).toBe(`/v1/pbx/users/${PBX_USER_ID}/calls`);
+    expect(calls.last.url.pathname).toBe(`/v1/pbx/subscribers/${PBX_USER_ID}/calls`);
     // BOTH headers, and the request half is the one that matters: a JSON:API
     // resource route answers 415 to the `application/json` a body with no
     // explicit type gets.
@@ -1130,7 +1246,7 @@ describe("users.call", () => {
       }),
     );
 
-    await client().pbx.users.call(PBX_USER_ID, {
+    await client().pbx.subscribers.call(PBX_USER_ID, {
       destination: "1001",
       callerId: "+14075550101",
       autoAnswer: true,
@@ -1142,20 +1258,20 @@ describe("users.call", () => {
         type: "calls",
         attributes: {
           destination: "1001",
-          "caller-id": "+14075550101",
-          "auto-answer": true,
+          callerId: "+14075550101",
+          autoAnswer: true,
           device: PBX_DEVICE_ID,
         },
       },
     });
   });
 
-  it("omits what was not named, but always spells auto-answer", async () => {
-    // The spec requires `destination` alone and gives `auto-answer` a
+  it("omits what was not named, but always spells autoAnswer", async () => {
+    // The spec requires `destination` alone and gives `autoAnswer` a
     // `default: false` — which the generated request type renders as a
     // non-optional member. Sending our own `false` is the reading that needs
     // no local alias widening that type, and the server reads it the same as
-    // an absent member. `caller-id` and `device` really are optional, and
+    // an absent member. `callerId` and `device` really are optional, and
     // stay out of the document when they were not named.
     const calls = new Calls();
     server.use(
@@ -1165,12 +1281,12 @@ describe("users.call", () => {
       }),
     );
 
-    await client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
+    await client().pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
 
     expect(JSON.parse(calls.last.body)).toEqual({
       data: {
         type: "calls",
-        attributes: { destination: "+13025556789", "auto-answer": false },
+        attributes: { destination: "+13025556789", autoAnswer: false },
       },
     });
   });
@@ -1184,7 +1300,7 @@ describe("users.call", () => {
       }),
     );
 
-    await client().pbx.users.call(PBX_USER_ID, {
+    await client().pbx.subscribers.call(PBX_USER_ID, {
       destination: "+13025556789",
       autoAnswer: false,
     });
@@ -1192,23 +1308,23 @@ describe("users.call", () => {
     const body = JSON.parse(calls.last.body) as {
       data: { attributes: Record<string, unknown> };
     };
-    expect(body.data.attributes["auto-answer"]).toBe(false);
+    expect(body.data.attributes.autoAnswer).toBe(false);
   });
 
   it("reads the 202 into a PbxCall", async () => {
     server.use(
       http.post(PLACE_CALL_URL, () =>
         HttpResponse.json(
-          // `caller-id` comes back WITHOUT the plus: the platform stores every
+          // `callerId` comes back WITHOUT the plus: the platform stores every
           // caller ID as E.164 without one and answers with the spelling the
           // called party will see, so this is not an echo of what was sent.
-          accepted({ "caller-id": "14075550101", "auto-answer": true, device: PBX_DEVICE_ID }),
+          accepted({ callerId: "14075550101", autoAnswer: true, device: PBX_DEVICE_ID }),
           { status: 202 },
         ),
       ),
     );
 
-    const call = await client().pbx.users.call(PBX_USER_ID, {
+    const call = await client().pbx.subscribers.call(PBX_USER_ID, {
       destination: "+13025556789",
       callerId: "+14075550101",
       device: PBX_DEVICE_ID,
@@ -1228,12 +1344,12 @@ describe("users.call", () => {
     expect(Object.isFrozen(call)).toBe(true);
   });
 
-  it("reads a null caller-id as the subscriber's own being used", async () => {
+  it("reads a null callerId as the subscriber's own being used", async () => {
     server.use(
       http.post(PLACE_CALL_URL, () => HttpResponse.json(accepted(), { status: 202 })),
     );
 
-    const call = await client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" });
+    const call = await client().pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
 
     expect(call.callerId).toBeNull();
     expect(call.device).toBeNull();
@@ -1260,7 +1376,7 @@ describe("users.call", () => {
     );
 
     const refusal = await client()
-      .pbx.users.call(PBX_USER_ID, { destination: "+13025556789", device: PBX_DEVICE_ID })
+      .pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789", device: PBX_DEVICE_ID })
       .catch((error: unknown) => error);
 
     expect(refusal).toBeInstanceOf(ApiError);
@@ -1291,7 +1407,7 @@ describe("users.call", () => {
     );
 
     await expect(
-      client().pbx.users.call(PBX_USER_ID, { destination: "not-a-number" }),
+      client().pbx.subscribers.call(PBX_USER_ID, { destination: "not-a-number" }),
     ).rejects.toMatchObject({ statusCode: 422, code: "validation_failed" });
   });
 
@@ -1316,7 +1432,7 @@ describe("users.call", () => {
     );
 
     await expect(
-      client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" }),
+      client().pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" }),
     ).rejects.toMatchObject({ statusCode: 502, code: "upstream_refused" });
   });
 
@@ -1330,11 +1446,11 @@ describe("users.call", () => {
     );
 
     await expect(
-      client().pbx.users.call(PBX_USER_ID, { destination: "+13025556789" }),
+      client().pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" }),
     ).rejects.toMatchObject({ statusCode: 404, code: "not_found" });
   });
 
-  it("keeps a user id inside its own path segment", async () => {
+  it("keeps a subscriber id inside its own path segment", async () => {
     const calls = new Calls();
     // Scoped to `/v1/pbx/`, not `${BASE_URL}/*`: a wildcard over the whole
     // host also claims `POST /oauth/token` and the client never gets a token.
@@ -1345,14 +1461,14 @@ describe("users.call", () => {
       }),
     );
 
-    await client().pbx.users.call("../../faxes/secret", { destination: "+13025556789" });
+    await client().pbx.subscribers.call("../../faxes/secret", { destination: "+13025556789" });
 
-    expect(calls.last.url.pathname).toBe("/v1/pbx/users/..%2F..%2Ffaxes%2Fsecret/calls");
+    expect(calls.last.url.pathname).toBe("/v1/pbx/subscribers/..%2F..%2Ffaxes%2Fsecret/calls");
   });
 
   it("refuses an empty user id rather than POSTing to a path nobody meant", async () => {
     await expect(
-      client().pbx.users.call("", { destination: "+13025556789" }),
-    ).rejects.toThrow(/a pbx user id is required/);
+      client().pbx.subscribers.call("", { destination: "+13025556789" }),
+    ).rejects.toThrow(/a pbx subscriber id is required/);
   });
 });

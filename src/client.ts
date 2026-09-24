@@ -163,8 +163,8 @@ export class Ringivo {
   readonly webhookDeliveries: WebhookDeliveries;
 
   /**
-   * Your customers' phone systems: `pbx.callRecords`, `pbx.users`,
-   * `pbx.devices`, and `pbx.users.call()` for click-to-dial.
+   * Your customers' phone systems: `pbx.callRecords`, `pbx.subscribers`,
+   * `pbx.devices`, and `pbx.subscribers.call()` for click-to-dial.
    */
   readonly pbx: Pbx;
 
