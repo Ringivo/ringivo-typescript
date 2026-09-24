@@ -691,8 +691,8 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
  * -- `kind` SAYS WHAT THIS ROW IS -------------------------------------------
  * A phone system holds people AND machines: auto attendants, call queues, AI
  * agents, the domain's settings template. `kind` is `user` for a person, and
- * otherwise one of `autoAttendant`, `callQueue`, `aiAgent`, `conference`,
- * `department`, `site`, `ringGroup`, `trunk`, `timeOfDay`, `domain` or
+ * otherwise one of `auto_attendant`, `call_queue`, `ai_agent`, `conference`,
+ * `department`, `site`, `ring_group`, `trunk`, `time_of_day`, `domain` or
  * `system`. `system` is any machine the platform has no word for yet — an
  * unknown marker is never read as `user`. It is a `string`, WIDE ON PURPOSE
  * like `CallRecord.direction`: a word the API adds later arrives as itself.

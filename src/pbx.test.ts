@@ -858,13 +858,13 @@ describe("subscribers.list", () => {
       }),
     );
 
-    await client().pbx.subscribers.list({ kind: "callQueue,autoAttendant" });
-    await client().pbx.subscribers.list({ kind: ["callQueue", "autoAttendant"] });
+    await client().pbx.subscribers.list({ kind: "call_queue,auto_attendant" });
+    await client().pbx.subscribers.list({ kind: ["call_queue", "auto_attendant"] });
     await client().pbx.subscribers.list({ kind: [] });
 
     expect(calls.count).toBe(3);
-    expect(calls.all[0]?.url.searchParams.get("filter[kind]")).toBe("callQueue,autoAttendant");
-    expect(calls.all[1]?.url.searchParams.get("filter[kind]")).toBe("callQueue,autoAttendant");
+    expect(calls.all[0]?.url.searchParams.get("filter[kind]")).toBe("call_queue,auto_attendant");
+    expect(calls.all[1]?.url.searchParams.get("filter[kind]")).toBe("call_queue,auto_attendant");
     // An empty list is every kind: the member left off, never `filter[kind]=`.
     expect(calls.last.url.searchParams.has("filter[kind]")).toBe(false);
   });
@@ -948,13 +948,13 @@ describe("subscribers.get", () => {
     // must arrive as itself rather than fail the read.
     server.use(
       http.get(PBX_USER_URL, () =>
-        HttpResponse.json({ data: pbxUserResource({ kind: "pagingGroup" }) }),
+        HttpResponse.json({ data: pbxUserResource({ kind: "paging_group" }) }),
       ),
     );
 
     const subscriber = await client().pbx.subscribers.get(PBX_USER_ID);
 
-    expect(subscriber.kind).toBe("pagingGroup");
+    expect(subscriber.kind).toBe("paging_group");
   });
 
   it("hands the phone system's timestamps back as UNPARSED TEXT", async () => {

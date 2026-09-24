@@ -692,8 +692,8 @@ if (person) {
 
 **`kind` says what a subscriber is.** A phone system holds people and
 machines. `kind` is `user` for a person, and otherwise one of
-`autoAttendant`, `callQueue`, `aiAgent`, `conference`, `department`, `site`,
-`ringGroup`, `trunk`, `timeOfDay`, `domain` (the domain's settings template)
+`auto_attendant`, `call_queue`, `ai_agent`, `conference`, `department`, `site`,
+`ring_group`, `trunk`, `time_of_day`, `domain` (the domain's settings template)
 or `system`. `system` is any machine the platform has no word for yet — an
 unknown marker is never read as `user`. `kind` is a plain `string`, so a word
 added later arrives as itself; read one you do not know as `system`.
@@ -704,7 +704,7 @@ added later arrives as itself; read one you do not know as `system`.
 const callable = await client.pbx.subscribers.list({ kind: "user", hasDevices: true });
 ```
 
-`kind` takes one word, a comma list (`"callQueue,autoAttendant"`) or an array
+`kind` takes one word, a comma list (`"call_queue,auto_attendant"`) or an array
 of words; a word the API does not know is a 400 that names the accepted
 words. `hasDevices: false` asks for the subscribers with no registered device.
 A subscriber's own devices are `subscriber.deviceIds`.
@@ -738,7 +738,9 @@ console.log(call.id, call.status); // 0198c4a1-… requested
 ```
 
 The platform has that subscriber's phone place the call to `destination`, so
-the call goes out as them rather than as you. `autoAnswer: true` asks their
+the call goes out as them rather than as you. The subscriber needs a registered
+device: one with none, and the domain template (`kind: "domain"`), is refused
+with a 422 titled `Not Callable`, and nothing is dialled. `autoAnswer: true` asks their
 device to answer automatically where it supports that, and `device` says
 which of their registrations to place it from.
 

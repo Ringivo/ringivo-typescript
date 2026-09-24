@@ -2325,6 +2325,11 @@ export interface paths {
          *     records the leg that rang the user as hidden, so the list answers the outbound leg alone
          *     unless you add `filter[includeHidden]=true`.
          *
+         *     **The subscriber needs a registered device.** A subscriber with no device, and the domain
+         *     template (`kind: domain`) whatever it holds, is refused with a **422** titled
+         *     `Not Callable`, with the kind in `errors[0].meta.kind`. Nothing is dialled. Any other `kind`
+         *     may place a call.
+         *
          *     **`device` must belong to `{subscriber}`.** A device id that names a registration owned by
          *     somebody else — including a subscriber with the same extension on another domain — is refused with a
          *     **422** pointing at `/data/attributes/device`. Nothing is dialled.
@@ -6292,7 +6297,7 @@ export interface components {
          *     as `system`.
          * @enum {string}
          */
-        PbxSubscriberKind: "user" | "autoAttendant" | "callQueue" | "aiAgent" | "conference" | "department" | "site" | "ringGroup" | "trunk" | "timeOfDay" | "domain" | "system";
+        PbxSubscriberKind: "user" | "auto_attendant" | "call_queue" | "ai_agent" | "conference" | "department" | "site" | "ring_group" | "trunk" | "time_of_day" | "domain" | "system";
         PbxSubscriberRelationships: {
             customer?: components["schemas"]["RelationshipToOne"];
             devices?: components["schemas"]["RelationshipToMany"];
@@ -12693,7 +12698,7 @@ export interface operations {
                  */
                 "filter[search]"?: string;
                 /**
-                 * @description One kind, or several separated by commas (`callQueue,autoAttendant`). The words are the
+                 * @description One kind, or several separated by commas (`call_queue,auto_attendant`). The words are the
                  *     `kind` values. A word outside the list is refused with a **400** that names the accepted
                  *     words, never answered with an empty page.
                  * @example user
@@ -12701,7 +12706,8 @@ export interface operations {
                 "filter[kind]"?: string;
                 /**
                  * @description `true` for subscribers with at least one device registration, `false` for those with
-                 *     none — the same devices the `devices` relationship lists.
+                 *     none — the same devices the `devices` relationship lists. Any other value is refused
+                 *     with a **400**, never read as `false`.
                  * @example true
                  */
                 "filter[hasDevices]"?: boolean;

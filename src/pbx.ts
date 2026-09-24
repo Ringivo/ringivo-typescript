@@ -159,7 +159,7 @@ export interface ListPbxSubscribersOptions {
   search?: string;
   /**
    * Only these kinds: one word (`"user"`), a comma list
-   * (`"callQueue,autoAttendant"`) or an array of words. See
+   * (`"call_queue,auto_attendant"`) or an array of words. See
    * `PbxSubscriber.kind` for the words. A word the API does not know is
    * refused with a 400 that names the accepted words, never answered with an
    * empty page.
@@ -609,7 +609,7 @@ function idParam(value: string, refusal: string): string {
 /**
  * A list-valued query member as the one comma-joined string the API reads,
  * or left off. A `string` passes through as it is, so `"user"` and
- * `"callQueue,autoAttendant"` both work; an empty array is "no opinion", the
+ * `"call_queue,auto_attendant"` both work; an empty array is "no opinion", the
  * member left off rather than sent empty (an empty word would be a 400).
  */
 function joinedList(value: string | readonly string[] | undefined): string | undefined {
