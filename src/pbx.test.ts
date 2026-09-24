@@ -112,8 +112,9 @@ function callRecordResource(attributeOverrides: Record<string, unknown> = {}): o
 }
 
 /**
- * One `recordings` resource object, KEBAB-CASE attributes and all — this
- * endpoint's own spelling, unlike the camelCase call-records block.
+ * One `recordings` resource object, KEBAB-CASE attributes and all — the
+ * same spelling every other `/v1/pbx/` resource in this file uses,
+ * `callRecordResource` above included.
  */
 function recordingResource(
   attributeOverrides: Record<string, unknown> = {},
