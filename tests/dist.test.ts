@@ -209,7 +209,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.callRecords))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["get", "list"]);
+    ).toEqual(["get", "list", "recordings", "transcripts"]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.users))
         .filter((name) => name !== "constructor")

@@ -591,6 +591,38 @@ and `disposition` are both plain strings — the switch records one integer
 carrying the pair, and one it has no word for arrives as its own digits.
 Compare against the values you know rather than assuming there are no others.
 
+### Recordings and transcripts
+
+```ts
+for (const recording of await client.pbx.callRecords.recordings(call.id)) {
+  console.log(recording.id, recording.duration, recording.contentUrl);
+}
+
+for (const transcript of await client.pbx.callRecords.transcripts(call.id)) {
+  console.log(transcript.id, transcript.status); // "ready" or "pending"
+}
+```
+
+Both answer every **capture** of one call — a call can have more than one,
+because the phone system's own capture id is `(call id, ccc id)` — and
+neither is paginated: this is the captures of one call, bounded by its two
+legs, never a walk over a growing table, so there is no `after`/`before`
+cursor and nothing beyond the array you get back.
+
+`recording.contentUrl` and `transcript.contentUrl` are signed, time-limited
+links minted fresh on every call. Do not cache one past its `expiresAt` or
+hand it to anyone else — whoever holds the URL can fetch that document with
+no further authorization.
+
+`transcripts()` answers one item per **recording**, not one per transcript
+that exists: a capture with no words yet still appears here, as a
+`Transcript` with `status: "pending"` and every other field `null`, so you
+can tell "no transcript yet" from "no recording at all". Needs
+`pbx-call-records:read` to fetch the call at all, and `pbx-transcripts:read`
+— a separate grant, because the words of a call are searchable and cheap to
+mine at scale in a way the call log itself is not — to see whether anyone
+spoke.
+
 ### Who is on the phone system, and what is registered
 
 ```ts
@@ -815,6 +847,8 @@ decision and not a library's.
 | `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
 | `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, user?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `callId` finds what a click-to-dial became. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
+| `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
+| `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "pending"` and every other field `null` for one with no words yet. Also NOT paginated. |
 | `client.pbx.users.list({ customer?, user?, search?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxUserPage`: `users` plus `nextCursor`. `user` is the exact extension; `search` is the directory box. |
 | `client.pbx.users.get(pbxUserId)` | `pbx-users:read` | One `PbxUser`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
 | `client.pbx.users.call(pbxUserId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
@@ -826,11 +860,11 @@ decision and not a library's.
 `CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
-`PbxDevice`, `PbxDevicePage`, `PbxUser`, `PbxUserPage`, `WebhookDelivery`,
-`WebhookDeliveryPage`, `WebhookEndpoint` and `WebhookEndpointPage` are frozen
-plain objects, and each keeps the JSON it was built from in `.raw` — so a
-member the API adds after this release reaches you without a new SDK. A member
-the API did not send reads `null`.
+`PbxDevice`, `PbxDevicePage`, `PbxUser`, `PbxUserPage`, `Recording`,
+`Transcript`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
+`WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
+built from in `.raw` — so a member the API adds after this release reaches
+you without a new SDK. A member the API did not send reads `null`.
 
 The whole endpoint surface is typed from the OpenAPI document at
 `src/_generated/schema.d.ts`. Those types are private: they are regenerated

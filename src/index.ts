@@ -36,9 +36,11 @@
  * `fax_account`-scoped endpoints alone.
  *
  * Your customers' phone systems are `client.pbx` — `pbx.callRecords` for the
- * call log, `pbx.users` for the subscribers, `pbx.devices` for what their
- * phones have registered, and `pbx.users.call()` to ask one of those phones
- * to dial out. Reading needs `pbx-call-records:read` and `pbx-users:read`;
+ * call log, plus `pbx.callRecords.recordings()`/`.transcripts()` for what
+ * was captured of one call, `pbx.users` for the subscribers, `pbx.devices`
+ * for what their phones have registered, and `pbx.users.call()` to ask one
+ * of those phones to dial out. Reading needs `pbx-call-records:read` and
+ * `pbx-users:read`; transcripts need `pbx-transcripts:read` too;
  * click-to-dial needs `pbx-calls:write`.
  *
  * Your customers themselves are `client.customers` — list them and read one.
@@ -96,6 +98,8 @@ export type {
   PbxDevicePage,
   PbxUser,
   PbxUserPage,
+  Recording,
+  Transcript,
   WebhookDelivery,
   WebhookDeliveryPage,
   WebhookEndpoint,
