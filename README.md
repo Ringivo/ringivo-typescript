@@ -14,6 +14,28 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
+## Before you install 0.12.0: the API's v1 naming cleanup
+
+The API renamed its last snake_case names on the resource surface to
+camelCase, with no alias. The ones this client touches are four `faxes`
+filters, the `faxAccountUsers` filter, two `webhookEndpoints` filters, the
+`webhookDeliveries` filter, the send acknowledgement's `clientReference` and
+`createdAt`, and the media link's `expiresAt` and `byteSize`. **Your code does
+not change:** the options and fields already had these names.
+
+**0.12.x works against the API on both sides of that deploy, so upgrade
+before it.** It asks with the new filter names; an API that has not taken the
+rename refuses them with a 400, and this client then asks once more with the
+old names and remembers which spelling worked (and switches back the same way
+when the API changes under a running process). It reads the send
+acknowledgement and the media link in either spelling. An older client stops
+filtering on the day the API is renamed: every renamed filter it sends is
+refused with a 400.
+
+**The next minor release removes the fallback** and sends the new names only.
+`raw` and anything you read through `client.request()` carry whatever the API
+sent — camelCase once it is renamed.
+
 ## Before you install 0.11.0
 
 **0.11.0 breaks the whole `client.pbx` surface, on purpose.** The API renamed

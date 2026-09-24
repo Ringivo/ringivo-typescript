@@ -80,11 +80,11 @@ describe("list", () => {
 
     const params = calls.last.url.searchParams;
 
-    // The filter is spelled `fax_account`, not `faxAccount`: the query
-    // grammar is snake_case even where the document members are camelCase,
-    // and a filter this client misspelled would be a 400 rather than a
-    // narrower page.
-    expect(params.get("filter[fax_account]")).toBe(ACCOUNT_ID);
+    // `filter[faxAccount]`, camelCase since the API's v1 naming cleanup, like
+    // the relationship it narrows. The old spelling is never sent first; see
+    // src/filterBridge.test.ts for when it is sent at all.
+    expect(params.get("filter[faxAccount]")).toBe(ACCOUNT_ID);
+    expect(params.has("filter[fax_account]")).toBe(false);
     expect(params.get("filter[user]")).toBe(USER_ID);
     expect(params.get("page[size]")).toBe("50");
     expect(params.get("page[after]")).toBe("0198c4a1");
@@ -105,7 +105,7 @@ describe("list", () => {
 
     await client().faxAccountUsers.list();
 
-    expect(calls.last.url.searchParams.has("filter[fax_account]")).toBe(false);
+    expect(calls.last.url.searchParams.has("filter[faxAccount]")).toBe(false);
     expect(calls.last.url.searchParams.has("filter[user]")).toBe(false);
   });
 

@@ -87,6 +87,35 @@ info:
     first, and the first item of each answer is the cursor to remember for the next poll. An empty
     `data` means nothing arrived: keep the SAME cursor and poll again, because there is no new first
     item to move it to.
+
+    ## Changes
+
+    ### The v1 naming cleanup (breaking)
+
+    Every name on the resource surface is now camelCase, to the leaf. The old names are not
+    accepted: an old filter key is refused with a **400** like any unknown key, an old body member is
+    ignored or refused like any unknown member, and a response carries only the new name. Webhook
+    payloads, `multipart/form-data` parts and the `POST /v1/faxes` request body did not change.
+    Enum VALUES did not change either (`targetType: sip_trunk` is still `sip_trunk`).
+
+    | Where | Old name | New name |
+    |---|---|---|
+    | `GET /v1/faxes` | `filter[fax_account]`, `filter[client_reference]`, `filter[created_after]`, `filter[created_before]` | `filter[faxAccount]`, `filter[clientReference]`, `filter[createdAfter]`, `filter[createdBefore]` |
+    | `GET /v1/fax-account-users` | `filter[fax_account]` | `filter[faxAccount]` |
+    | `GET /v1/webhook-endpoints` | `filter[scope_type]`, `filter[scope_id]` | `filter[scopeType]`, `filter[scopeId]` |
+    | `GET /v1/webhook-deliveries` | `filter[event_type]` | `filter[eventType]` |
+    | `POST /v1/faxes`, the 202 body | `data.client_reference`, `data.created_at` | `data.clientReference`, `data.createdAt` |
+    | `GET /v1/faxes/{fax}/media` and `/thumbnail` | `expires_at`, `byte_size` | `expiresAt`, `byteSize` |
+    | `sip-trunks` attribute `registration` | `expires_at` | `expiresAt` |
+    | `inbound-messages` attribute `media[]` | `content_type` | `contentType` |
+    | `POST /v1/phone-numbers/{phoneNumber}/customer` body | `customer_id` | `customerId` |
+    | `POST /v1/phone-numbers/{phoneNumber}/routing` body | `target_type`, `fax_account`, `sip_trunk` | `targetType`, `faxAccount`, `sipTrunk` |
+    | `POST /v1/port-orders/{portOrder}/request-link/send`, the 200 body | `data.sent_to` | `data.sentTo` |
+    | `routing-targets` attribute (from `include=routingTarget` on `phone-numbers`) | `type` | `targetType` |
+
+    A `source.pointer` on a refusal names the new member (`/faxAccount`). The Ringivo SDKs send and
+    read the new names from Python 0.14.0 and TypeScript 0.11.0; those versions also work against
+    the API before this change, so upgrade the SDK first.
   license:
     # A description of a proprietary service. `identifier` is an SPDX expression, and SPDX reserves
     # the `LicenseRef-` prefix for exactly this: a licence that is not one of the public ones.
@@ -751,7 +780,7 @@ paths:
             type: string
             enum: [attempts]
           example: attempts
-        - name: filter[fax_account]
+        - name: filter[faxAccount]
           in: query
           required: false
           description: Only faxes on this fax account.
@@ -778,18 +807,18 @@ paths:
           description: Exact match on the receiving number, in E.164.
           schema: { type: string }
           example: '+13025556789'
-        - name: filter[client_reference]
+        - name: filter[clientReference]
           in: query
           required: false
           description: Exact match on the reference your own system supplied at send time.
           schema: { type: string }
-        - name: filter[created_after]
+        - name: filter[createdAfter]
           in: query
           required: false
           description: Faxes created at or after this moment.
           schema: { type: string }
           example: '2026-08-05'
-        - name: filter[created_before]
+        - name: filter[createdBefore]
           in: query
           required: false
           description: Faxes created at or before this moment.
@@ -959,8 +988,8 @@ paths:
                   direction: outbound
                   from: '+14075550100'
                   to: '+13025556789'
-                  client_reference: chart-4471
-                  created_at: '2026-08-16T11:02:31+00:00'
+                  clientReference: chart-4471
+                  createdAt: '2026-08-16T11:02:31+00:00'
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -1177,7 +1206,7 @@ paths:
       summary: Mint a download URL for a fax's document
       description: |
         Answers a small **plain-JSON composite**, not the bytes and not a JSON:API document: `url`
-        is a time-limited download URL **on your own API host**, and `expires_at` says until when.
+        is a time-limited download URL **on your own API host**, and `expiresAt` says until when.
 
         Follow `url` with a plain `GET` and **no `Authorization` header**. It carries its own
         signature, and that signature is the authorization — sending a bearer token is unnecessary
@@ -1207,8 +1236,8 @@ paths:
                 $ref: '#/components/schemas/MediaLink'
               example:
                 url: https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/media/content?format=pdf&expires=1787057037&signature=...
-                expires_at: '2026-08-16T11:07:31+00:00'
-                byte_size: 40960
+                expiresAt: '2026-08-16T11:07:31+00:00'
+                byteSize: 40960
                 sha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -1257,8 +1286,8 @@ paths:
                 $ref: '#/components/schemas/MediaLink'
               example:
                 url: https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/thumbnail/content?expires=1787057037&signature=...
-                expires_at: '2026-08-16T11:07:31+00:00'
-                byte_size: 128
+                expiresAt: '2026-08-16T11:07:31+00:00'
+                byteSize: 128
                 sha256: dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -1287,7 +1316,7 @@ paths:
 
         Send **no `Authorization` header**. The signature is the authorization here, which is why
         this operation publishes no security scheme — the entitlement was checked when the link was
-        minted, by the request that held your token. The link stops working at the `expires_at` the
+        minted, by the request that held your token. The link stops working at the `expiresAt` the
         mint reported.
 
         The bytes are streamed with the media type pinned to the document kind, and
@@ -1337,7 +1366,7 @@ paths:
             indistinguishable, because this route takes no credential.
 
             **A link that minted successfully can still 404 here.** The mint reports the
-            `byte_size` and `sha256` recorded for the document, which is metadata; this endpoint
+            `byteSize` and `sha256` recorded for the document, which is metadata; this endpoint
             answers for the bytes. Retry the mint, and treat a repeat as "the document is not
             available" rather than as a transport failure.
           content:
@@ -1758,7 +1787,7 @@ paths:
         - $ref: '#/components/parameters/PageAfter'
         - $ref: '#/components/parameters/PageBefore'
         - $ref: '#/components/parameters/Sort'
-        - name: filter[fax_account]
+        - name: filter[faxAccount]
           in: query
           required: false
           schema: { type: string, format: uuid }
@@ -1988,7 +2017,7 @@ paths:
                       registration:
                         state: registered
                         contacts: 1
-                        expires_at: '2026-09-10T18:31:00Z'
+                        expiresAt: '2026-09-10T18:31:00Z'
                       createdAt: '2026-09-01T09:00:00.000000Z'
                       updatedAt: '2026-09-09T11:00:00.000000Z'
         '400':
@@ -2767,12 +2796,12 @@ paths:
         - $ref: '#/components/parameters/PageAfter'
         - $ref: '#/components/parameters/PageBefore'
         - $ref: '#/components/parameters/Sort'
-        - name: filter[scope_type]
+        - name: filter[scopeType]
           in: query
           required: false
           schema:
             $ref: '#/components/schemas/WebhookScopeType'
-        - name: filter[scope_id]
+        - name: filter[scopeId]
           in: query
           required: false
           schema: { type: string, format: uuid }
@@ -3147,7 +3176,7 @@ paths:
           in: query
           required: false
           schema: { type: string, format: uuid }
-        - name: filter[event_type]
+        - name: filter[eventType]
           in: query
           required: false
           schema:
@@ -4169,7 +4198,7 @@ paths:
         this order: remove the routing, take the number off its customer, assign it to the new one,
         route it again. The interruption in the middle is real, so the API makes you spell it out.
 
-        The body is flat JSON carrying `customer_id`. Only a customer of yours resolves; any other
+        The body is flat JSON carrying `customerId`. Only a customer of yours resolves; any other
         id answers **404**, exactly as an id that names nothing does.
 
         **A customer-scoped credential cannot assign.** Which customer holds which number is a
@@ -4184,7 +4213,7 @@ paths:
             schema:
               $ref: '#/components/schemas/PhoneNumberAssignRequest'
             example:
-              customer_id: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
+              customerId: 0198c4a1-4d5e-7f60-a172-3c4d5e6f7081
       responses:
         '204':
           description: The number is that customer's.
@@ -4218,7 +4247,7 @@ paths:
                     title: Already assigned
                     detail: +14075550100 is already assigned to a customer. Take it off that customer first, then assign it here.
         '422':
-          description: '`customer_id` is missing, or is not a uuid.'
+          description: '`customerId` is missing, or is not a uuid.'
           content:
             application/vnd.api+json:
               schema:
@@ -4229,7 +4258,7 @@ paths:
                     title: Unprocessable Entity
                     detail: The customer id field is required.
                     source:
-                      pointer: /customer_id
+                      pointer: /customerId
         '429':
           $ref: '#/components/responses/RateLimited'
     delete:
@@ -4289,23 +4318,24 @@ paths:
 
         **The number must already belong to a customer, and the destination is always that customer's
         own.** No field here can name anybody else's: a `pbx` route is derived from the number's own
-        customer, and a `fax_account` or `sip_trunk` id is looked up within that same customer — so
+        customer, and a `faxAccount` or `sipTrunk` id is looked up within that same customer — so
         another customer's id is refused as an id that names nothing.
 
-        `target_type` chooses the KIND of destination, and defaults to `pbx`:
+        `targetType` chooses the KIND of destination, and defaults to `pbx`:
 
-        | `target_type` | Where the calls go | What else the body carries |
+        | `targetType` | Where the calls go | What else the body carries |
         |---|---|---|
         | `pbx` (the default) | The customer's phone system | nothing — a customer has exactly one |
-        | `fax` | One of the customer's fax accounts | `fax_account`, that account's id |
-        | `sip_trunk` | One of the customer's SIP trunks | `sip_trunk`, that trunk's id |
+        | `fax` | One of the customer's fax accounts | `faxAccount`, that account's id |
+        | `sip_trunk` | One of the customer's SIP trunks | `sipTrunk`, that trunk's id |
 
         **The id field is required for its own kind and refused for any other**, rather than ignored:
-        a body carrying `fax_account` and no `target_type` would otherwise be told its PBX route
-        succeeded.
+        a body carrying `faxAccount` and no `targetType` would otherwise be told its PBX route
+        succeeded. For the same reason a member the body does not take is refused with a 422, so a
+        body still spelled `target_type` is refused rather than routed to the phone system.
 
         **The body is flat JSON, and a JSON:API document is refused with a 400.** A wrapped document
-        carries no top-level `target_type`, so reading it flat would answer 204 to a caller who asked
+        carries no top-level `targetType`, so reading it flat would answer 204 to a caller who asked
         for a fax route and give them a PBX one. To route to the customer's phone system, send no body
         at all.
 
@@ -4324,14 +4354,14 @@ paths:
             schema:
               $ref: '#/components/schemas/PhoneNumberRouteRequest'
             example:
-              target_type: fax
-              fax_account: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+              targetType: fax
+              faxAccount: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
       responses:
         '204':
           description: The number routes to that destination.
         '400':
           description: |
-            The body was a JSON:API document. Send `target_type` at the top level of a flat JSON body,
+            The body was a JSON:API document. Send `targetType` at the top level of a flat JSON body,
             or send no body at all.
           content:
             application/vnd.api+json:
@@ -4342,7 +4372,7 @@ paths:
                   - status: '400'
                     title: Unexpected document
                     detail: >-
-                      This endpoint takes a flat JSON body, not a JSON:API document: send target_type
+                      This endpoint takes a flat JSON body, not a JSON:API document: send targetType
                       at the top level, or send no body at all to route to the customer’s PBX.
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -4368,8 +4398,9 @@ paths:
                     detail: +14075550100 is not assigned to a customer. Assign it to a customer first, then route it.
         '422':
           description: |
-            A field you sent is wrong, and `source.pointer` names it: `target_type` is not one of the
-            three values; `fax_account` or `sip_trunk` is missing for its own kind, or was sent with
+            A field you sent is wrong, and `source.pointer` names it: the body carries a member it
+            does not take (the retired `target_type` is one); `targetType` is not one of the
+            three values; `faxAccount` or `sipTrunk` is missing for its own kind, or was sent with
             another kind; the id names no destination of that customer's; or the destination refuses
             the attach — a suspended fax account, a disabled SIP trunk.
           content:
@@ -4382,7 +4413,7 @@ paths:
                     title: Unprocessable Entity
                     detail: That fax account is suspended. Reinstate it first, then route the number to it.
                     source:
-                      pointer: /fax_account
+                      pointer: /faxAccount
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -5639,7 +5670,7 @@ paths:
               example:
                 data:
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
-                  sent_to: grace@second-chances.example
+                  sentTo: grace@second-chances.example
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -8550,8 +8581,8 @@ components:
               $ref: '#/components/schemas/FaxDirection'
             from: { type: [string, 'null'] }
             to: { type: [string, 'null'] }
-            client_reference: { type: [string, 'null'] }
-            created_at: { type: [string, 'null'], format: date-time }
+            clientReference: { type: [string, 'null'] }
+            createdAt: { type: [string, 'null'], format: date-time }
     CancelFaxResult:
       type: object
       required: [data]
@@ -8567,7 +8598,7 @@ components:
       description: |
         A capability that expires, plus the facts about what is behind it. Not a JSON:API resource:
         there is no stored member this URI could be a collection of.
-      required: [url, expires_at, byte_size, sha256]
+      required: [url, expiresAt, byteSize, sha256]
       properties:
         url:
           type: string
@@ -8576,11 +8607,11 @@ components:
             A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
             `Authorization` header — the signature it carries is the authorization. Opaque: the
             signature covers the whole address, so any edit invalidates it. Short-lived — do not
-            cache it past `expires_at` or share it.
-        expires_at:
+            cache it past `expiresAt` or share it.
+        expiresAt:
           type: string
           format: date-time
-        byte_size:
+        byteSize:
           type: integer
         sha256:
           type: string
@@ -8960,11 +8991,11 @@ components:
       type: object
       description: |
         The body of an assignment — FLAT JSON rather than a JSON:API document, because the verb moves
-        a number rather than patching a resource. The field is spelled the way it is sent,
-        `snake_case`, and a refusal's `source.pointer` names it the same way.
-      required: [customer_id]
+        a number rather than patching a resource. The member is camelCase like every body on this
+        surface, and a refusal's `source.pointer` names it the same way.
+      required: [customerId]
       properties:
-        customer_id:
+        customerId:
           type: string
           format: uuid
           description: |
@@ -8977,23 +9008,23 @@ components:
         body at all points the number at its customer's phone system. A `data` member is refused with
         a **400** rather than half-obeyed.
       properties:
-        target_type:
+        targetType:
           type: string
           enum: [pbx, fax, sip_trunk]
           default: pbx
           description: Which KIND of destination the number points at. Absent means `pbx`.
-        fax_account:
+        faxAccount:
           type: string
           format: uuid
           description: |
-            The fax account to point the number at. **Required when `target_type` is `fax`, and
+            The fax account to point the number at. **Required when `targetType` is `fax`, and
             refused with any other kind** — a customer may hold several accounts, so a fax route has
             to be told which one.
-        sip_trunk:
+        sipTrunk:
           type: string
           format: uuid
           description: |
-            The SIP trunk to point the number at. **Required when `target_type` is `sip_trunk`, and
+            The SIP trunk to point the number at. **Required when `targetType` is `sip_trunk`, and
             refused with any other kind.**
 
 
@@ -9477,7 +9508,7 @@ components:
           type: array
           description: The described parts of a picture message. An empty list for a text message.
           items:
-            $ref: '#/components/schemas/InboundMessageMediaPart'
+            $ref: '#/components/schemas/MessageReceivedMediaPart'
         received_at:
           type: string
           format: date-time
@@ -10055,13 +10086,24 @@ components:
       enum:
         - sms
         - mms
+    MessageReceivedMediaPart:
+      type: object
+      description: |
+        One part of a picture message, DESCRIBED, as the `message.received` webhook payload carries
+        it — snake_case like every webhook payload. There is no image and no URL — we do not keep the
+        bytes. If you need the file, ask your messaging provider.
+      properties:
+        content_type: { type: string, example: image/jpeg }
+        filename: { type: [string, 'null'], description: 'The part''s filename, when it named one.', example: photo.jpg }
+        encoding: { type: string, example: base64 }
+        bytes: { type: integer, description: 'The part''s decoded size, in bytes.', example: 40213 }
     InboundMessageMediaPart:
       type: object
       description: |
         One part of a picture message, DESCRIBED. There is no image and no URL — we do not keep the
         bytes. If you need the file, ask your messaging provider.
       properties:
-        content_type: { type: string, example: image/jpeg }
+        contentType: { type: string, example: image/jpeg }
         filename: { type: [string, 'null'], description: 'The part''s filename, when it named one.', example: photo.jpg }
         encoding: { type: string, example: base64 }
         bytes: { type: integer, description: 'The part''s decoded size, in bytes.', example: 40213 }
@@ -11086,7 +11128,7 @@ components:
           type: object
           properties:
             id: { type: string, format: uuid }
-            sent_to:
+            sentTo:
               type: string
               format: email
               description: The address the mail went to, echoed back.
@@ -11404,14 +11446,14 @@ components:
             How many bindings the edges hold, summed — a trunk may be signed in against more than one
             access edge at a time, and this is the total. Always an integer, `0` when nothing is
             registered, so a client can add it up without a null check.
-        expires_at:
+        expiresAt:
           type: [string, 'null']
           format: date-time
           description: When the current binding lapses unless the phone system refreshes it.
       example:
         state: registered
         contacts: 1
-        expires_at: '2026-09-10T18:31:00Z'
+        expiresAt: '2026-09-10T18:31:00Z'
     SipTrunkAttributes:
       type: object
       properties:

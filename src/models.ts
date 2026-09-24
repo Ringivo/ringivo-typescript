@@ -126,6 +126,21 @@ function text(source: RawJson, key: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * `source`, with `legacy`'s value under `key` when only `legacy` arrived.
+ *
+ * THE v1 NAMING CLEANUP BRIDGE, and temporary: the API renamed a few
+ * plain-JSON members from snake_case to camelCase, and for one release this
+ * package reads whichever spelling arrived — the new one when both do. The
+ * next release deletes this and reads `key` alone.
+ */
+function bridged(source: RawJson, key: string, legacy: string): RawJson {
+  if (key in source || !(legacy in source)) {
+    return source;
+  }
+  return { ...source, [key]: source[legacy] };
+}
+
 function integer(source: RawJson, key: string): number | null {
   const value = source[key];
   return typeof value === "number" && Number.isInteger(value) ? value : null;
@@ -270,13 +285,13 @@ export function faxFromAcknowledgement(
     partial: null,
     attemptCount: null,
     resolution: null,
-    clientReference: text(payload, "client_reference"),
+    clientReference: text(bridged(payload, "clientReference", "client_reference"), "clientReference"),
     coverPage: null,
     read: null,
     archived: null,
     tags: null,
     documents: Object.freeze([]),
-    createdAt: instant(payload.created_at),
+    createdAt: instant(bridged(payload, "createdAt", "created_at").createdAt),
     completedAt: null,
     idempotentReplay: options.idempotentReplay ?? null,
     raw: payload,
@@ -298,8 +313,8 @@ export function faxDocumentFromJson(source: RawJson): FaxDocument {
 export function mediaLinkFromJson(payload: RawJson): MediaLink {
   return Object.freeze({
     url: text(payload, "url") ?? "",
-    expiresAt: instant(payload.expires_at),
-    byteSize: integer(payload, "byte_size"),
+    expiresAt: instant(bridged(payload, "expiresAt", "expires_at").expiresAt),
+    byteSize: integer(bridged(payload, "byteSize", "byte_size"), "byteSize"),
     sha256: text(payload, "sha256"),
     raw: payload,
   });

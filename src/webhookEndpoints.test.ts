@@ -95,8 +95,8 @@ describe("list", () => {
 
     const params = calls.last.url.searchParams;
 
-    expect(params.get("filter[scope_type]")).toBe("fax_account");
-    expect(params.get("filter[scope_id]")).toBe(ACCOUNT_ID);
+    expect(params.get("filter[scopeType]")).toBe("fax_account");
+    expect(params.get("filter[scopeId]")).toBe(ACCOUNT_ID);
     expect(params.get("filter[active]")).toBe("true");
     expect(params.get("page[size]")).toBe("50");
     expect(params.get("page[after]")).toBe("0198c4a1");

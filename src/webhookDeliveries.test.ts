@@ -91,7 +91,7 @@ describe("list", () => {
     const params = calls.last.url.searchParams;
 
     expect(params.get("filter[endpoint]")).toBe(ENDPOINT_ID);
-    expect(params.get("filter[event_type]")).toBe("fax.received");
+    expect(params.get("filter[eventType]")).toBe("fax.received");
     expect(params.get("filter[status]")).toBe("dead");
     expect(params.get("page[size]")).toBe("100");
     expect(params.get("page[before]")).toBe("0198c4a1");
