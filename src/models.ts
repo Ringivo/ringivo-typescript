@@ -141,6 +141,24 @@ function bridged(source: RawJson, key: string, legacy: string): RawJson {
   return { ...source, [key]: source[legacy] };
 }
 
+/**
+ * A `recordings`/`transcripts` attribute block with each camelCase key filled
+ * from its old kebab-case spelling when only that arrived — the same
+ * temporary bridge as `bridged`, for the PBX media rename.
+ */
+function mediaBridged(attributes: RawJson): RawJson {
+  let bridgedAttributes = attributes;
+  for (const [key, legacy] of [
+    ["cccId", "ccc-id"],
+    ["byteSize", "byte-size"],
+    ["contentUrl", "content-url"],
+    ["expiresAt", "expires-at"],
+  ] as const) {
+    bridgedAttributes = bridged(bridgedAttributes, key, legacy);
+  }
+  return bridgedAttributes;
+}
+
 function integer(source: RawJson, key: string): number | null {
   const value = source[key];
   return typeof value === "number" && Number.isInteger(value) ? value : null;
@@ -1191,22 +1209,23 @@ export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
 /**
  * Build from one `recordings` resource object.
  *
- * The attribute keys are KEBAB-CASE on the wire (`ccc-id`, `byte-size`,
- * `content-url`, `expires-at`) — this endpoint's own spelling, unlike the
- * camelCase of the other `/v1/pbx/` resources in this module.
+ * The attribute keys are camelCase (`cccId`, `byteSize`, `contentUrl`,
+ * `expiresAt`). They were KEBAB-CASE until the API renamed them, and the API
+ * still sends both during its transition window, so an old kebab-case-only
+ * response is bridged (`mediaBridged`).
  */
 export function recordingFromResource(resource: RawJson): Recording {
-  const attributes = nested(resource, "attributes") ?? {};
+  const attributes = mediaBridged(nested(resource, "attributes") ?? {});
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
-    cccId: text(attributes, "ccc-id"),
+    cccId: text(attributes, "cccId"),
     duration: integer(attributes, "duration"),
-    byteSize: integer(attributes, "byte-size"),
+    byteSize: integer(attributes, "byteSize"),
     sha256: text(attributes, "sha256"),
     superseded: boolean(attributes, "superseded"),
-    contentUrl: text(attributes, "content-url"),
-    expiresAt: instant(attributes["expires-at"]),
+    contentUrl: text(attributes, "contentUrl"),
+    expiresAt: instant(attributes["expiresAt"]),
     raw: resource,
   });
 }
@@ -1222,24 +1241,24 @@ export function recordingsFromDocument(document: RawJson): readonly Recording[] 
 /**
  * Build from one `transcripts` resource object.
  *
- * KEBAB-CASE attribute keys, the same as `recordingFromResource` and for
- * the same reason: this is that endpoint's own spelling.
+ * camelCase attribute keys, bridged from the old kebab-case ones the same
+ * way as `recordingFromResource`.
  */
 export function transcriptFromResource(resource: RawJson): Transcript {
-  const attributes = nested(resource, "attributes") ?? {};
+  const attributes = mediaBridged(nested(resource, "attributes") ?? {});
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
-    cccId: text(attributes, "ccc-id"),
+    cccId: text(attributes, "cccId"),
     status: text(attributes, "status"),
     language: text(attributes, "language"),
     duration: integer(attributes, "duration"),
-    byteSize: integer(attributes, "byte-size"),
+    byteSize: integer(attributes, "byteSize"),
     sha256: text(attributes, "sha256"),
     provider: text(attributes, "provider"),
     model: text(attributes, "model"),
-    contentUrl: text(attributes, "content-url"),
-    expiresAt: instant(attributes["expires-at"]),
+    contentUrl: text(attributes, "contentUrl"),
+    expiresAt: instant(attributes["expiresAt"]),
     raw: resource,
   });
 }
