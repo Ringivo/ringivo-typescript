@@ -57,8 +57,8 @@ function accepted(overrides: Record<string, unknown> = {}): object {
       direction: "outbound",
       from: "+14075550100",
       to: "+13025556789",
-      client_reference: "chart-4471",
-      created_at: "2026-08-16T11:02:31+00:00",
+      clientReference: "chart-4471",
+      createdAt: "2026-08-16T11:02:31+00:00",
       ...overrides,
     },
   };
@@ -779,8 +779,8 @@ describe("media", () => {
         await link.record(request);
         return HttpResponse.json({
           url: downloadUrl,
-          expires_at: "2026-08-16T11:07:31+00:00",
-          byte_size: 40960,
+          expiresAt: "2026-08-16T11:07:31+00:00",
+          byteSize: 40960,
           sha256: "c".repeat(64),
         });
       }),
@@ -809,8 +809,8 @@ describe("media", () => {
         await calls.record(request);
         return HttpResponse.json({
           url: "https://objects.example.net/fax/0198c4a1/document.tiff?signature=abc",
-          expires_at: "2026-08-16T11:07:31+00:00",
-          byte_size: 128,
+          expiresAt: "2026-08-16T11:07:31+00:00",
+          byteSize: 128,
           sha256: "d".repeat(64),
         });
       }),

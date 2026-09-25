@@ -107,7 +107,7 @@ export class WebhookDeliveries {
           "page[before]": options.before,
           "page[size]": options.pageSize,
           "filter[endpoint]": options.endpoint,
-          "filter[event_type]": options.eventType as ListWebhookDeliveriesQuery["filter[event_type]"],
+          "filter[eventType]": options.eventType as ListWebhookDeliveriesQuery["filter[eventType]"],
           "filter[status]": options.status,
         },
       },

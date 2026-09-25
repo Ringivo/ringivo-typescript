@@ -345,7 +345,7 @@ export interface paths {
         /**
          * Mint a download URL for a fax's document
          * @description Answers a small **plain-JSON composite**, not the bytes and not a JSON:API document: `url`
-         *     is a time-limited download URL **on your own API host**, and `expires_at` says until when.
+         *     is a time-limited download URL **on your own API host**, and `expiresAt` says until when.
          *
          *     Follow `url` with a plain `GET` and **no `Authorization` header**. It carries its own
          *     signature, and that signature is the authorization — sending a bearer token is unnecessary
@@ -411,7 +411,7 @@ export interface paths {
          *
          *     Send **no `Authorization` header**. The signature is the authorization here, which is why
          *     this operation publishes no security scheme — the entitlement was checked when the link was
-         *     minted, by the request that held your token. The link stops working at the `expires_at` the
+         *     minted, by the request that held your token. The link stops working at the `expiresAt` the
          *     mint reported.
          *
          *     The bytes are streamed with the media type pinned to the document kind, and
@@ -1507,7 +1507,7 @@ export interface paths {
          *     this order: remove the routing, take the number off its customer, assign it to the new one,
          *     route it again. The interruption in the middle is real, so the API makes you spell it out.
          *
-         *     The body is flat JSON carrying `customer_id`. Only a customer of yours resolves; any other
+         *     The body is flat JSON carrying `customerId`. Only a customer of yours resolves; any other
          *     id answers **404**, exactly as an id that names nothing does.
          *
          *     **A customer-scoped credential cannot assign.** Which customer holds which number is a
@@ -1554,23 +1554,24 @@ export interface paths {
          *
          *     **The number must already belong to a customer, and the destination is always that customer's
          *     own.** No field here can name anybody else's: a `pbx` route is derived from the number's own
-         *     customer, and a `fax_account` or `sip_trunk` id is looked up within that same customer — so
+         *     customer, and a `faxAccount` or `sipTrunk` id is looked up within that same customer — so
          *     another customer's id is refused as an id that names nothing.
          *
-         *     `target_type` chooses the KIND of destination, and defaults to `pbx`:
+         *     `targetType` chooses the KIND of destination, and defaults to `pbx`:
          *
-         *     | `target_type` | Where the calls go | What else the body carries |
+         *     | `targetType` | Where the calls go | What else the body carries |
          *     |---|---|---|
          *     | `pbx` (the default) | The customer's phone system | nothing — a customer has exactly one |
-         *     | `fax` | One of the customer's fax accounts | `fax_account`, that account's id |
-         *     | `sip_trunk` | One of the customer's SIP trunks | `sip_trunk`, that trunk's id |
+         *     | `fax` | One of the customer's fax accounts | `faxAccount`, that account's id |
+         *     | `sip_trunk` | One of the customer's SIP trunks | `sipTrunk`, that trunk's id |
          *
          *     **The id field is required for its own kind and refused for any other**, rather than ignored:
-         *     a body carrying `fax_account` and no `target_type` would otherwise be told its PBX route
-         *     succeeded.
+         *     a body carrying `faxAccount` and no `targetType` would otherwise be told its PBX route
+         *     succeeded. For the same reason a member the body does not take is refused with a 422, so a
+         *     body still spelled `target_type` is refused rather than routed to the phone system.
          *
          *     **The body is flat JSON, and a JSON:API document is refused with a 400.** A wrapped document
-         *     carries no top-level `target_type`, so reading it flat would answer 204 to a caller who asked
+         *     carries no top-level `targetType`, so reading it flat would answer 204 to a caller who asked
          *     for a fax route and give them a PBX one. To route to the customer's phone system, send no body
          *     at all.
          *
@@ -3669,8 +3670,19 @@ export interface components {
                 direction?: components["schemas"]["FaxDirection"];
                 from?: string | null;
                 to?: string | null;
-                client_reference?: string | null;
+                clientReference?: string | null;
                 /** Format: date-time */
+                createdAt?: string | null;
+                /**
+                 * @deprecated
+                 * @description Deprecated duplicate of `clientReference`, served during the v1 naming cleanup's transition window. Read `clientReference`.
+                 */
+                client_reference?: string | null;
+                /**
+                 * Format: date-time
+                 * @deprecated
+                 * @description Deprecated duplicate of `createdAt`, served during the v1 naming cleanup's transition window. Read `createdAt`.
+                 */
                 created_at?: string | null;
             };
         };
@@ -3691,14 +3703,25 @@ export interface components {
              * @description A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
              *     `Authorization` header — the signature it carries is the authorization. Opaque: the
              *     signature covers the whole address, so any edit invalidates it. Short-lived — do not
-             *     cache it past `expires_at` or share it.
+             *     cache it past `expiresAt` or share it.
              */
             url: string;
             /** Format: date-time */
-            expires_at: string;
-            byte_size: number;
+            expiresAt: string;
+            byteSize: number;
             /** @description The digest of the bytes behind `url`, so you can verify what you downloaded. */
             sha256: string;
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
+             */
+            expires_at?: string;
+            /**
+             * @deprecated
+             * @description Deprecated duplicate of `byteSize`, served during the v1 naming cleanup's transition window. Read `byteSize`.
+             */
+            byte_size?: number;
         };
         FaxAccountAttributes: {
             name?: string;
@@ -3972,8 +3995,8 @@ export interface components {
         };
         /**
          * @description The body of an assignment — FLAT JSON rather than a JSON:API document, because the verb moves
-         *     a number rather than patching a resource. The field is spelled the way it is sent,
-         *     `snake_case`, and a refusal's `source.pointer` names it the same way.
+         *     a number rather than patching a resource. The member is camelCase like every body on this
+         *     surface, and a refusal's `source.pointer` names it the same way.
          */
         PhoneNumberAssignRequest: {
             /**
@@ -3981,7 +4004,7 @@ export interface components {
              * @description The customer to give the number to. One of yours: any other id answers **404**, the same
              *     answer an id that names nothing gets.
              */
-            customer_id: string;
+            customerId: string;
         };
         /**
          * @description The body of a route — FLAT JSON, like the assignment above, and every member is optional: no
@@ -3994,20 +4017,20 @@ export interface components {
              * @default pbx
              * @enum {string}
              */
-            target_type: "pbx" | "fax" | "sip_trunk";
+            targetType: "pbx" | "fax" | "sip_trunk";
             /**
              * Format: uuid
-             * @description The fax account to point the number at. **Required when `target_type` is `fax`, and
+             * @description The fax account to point the number at. **Required when `targetType` is `fax`, and
              *     refused with any other kind** — a customer may hold several accounts, so a fax route has
              *     to be told which one.
              */
-            fax_account?: string;
+            faxAccount?: string;
             /**
              * Format: uuid
-             * @description The SIP trunk to point the number at. **Required when `target_type` is `sip_trunk`, and
+             * @description The SIP trunk to point the number at. **Required when `targetType` is `sip_trunk`, and
              *     refused with any other kind.**
              */
-            sip_trunk?: string;
+            sipTrunk?: string;
         };
         WebhookEndpointAttributes: {
             scopeType?: components["schemas"]["WebhookScopeType"];
@@ -4390,7 +4413,7 @@ export interface components {
             /** @description The text. Null for a picture message with no caption. */
             body?: string | null;
             /** @description The described parts of a picture message. An empty list for a text message. */
-            media?: components["schemas"]["InboundMessageMediaPart"][];
+            media?: components["schemas"]["MessageReceivedMediaPart"][];
             /**
              * Format: date-time
              * @description When the message was sent. The envelope's `occurred_at` is this same instant.
@@ -4854,11 +4877,37 @@ export interface components {
          */
         InboundMessageKind: "sms" | "mms";
         /**
+         * @description One part of a picture message, DESCRIBED, as the `message.received` webhook payload carries
+         *     it — snake_case like every webhook payload. There is no image and no URL — we do not keep the
+         *     bytes. If you need the file, ask your messaging provider.
+         */
+        MessageReceivedMediaPart: {
+            /** @example image/jpeg */
+            content_type?: string;
+            /**
+             * @description The part's filename, when it named one.
+             * @example photo.jpg
+             */
+            filename?: string | null;
+            /** @example base64 */
+            encoding?: string;
+            /**
+             * @description The part's decoded size, in bytes.
+             * @example 40213
+             */
+            bytes?: number;
+        };
+        /**
          * @description One part of a picture message, DESCRIBED. There is no image and no URL — we do not keep the
          *     bytes. If you need the file, ask your messaging provider.
          */
         InboundMessageMediaPart: {
             /** @example image/jpeg */
+            contentType?: string;
+            /**
+             * @deprecated
+             * @description Deprecated duplicate of `contentType`, served during the v1 naming cleanup's transition window. Read `contentType`.
+             */
             content_type?: string;
             /**
              * @description The part's filename, when it named one.
@@ -5684,6 +5733,12 @@ export interface components {
                  * Format: email
                  * @description The address the mail went to, echoed back.
                  */
+                sentTo?: string;
+                /**
+                 * Format: email
+                 * @deprecated
+                 * @description Deprecated duplicate of `sentTo`, served during the v1 naming cleanup's transition window. Read `sentTo`.
+                 */
                 sent_to?: string;
             };
         };
@@ -5929,7 +5984,7 @@ export interface components {
          * @example {
          *       "state": "registered",
          *       "contacts": 1,
-         *       "expires_at": "2026-09-10T18:31:00Z"
+         *       "expiresAt": "2026-09-10T18:31:00Z"
          *     }
          */
         SipTrunkRegistration: {
@@ -5944,6 +5999,12 @@ export interface components {
             /**
              * Format: date-time
              * @description When the current binding lapses unless the phone system refreshes it.
+             */
+            expiresAt?: string | null;
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
              */
             expires_at?: string | null;
         } | null;
@@ -7225,7 +7286,7 @@ export interface operations {
                  */
                 include?: "attempts";
                 /** @description Only faxes on this fax account. */
-                "filter[fax_account]"?: string;
+                "filter[faxAccount]"?: string;
                 "filter[direction]"?: components["schemas"]["FaxDirection"];
                 "filter[status]"?: components["schemas"]["FaxStatus"];
                 /**
@@ -7239,17 +7300,17 @@ export interface operations {
                  */
                 "filter[to]"?: string;
                 /** @description Exact match on the reference your own system supplied at send time. */
-                "filter[client_reference]"?: string;
+                "filter[clientReference]"?: string;
                 /**
                  * @description Faxes created at or after this moment.
                  * @example 2026-08-05
                  */
-                "filter[created_after]"?: string;
+                "filter[createdAfter]"?: string;
                 /**
                  * @description Faxes created at or before this moment.
                  * @example 2026-08-20
                  */
-                "filter[created_before]"?: string;
+                "filter[createdBefore]"?: string;
                 /** @description `true` for faxes somebody has marked read, `false` for the rest. */
                 "filter[read]"?: boolean;
                 "filter[archived]"?: boolean;
@@ -7406,8 +7467,8 @@ export interface operations {
                      *         "direction": "outbound",
                      *         "from": "+14075550100",
                      *         "to": "+13025556789",
-                     *         "client_reference": "chart-4471",
-                     *         "created_at": "2026-08-16T11:02:31+00:00"
+                     *         "clientReference": "chart-4471",
+                     *         "createdAt": "2026-08-16T11:02:31+00:00"
                      *       }
                      *     }
                      */
@@ -7687,8 +7748,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/media/content?format=pdf&expires=1787057037&signature=...",
-                     *       "expires_at": "2026-08-16T11:07:31+00:00",
-                     *       "byte_size": 40960,
+                     *       "expiresAt": "2026-08-16T11:07:31+00:00",
+                     *       "byteSize": 40960,
                      *       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
                      *     }
                      */
@@ -7743,8 +7804,8 @@ export interface operations {
                     /**
                      * @example {
                      *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/thumbnail/content?expires=1787057037&signature=...",
-                     *       "expires_at": "2026-08-16T11:07:31+00:00",
-                     *       "byte_size": 128,
+                     *       "expiresAt": "2026-08-16T11:07:31+00:00",
+                     *       "byteSize": 128,
                      *       "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
                      *     }
                      */
@@ -7813,7 +7874,7 @@ export interface operations {
              *     indistinguishable, because this route takes no credential.
              *
              *     **A link that minted successfully can still 404 here.** The mint reports the
-             *     `byte_size` and `sha256` recorded for the document, which is metadata; this endpoint
+             *     `byteSize` and `sha256` recorded for the document, which is metadata; this endpoint
              *     answers for the bytes. Retry the mint, and treat a repeat as "the document is not
              *     available" rather than as a transport failure.
              */
@@ -8337,7 +8398,7 @@ export interface operations {
                  * @example -createdAt
                  */
                 sort?: components["parameters"]["Sort"];
-                "filter[fax_account]"?: string;
+                "filter[faxAccount]"?: string;
                 "filter[user]"?: string;
                 /**
                  * @description One or more grant ids. Repeat the parameter once per id:
@@ -8598,7 +8659,7 @@ export interface operations {
                      *             "registration": {
                      *               "state": "registered",
                      *               "contacts": 1,
-                     *               "expires_at": "2026-09-10T18:31:00Z"
+                     *               "expiresAt": "2026-09-10T18:31:00Z"
                      *             },
                      *             "createdAt": "2026-09-01T09:00:00.000000Z",
                      *             "updatedAt": "2026-09-09T11:00:00.000000Z"
@@ -9551,8 +9612,8 @@ export interface operations {
                  * @example -createdAt
                  */
                 sort?: components["parameters"]["Sort"];
-                "filter[scope_type]"?: components["schemas"]["WebhookScopeType"];
-                "filter[scope_id]"?: string;
+                "filter[scopeType]"?: components["schemas"]["WebhookScopeType"];
+                "filter[scopeId]"?: string;
                 "filter[active]"?: boolean;
                 /**
                  * @description One or more endpoint ids. Repeat the parameter once per id:
@@ -9902,7 +9963,7 @@ export interface operations {
                 /** @description Side-load the endpoint this delivery was for. */
                 include?: "endpoint";
                 "filter[endpoint]"?: string;
-                "filter[event_type]"?: components["schemas"]["WebhookEventType"];
+                "filter[eventType]"?: components["schemas"]["WebhookEventType"];
                 "filter[status]"?: components["schemas"]["WebhookDeliveryStatus"];
                 /**
                  * @description One or more delivery ids. Repeat the parameter once per id:
@@ -10950,7 +11011,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081"
+                 *       "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081"
                  *     }
                  */
                 "application/json": components["schemas"]["PhoneNumberAssignRequest"];
@@ -11009,7 +11070,7 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
-            /** @description `customer_id` is missing, or is not a uuid. */
+            /** @description `customerId` is missing, or is not a uuid. */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -11023,7 +11084,7 @@ export interface operations {
                      *           "title": "Unprocessable Entity",
                      *           "detail": "The customer id field is required.",
                      *           "source": {
-                     *             "pointer": "/customer_id"
+                     *             "pointer": "/customerId"
                      *           }
                      *         }
                      *       ]
@@ -11098,8 +11159,8 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "target_type": "fax",
-                 *       "fax_account": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70"
+                 *       "targetType": "fax",
+                 *       "faxAccount": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70"
                  *     }
                  */
                 "application/json": components["schemas"]["PhoneNumberRouteRequest"];
@@ -11114,7 +11175,7 @@ export interface operations {
                 content?: never;
             };
             /**
-             * @description The body was a JSON:API document. Send `target_type` at the top level of a flat JSON body,
+             * @description The body was a JSON:API document. Send `targetType` at the top level of a flat JSON body,
              *     or send no body at all.
              */
             400: {
@@ -11128,7 +11189,7 @@ export interface operations {
                      *         {
                      *           "status": "400",
                      *           "title": "Unexpected document",
-                     *           "detail": "This endpoint takes a flat JSON body, not a JSON:API document: send target_type at the top level, or send no body at all to route to the customer’s PBX."
+                     *           "detail": "This endpoint takes a flat JSON body, not a JSON:API document: send targetType at the top level, or send no body at all to route to the customer’s PBX."
                      *         }
                      *       ]
                      *     }
@@ -11166,8 +11227,9 @@ export interface operations {
                 };
             };
             /**
-             * @description A field you sent is wrong, and `source.pointer` names it: `target_type` is not one of the
-             *     three values; `fax_account` or `sip_trunk` is missing for its own kind, or was sent with
+             * @description A field you sent is wrong, and `source.pointer` names it: the body carries a member it
+             *     does not take (the retired `target_type` is one); `targetType` is not one of the
+             *     three values; `faxAccount` or `sipTrunk` is missing for its own kind, or was sent with
              *     another kind; the id names no destination of that customer's; or the destination refuses
              *     the attach — a suspended fax account, a disabled SIP trunk.
              */
@@ -11184,7 +11246,7 @@ export interface operations {
                      *           "title": "Unprocessable Entity",
                      *           "detail": "That fax account is suspended. Reinstate it first, then route the number to it.",
                      *           "source": {
-                     *             "pointer": "/fax_account"
+                     *             "pointer": "/faxAccount"
                      *           }
                      *         }
                      *       ]
@@ -12407,7 +12469,7 @@ export interface operations {
                      * @example {
                      *       "data": {
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "sent_to": "grace@second-chances.example"
+                     *         "sentTo": "grace@second-chances.example"
                      *       }
                      *     }
                      */

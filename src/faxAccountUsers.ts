@@ -108,7 +108,7 @@ export class FaxAccountUsers {
           "page[after]": options.after,
           "page[before]": options.before,
           "page[size]": options.pageSize,
-          "filter[fax_account]": options.faxAccount,
+          "filter[faxAccount]": options.faxAccount,
           "filter[user]": options.user,
         },
       },

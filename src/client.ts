@@ -44,6 +44,7 @@ import type { paths } from "./_generated/schema.js";
 import { ClientCredentialsAuth, USER_AGENT } from "./auth.js";
 import { Customers } from "./customers.js";
 import { throwForResponse } from "./errors.js";
+import { bridgeFilters } from "./filterBridge.js";
 import { FaxAccountUsers } from "./faxAccountUsers.js";
 import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
@@ -173,6 +174,9 @@ export class Ringivo {
 
   private readonly auth: ClientCredentialsAuth;
 
+  /** Which filter spelling the API took last — see src/filterBridge.ts. */
+  private readonly filterSpelling = { legacy: false };
+
   constructor(options: RingivoOptions) {
     if (!options.baseUrl) {
       throw new Error("baseUrl is required");
@@ -242,8 +246,9 @@ export class Ringivo {
         // The whole point of the seam. `openapi-fetch` builds and types the
         // request; this method is what actually sends it, so the typed calls
         // and the hand-written multipart send share one auth flow and one
-        // error path.
-        fetch: (outgoing: Request) => this.request(outgoing),
+        // error path. The v1 naming cleanup bridge wraps it for 0.11.x only
+        // (src/filterBridge.ts), so the escape hatch below never sees it.
+        fetch: bridgeFilters((outgoing: Request) => this.request(outgoing), this.filterSpelling),
       }),
     );
 
