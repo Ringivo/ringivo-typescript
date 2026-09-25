@@ -88,6 +88,15 @@ info:
     `data` means nothing arrived: keep the SAME cursor and poll again, because there is no new first
     item to move it to.
 
+    ## Booleans
+
+    A boolean is `true` or `false`, and nothing else, everywhere on `/v1`. In a query string — a
+    boolean filter such as `filter[enabled]` — any other value (`1`, `0`, `yes`, `TRUE`, an empty
+    value, a typo) is refused with a **400** whose `source.parameter` names the filter. In a JSON
+    body, send a JSON `true` or `false`: a string (`"true"`) or a number (`1`) is refused with a
+    **422** whose `source.pointer` names the member, like any other invalid value. Before this rule,
+    some filters read an unknown word as `false` and a body took `1` and `"0"`; neither does now.
+
     ## Changes
 
     ### The v1 naming cleanup
