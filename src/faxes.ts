@@ -21,7 +21,7 @@
  *
  * -- WHY THE MULTIPART BODY IS BUILT BYTE BY BYTE ---------------------------
  * `FormData` cannot express this body. The spec gives `tags` and
- * `cover_page` the encoding `contentType: application/json`, which means a
+ * `coverPage` the encoding `contentType: application/json`, which means a
  * form FIELD carrying a content type and NO filename. Appending a `Blob` to
  * a `FormData` is the only way to attach a content type to a part, and the
  * platform spells that part `Content-Disposition: form-data; name="tags";
@@ -107,7 +107,10 @@ export interface SendFaxOptions {
   clientReference?: string;
   /** Your own flat labels. Replaced wholesale on a write. */
   tags?: Readonly<Record<string, string>>;
-  /** `to_name`, `from_name`, `subject`, `message`. */
+  /**
+   * `toName`, `fromName`, `subject`, `message`. The snake_case `to_name` and
+   * `from_name` this package documented before are accepted and renamed.
+   */
   coverPage?: Readonly<Record<string, string>>;
   /**
    * Your key for this send. **A fresh UUID is generated when you do not pass
@@ -179,7 +182,7 @@ export class Faxes {
     }
 
     const fields: Record<string, string> = {
-      fax_account: options.faxAccount,
+      faxAccount: options.faxAccount,
       to: options.to,
     };
     if (options.from !== undefined) {
@@ -189,7 +192,7 @@ export class Faxes {
       fields.resolution = options.resolution;
     }
     if (options.clientReference !== undefined) {
-      fields.client_reference = options.clientReference;
+      fields.clientReference = options.clientReference;
     }
 
     const headers = new Headers({
@@ -205,7 +208,7 @@ export class Faxes {
         json.tags = { ...options.tags };
       }
       if (options.coverPage !== undefined) {
-        json.cover_page = { ...options.coverPage };
+        json.coverPage = coverPageWire(options.coverPage);
       }
       json.documents = [...urls];
 
@@ -492,7 +495,7 @@ async function multipartBody(
     content: encoder.encode(value),
   }));
 
-  // `tags` and `cover_page` are JSON-typed parts, as the spec's multipart
+  // `tags` and `coverPage` are JSON-typed parts, as the spec's multipart
   // `encoding` says — a content type and NO filename, so a server reads them
   // as form fields rather than as uploaded pages.
   if (options.tags !== undefined) {
@@ -504,9 +507,9 @@ async function multipartBody(
   }
   if (options.coverPage !== undefined) {
     parts.push({
-      name: "cover_page",
+      name: "coverPage",
       contentType: JSON_MEDIA_TYPE,
-      content: encoder.encode(JSON.stringify({ ...options.coverPage })),
+      content: encoder.encode(JSON.stringify(coverPageWire(options.coverPage))),
     });
   }
 
@@ -606,4 +609,19 @@ function concat(chunks: readonly Uint8Array[]): Uint8Array {
     offset += chunk.byteLength;
   }
   return joined;
+}
+
+const COVER_PAGE_WIRE_NAMES: Readonly<Record<string, string>> = {
+  to_name: "toName",
+  from_name: "fromName",
+};
+
+/**
+ * The cover page with the API's camelCase field names. The snake_case keys
+ * this package documented before are renamed on the way out.
+ */
+function coverPageWire(coverPage: Readonly<Record<string, string>>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(coverPage).map(([key, value]) => [COVER_PAGE_WIRE_NAMES[key] ?? key, value]),
+  );
 }
