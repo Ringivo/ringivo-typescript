@@ -5206,16 +5206,18 @@ paths:
       description: |
         The one door out of the intake, and the gate that decides whether the order is complete
         enough to work. It is a verb rather than `PATCH {"status": "awaiting_review"}` because
-        passing it starts real work against carriers — every porting carrier is asked whether your
-        numbers can move — which is not a thing to put behind a field assignment.
+        passing it starts real work against carriers — every porting carrier is asked, in the
+        background, whether your numbers can move — which is not a thing to put behind a field
+        assignment.
 
         **Legal from `draft` and from `awaiting_signature`**, and from nowhere else: a 409 otherwise.
         Signing does not submit an order for you; you still send this, from wherever the order
         stands.
 
-        It answers **200 and not 202**. The carrier questions run before this returns, and a carrier
-        we could not reach is recorded rather than raised, so both the transition and the sweep are
-        finished by the time you read the response.
+        It answers **200 and not 202**. The transition is finished by the time you read the
+        response: the order is in `awaiting_review`. The carrier questions are asked in the background
+        afterwards, and their answers are for our review desk, not part of this resource, so there is
+        nothing further for you to wait for or poll. A carrier we cannot reach never fails this call.
 
         **It shuts your customer's door.** The request link is revoked in the same act: past this
         gate there is nothing left for an end user to do on the order, and a capability that
