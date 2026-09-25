@@ -115,8 +115,8 @@ info:
       member, and a response carries only the new name. Move to the new names now; a response with
       no `Deprecation` header means the request used none of the old ones.
 
-    Webhook payloads, `multipart/form-data` parts and the `POST /v1/faxes` request body did not
-    change. Enum VALUES did not change either (`targetType: sip_trunk` is still `sip_trunk`).
+    Enum VALUES did not change (`targetType: sip_trunk` is still `sip_trunk`), and neither did event
+    names (`fax.delivered`). A tag's own keys are yours and are sent as you set them.
 
     | Where | Old name | New name |
     |---|---|---|
@@ -132,6 +132,9 @@ info:
     | `POST /v1/phone-numbers/{phoneNumber}/routing` body | `target_type`, `fax_account`, `sip_trunk` | `targetType`, `faxAccount`, `sipTrunk` |
     | `POST /v1/port-orders/{portOrder}/request-link/send`, the 200 body | `data.sent_to` | `data.sentTo` |
     | `routing-targets` attribute (from `include=routingTarget` on `phone-numbers`) | `type` | `targetType` |
+    | `POST /v1/faxes` request (JSON body or multipart parts) | `fax_account`, `client_reference`, `cover_page` (`to_name`, `from_name`) | `faxAccount`, `clientReference`, `coverPage` (`toName`, `fromName`) |
+    | `faxes` attribute `coverPage` | `to_name`, `from_name` | `toName`, `fromName` |
+    | every webhook body | `event_id`, `occurred_at`, and every snake_case key of `data` (`fax_account_id`, `pages_total`, `client_reference`, `created_at`, `failure_code`, `tenant_id`, `customer_id`, `ccc_id`, …) | `eventId`, `occurredAt`, and the camelCase twin of each (`faxAccountId`, `pagesTotal`, …) |
 
     A `source.pointer` on a refusal names the new member (`/faxAccount`). The Ringivo SDKs send and
     read the new names from Python 0.15.0 and TypeScript 0.12.0, and those versions also work against
@@ -967,7 +970,7 @@ paths:
             schema:
               $ref: '#/components/schemas/SendFaxMultipartRequest'
             encoding:
-              cover_page:
+              coverPage:
                 contentType: application/json
               tags:
                 contentType: application/json
@@ -975,15 +978,15 @@ paths:
             schema:
               $ref: '#/components/schemas/SendFaxUrlRequest'
             example:
-              fax_account: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+              faxAccount: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
               to: '+13025556789'
               from: '+14075550100'
               resolution: fine
-              client_reference: chart-4471
+              clientReference: chart-4471
               tags:
                 clinic: north
-              cover_page:
-                to_name: Dr Ruiz
+              coverPage:
+                toName: Dr Ruiz
                 subject: Records
               documents:
                 - https://records.acme-vet.example/charts/4471.pdf
@@ -1061,10 +1064,10 @@ paths:
           description: |
             The request is malformed — a missing `Idempotency-Key`, a `to` that is not E.164, a
             JSON:API document body, more than five documents, uploads and URLs mixed in one request,
-            a document URL that is not `https` or points at a private address, a `fax_account` id
-            that names no account of yours, or — on a multipart send — a `tags` or `cover_page` part
+            a document URL that is not `https` or points at a private address, a `faxAccount` id
+            that names no account of yours, or — on a multipart send — a `tags` or `coverPage` part
             whose body is not a JSON object, or whose decoded fields fail the same shape and length
-            rules the JSON body enforces on `tags.*` / `cover_page.*` (`code: validation_failed`).
+            rules the JSON body enforces on `tags.*` / `coverPage.*` (`code: validation_failed`).
           content:
             application/vnd.api+json:
               schema:
@@ -1125,7 +1128,7 @@ paths:
                     resolution: fine
                     clientReference: chart-4471
                     coverPage:
-                      to_name: Dr Ruiz
+                      toName: Dr Ruiz
                       subject: Records
                     read: false
                     archived: false
@@ -8516,8 +8519,8 @@ components:
         `pages_total` and it bills. `null` is accepted the same as omitting the field or sending
         `{}` — none of the three add a cover page.
       properties:
-        to_name: { type: string, maxLength: 128 }
-        from_name: { type: string, maxLength: 128 }
+        toName: { type: string, maxLength: 128 }
+        fromName: { type: string, maxLength: 128 }
         subject: { type: string, maxLength: 255 }
         message: { type: string, maxLength: 2000 }
     SendFaxMultipartRequest:
@@ -8526,12 +8529,12 @@ components:
         Upload the pages themselves. Up to five parts, sniffed on their bytes rather than on their
         names — PDF, TIFF, PNG and JPEG are what a fax can be made of.
 
-        Send the `tags` and `cover_page` parts as plain JSON text, not as a `Blob`: append the JSON
+        Send the `tags` and `coverPage` parts as plain JSON text, not as a `Blob`: append the JSON
         string directly as the part body, because a `Blob` part gains a filename and arrives as an
         upload instead of a field, which fails validation without saying why.
-      required: [fax_account, to, documents]
+      required: [faxAccount, to, documents]
       properties:
-        fax_account:
+        faxAccount:
           type: string
           format: uuid
           description: The account to send from.
@@ -8547,9 +8550,9 @@ components:
           examples: ['+14075550100']
         resolution:
           $ref: '#/components/schemas/FaxResolution'
-        cover_page:
+        coverPage:
           $ref: '#/components/schemas/CoverPageRequest'
-        client_reference:
+        clientReference:
           type: string
           maxLength: 128
         tags:
@@ -8568,16 +8571,16 @@ components:
       description: |
         Point at the pages instead of uploading them. Every URL must be `https` on a public host, and
         uploads and URLs may not be mixed in one request.
-      required: [fax_account, to, documents]
+      required: [faxAccount, to, documents]
       properties:
-        fax_account: { type: string, format: uuid }
+        faxAccount: { type: string, format: uuid }
         to: { type: string, examples: ['+13025556789'] }
         from: { type: string, examples: ['+14075550100'] }
         resolution:
           $ref: '#/components/schemas/FaxResolution'
-        cover_page:
+        coverPage:
           $ref: '#/components/schemas/CoverPageRequest'
-        client_reference: { type: string, maxLength: 128 }
+        clientReference: { type: string, maxLength: 128 }
         tags:
           $ref: '#/components/schemas/Tags'
         documents:
@@ -9396,33 +9399,51 @@ components:
         credential at `GET /v1/faxes/{fax}/media`, which is also what records who looked.
       properties:
         id: { type: string, format: uuid }
-        fax_account_id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
-        customer_id: { type: [string, 'null'], format: uuid }
+        faxAccountId: { type: string, format: uuid }
+        fax_account_id: { type: string, format: uuid, deprecated: true }
+        tenantId: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid, deprecated: true }
+        customerId: { type: [string, 'null'], format: uuid }
+        customer_id: { type: [string, 'null'], format: uuid, deprecated: true }
         direction:
           $ref: '#/components/schemas/FaxDirection'
         status:
           $ref: '#/components/schemas/FaxStatus'
+        failureCode:
+          $ref: '#/components/schemas/FaxFailureCode'
         failure_code:
+          deprecated: true
           $ref: '#/components/schemas/FaxFailureCode'
         from: { type: [string, 'null'] }
         to: { type: [string, 'null'] }
         region: { type: [string, 'null'] }
-        pages_total: { type: [integer, 'null'] }
-        pages_transferred: { type: [integer, 'null'] }
+        pagesTotal: { type: [integer, 'null'] }
+        pages_total: { type: [integer, 'null'], deprecated: true }
+        pagesTransferred: { type: [integer, 'null'] }
+        pages_transferred: { type: [integer, 'null'], deprecated: true }
         partial: { type: [boolean, 'null'] }
-        attempt_count: { type: [integer, 'null'] }
-        client_reference: { type: [string, 'null'] }
+        attemptCount: { type: [integer, 'null'] }
+        attempt_count: { type: [integer, 'null'], deprecated: true }
+        clientReference: { type: [string, 'null'] }
+        client_reference: { type: [string, 'null'], deprecated: true }
         tags:
           $ref: '#/components/schemas/Tags'
-        created_at: { type: [string, 'null'], format: date-time }
-        completed_at: { type: [string, 'null'], format: date-time }
+        createdAt: { type: [string, 'null'], format: date-time }
+        created_at: { type: [string, 'null'], format: date-time, deprecated: true }
+        completedAt: { type: [string, 'null'], format: date-time }
+        completed_at: { type: [string, 'null'], format: date-time, deprecated: true }
     FaxReceivedEventData:
       allOf:
         - $ref: '#/components/schemas/FaxEventData'
         - type: object
           properties:
+            renderFailed:
+              type: boolean
+              description: |
+                Always present, never conditional. `true` means the fax is real and its metadata is
+                complete, and only the rendered document is missing.
             render_failed:
+              deprecated: true
               type: boolean
               description: |
                 Always present, never conditional. `true` means the fax is real and its metadata is
@@ -9485,13 +9506,25 @@ components:
         `occurred_at`, or refetch the resource and trust what it answers.
       required: [event_id, type, occurred_at]
       properties:
+        eventId:
+          type: string
+          format: uuid
+          description: The dedupe key.
         event_id:
+          deprecated: true
           type: string
           format: uuid
           description: The dedupe key.
         type:
           $ref: '#/components/schemas/WebhookEventType'
+        occurredAt:
+          type: string
+          format: date-time
+          description: |
+            When the transition happened — captured at the event, not at delivery, so a retry does
+            not claim the fax was delivered when we finally reached you.
         occurred_at:
+          deprecated: true
           type: string
           format: date-time
           description: |
@@ -9531,8 +9564,15 @@ components:
           type: string
           format: uuid
           description: The message's id in `GET /v1/inbound-messages`.
-        tenant_id: { type: string, format: uuid }
+        tenantId: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid, deprecated: true }
+        customerId:
+          type: [string, 'null']
+          format: uuid
+          description: |
+            The customer who holds the number. Null while the number sits unassigned in your pool.
         customer_id:
+          deprecated: true
           type: [string, 'null']
           format: uuid
           description: |
@@ -9549,7 +9589,12 @@ components:
           description: The described parts of a picture message. An empty list for a text message.
           items:
             $ref: '#/components/schemas/MessageReceivedMediaPart'
+        receivedAt:
+          type: string
+          format: date-time
+          description: When the message was sent. The envelope's `occurred_at` is this same instant.
         received_at:
+          deprecated: true
           type: string
           format: date-time
           description: When the message was sent. The envelope's `occurred_at` is this same instant.
@@ -9559,8 +9604,10 @@ components:
         Both ends of one move, frozen when it happened. Nothing about the order's contents is here —
         read the order itself for those.
       properties:
-        port_order_id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
+        portOrderId: { type: string, format: uuid }
+        port_order_id: { type: string, format: uuid, deprecated: true }
+        tenantId: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid, deprecated: true }
         from:
           allOf:
             - $ref: '#/components/schemas/PortOrderStatus'
@@ -9574,8 +9621,10 @@ components:
       description: |
         How a bill reading ended, and nothing the bill said. Read the order for the values.
       properties:
-        port_order_id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
+        portOrderId: { type: string, format: uuid }
+        port_order_id: { type: string, format: uuid, deprecated: true }
+        tenantId: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid, deprecated: true }
         status:
           allOf:
             - $ref: '#/components/schemas/PortOrderBillExtractionStatus'
@@ -9600,27 +9649,55 @@ components:
             The recording's id, and the `{id}` of the media request. It is derived from the switch's
             own `(call_id, ccc_id)`, so it is the same id in every region and never changes — a
             supersede reuses it.
-        customer_id:
+        customerId:
           type: [string, 'null']
           format: uuid
           description: |
             The customer whose recording this is. Null when the recorded domain resolves to none of
             your customers; only your tenant-scoped endpoints hear about that one.
-        call_id:
+        customer_id:
+          deprecated: true
+          type: [string, 'null']
+          format: uuid
+          description: |
+            The customer whose recording this is. Null when the recorded domain resolves to none of
+            your customers; only your tenant-scoped endpoints hear about that one.
+        callId:
           type: string
           description: The switch's own call identifier. Two captures of one call share it.
           example: 20260912101500000002-00112233445566778899aabbccddeeff
-        ccc_id:
+        call_id:
+          deprecated: true
+          type: string
+          description: The switch's own call identifier. Two captures of one call share it.
+          example: 20260912101500000002-00112233445566778899aabbccddeeff
+        cccId:
           type: string
           description: Which capture of that call this recording is.
           example: 00b1
-        duration_seconds:
+        ccc_id:
+          deprecated: true
+          type: string
+          description: Which capture of that call this recording is.
+          example: 00b1
+        durationSeconds:
           type: [integer, 'null']
           description: |
             How long the recorded audio runs. A supersede changes this. NULL when the switch did not
             report a duration for the capture — the recording is still ours to serve, and
             `byte_size` still describes the bytes.
+        duration_seconds:
+          deprecated: true
+          type: [integer, 'null']
+          description: |
+            How long the recorded audio runs. A supersede changes this. NULL when the switch did not
+            report a duration for the capture — the recording is still ours to serve, and
+            `byte_size` still describes the bytes.
+        byteSize:
+          type: integer
+          description: The size of the audio we hold. A supersede changes this.
         byte_size:
+          deprecated: true
           type: integer
           description: The size of the audio we hold. A supersede changes this.
         sha256:
@@ -9634,11 +9711,21 @@ components:
           description: |
             False on the first event for a recording, true when a longer capture has replaced the
             audio behind the same `id`.
-        recorded_at:
+        recordedAt:
           type: [string, 'null']
           format: date-time
           description: When the recording started. Null when the switch did not report it.
+        recorded_at:
+          deprecated: true
+          type: [string, 'null']
+          format: date-time
+          description: When the recording started. Null when the switch did not report it.
+        endedAt:
+          type: [string, 'null']
+          format: date-time
+          description: When it stopped. Null when the switch did not report it.
         ended_at:
+          deprecated: true
           type: [string, 'null']
           format: date-time
           description: When it stopped. Null when the switch did not report it.
@@ -9662,25 +9749,51 @@ components:
           description: |
             The transcript's id. It is the recording's id — a transcript is keyed by the recording it
             is of — so it is the same id in every region and never changes.
-        recording_id:
+        recordingId:
           type: string
           format: uuid
           description: |
             The recording this is a transcript of. Today it always equals `id`; it is named
             separately so that a future transcript with a key of its own does not change the meaning
             of a field you are already reading.
-        customer_id:
+        recording_id:
+          deprecated: true
+          type: string
+          format: uuid
+          description: |
+            The recording this is a transcript of. Today it always equals `id`; it is named
+            separately so that a future transcript with a key of its own does not change the meaning
+            of a field you are already reading.
+        customerId:
           type: [string, 'null']
           format: uuid
           description: |
             The customer whose call this is — the same one `call_recording.available` carried. Null
             when the recorded domain resolves to none of your customers; only your tenant-scoped
             endpoints hear about that one.
-        call_id:
+        customer_id:
+          deprecated: true
+          type: [string, 'null']
+          format: uuid
+          description: |
+            The customer whose call this is — the same one `call_recording.available` carried. Null
+            when the recorded domain resolves to none of your customers; only your tenant-scoped
+            endpoints hear about that one.
+        callId:
           type: string
           description: The switch's own call identifier. Two captures of one call share it.
           example: 20260912101500000002-00112233445566778899aabbccddeeff
+        call_id:
+          deprecated: true
+          type: string
+          description: The switch's own call identifier. Two captures of one call share it.
+          example: 20260912101500000002-00112233445566778899aabbccddeeff
+        cccId:
+          type: string
+          description: Which capture of that call was transcribed.
+          example: 00b1
         ccc_id:
+          deprecated: true
           type: string
           description: Which capture of that call was transcribed.
           example: 00b1
@@ -9690,7 +9803,13 @@ components:
             The language of the transcript, as the transcription reported it, or as we asked for it
             when it reported none.
           example: en-US
+        durationSeconds:
+          type: [integer, 'null']
+          description: |
+            How long the transcribed audio runs, rounded up to whole seconds. Null when the
+            transcription reported no duration.
         duration_seconds:
+          deprecated: true
           type: [integer, 'null']
           description: |
             How long the transcribed audio runs, rounded up to whole seconds. Null when the
@@ -9706,7 +9825,14 @@ components:
             The region that emitted this beat. Each region counts its own `sequence`, so read the
             two together.
           example: usw1
+        emittedAt:
+          type: string
+          format: date-time
+          description: |
+            When we published the beat — not when we reached you. A beat we could not deliver
+            promptly is discarded rather than sent late, so this is always recent.
         emitted_at:
+          deprecated: true
           type: string
           format: date-time
           description: |
@@ -9782,9 +9908,18 @@ components:
         One shape for both `pbx_change.confirmed` and `pbx_change.stalled`: the difference is the
         `type`, not the data.
       properties:
-        intent_id: { type: string, format: uuid }
-        tenant_id: { type: string, format: uuid }
+        intentId: { type: string, format: uuid }
+        intent_id: { type: string, format: uuid, deprecated: true }
+        tenantId: { type: string, format: uuid }
+        tenant_id: { type: string, format: uuid, deprecated: true }
+        targetId:
+          type: string
+          format: uuid
+          description: |
+            The deterministic id of the phone-system row the change was aimed at. Stable, and the
+            same id the platform's own read models use for that row.
         target_id:
+          deprecated: true
           type: string
           format: uuid
           description: |
@@ -9800,7 +9935,12 @@ components:
           description: The column names the change touched. Names only.
           items: { type: string }
           example: [firstname, lastname]
+        submittedAt:
+          type: string
+          format: date-time
+          description: When the change was accepted by the phone system, which is when the wait began.
         submitted_at:
+          deprecated: true
           type: string
           format: date-time
           description: When the change was accepted by the phone system, which is when the wait began.
@@ -10133,7 +10273,8 @@ components:
         it — snake_case like every webhook payload. There is no image and no URL — we do not keep the
         bytes. If you need the file, ask your messaging provider.
       properties:
-        content_type: { type: string, example: image/jpeg }
+        contentType: { type: string, example: image/jpeg }
+        content_type: { type: string, example: image/jpeg, deprecated: true }
         filename: { type: [string, 'null'], description: 'The part''s filename, when it named one.', example: photo.jpg }
         encoding: { type: string, example: base64 }
         bytes: { type: integer, description: 'The part''s decoded size, in bytes.', example: 40213 }

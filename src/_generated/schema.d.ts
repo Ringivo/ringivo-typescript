@@ -3606,8 +3606,8 @@ export interface components {
          *     `{}` — none of the three add a cover page.
          */
         CoverPageRequest: {
-            to_name?: string;
-            from_name?: string;
+            toName?: string;
+            fromName?: string;
             subject?: string;
             message?: string;
         } | null;
@@ -3615,7 +3615,7 @@ export interface components {
          * @description Upload the pages themselves. Up to five parts, sniffed on their bytes rather than on their
          *     names — PDF, TIFF, PNG and JPEG are what a fax can be made of.
          *
-         *     Send the `tags` and `cover_page` parts as plain JSON text, not as a `Blob`: append the JSON
+         *     Send the `tags` and `coverPage` parts as plain JSON text, not as a `Blob`: append the JSON
          *     string directly as the part body, because a `Blob` part gains a filename and arrives as an
          *     upload instead of a field, which fails validation without saying why.
          */
@@ -3624,7 +3624,7 @@ export interface components {
              * Format: uuid
              * @description The account to send from.
              */
-            fax_account: string;
+            faxAccount: string;
             /**
              * @description The destination, in E.164. Nothing looser — this string is dialled.
              * @example +13025556789
@@ -3637,8 +3637,8 @@ export interface components {
              */
             from?: string;
             resolution?: components["schemas"]["FaxResolution"];
-            cover_page?: components["schemas"]["CoverPageRequest"];
-            client_reference?: string;
+            coverPage?: components["schemas"]["CoverPageRequest"];
+            clientReference?: string;
             tags?: components["schemas"]["Tags"];
             /** @description The file parts. Spell them `documents[]`; a single part named `documents` is accepted too. */
             documents: string[];
@@ -3649,14 +3649,14 @@ export interface components {
          */
         SendFaxUrlRequest: {
             /** Format: uuid */
-            fax_account: string;
+            faxAccount: string;
             /** @example +13025556789 */
             to: string;
             /** @example +14075550100 */
             from?: string;
             resolution?: components["schemas"]["FaxResolution"];
-            cover_page?: components["schemas"]["CoverPageRequest"];
-            client_reference?: string;
+            coverPage?: components["schemas"]["CoverPageRequest"];
+            clientReference?: string;
             tags?: components["schemas"]["Tags"];
             documents: string[];
         };
@@ -4276,30 +4276,71 @@ export interface components {
             /** Format: uuid */
             id?: string;
             /** Format: uuid */
+            faxAccountId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             fax_account_id?: string;
             /** Format: uuid */
+            tenantId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             tenant_id?: string;
             /** Format: uuid */
+            customerId?: string | null;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             customer_id?: string | null;
             direction?: components["schemas"]["FaxDirection"];
             status?: components["schemas"]["FaxStatus"];
+            failureCode?: components["schemas"]["FaxFailureCode"];
+            /** @deprecated */
             failure_code?: components["schemas"]["FaxFailureCode"];
             from?: string | null;
             to?: string | null;
             region?: string | null;
+            pagesTotal?: number | null;
+            /** @deprecated */
             pages_total?: number | null;
+            pagesTransferred?: number | null;
+            /** @deprecated */
             pages_transferred?: number | null;
             partial?: boolean | null;
+            attemptCount?: number | null;
+            /** @deprecated */
             attempt_count?: number | null;
+            clientReference?: string | null;
+            /** @deprecated */
             client_reference?: string | null;
             tags?: components["schemas"]["Tags"];
             /** Format: date-time */
+            createdAt?: string | null;
+            /**
+             * Format: date-time
+             * @deprecated
+             */
             created_at?: string | null;
             /** Format: date-time */
+            completedAt?: string | null;
+            /**
+             * Format: date-time
+             * @deprecated
+             */
             completed_at?: string | null;
         };
         FaxReceivedEventData: components["schemas"]["FaxEventData"] & {
             /**
+             * @description Always present, never conditional. `true` means the fax is real and its metadata is
+             *     complete, and only the rendered document is missing.
+             */
+            renderFailed?: boolean;
+            /**
+             * @deprecated
              * @description Always present, never conditional. `true` means the fax is real and its metadata is
              *     complete, and only the rendered document is missing.
              */
@@ -4365,10 +4406,23 @@ export interface components {
              * Format: uuid
              * @description The dedupe key.
              */
+            eventId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             * @description The dedupe key.
+             */
             event_id: string;
             type: components["schemas"]["WebhookEventType"];
             /**
              * Format: date-time
+             * @description When the transition happened — captured at the event, not at delivery, so a retry does
+             *     not claim the fax was delivered when we finally reached you.
+             */
+            occurredAt?: string;
+            /**
+             * Format: date-time
+             * @deprecated
              * @description When the transition happened — captured at the event, not at delivery, so a retry does
              *     not claim the fax was delivered when we finally reached you.
              */
@@ -4395,9 +4449,20 @@ export interface components {
              */
             id?: string;
             /** Format: uuid */
+            tenantId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             tenant_id?: string;
             /**
              * Format: uuid
+             * @description The customer who holds the number. Null while the number sits unassigned in your pool.
+             */
+            customerId?: string | null;
+            /**
+             * Format: uuid
+             * @deprecated
              * @description The customer who holds the number. Null while the number sits unassigned in your pool.
              */
             customer_id?: string | null;
@@ -4420,6 +4485,12 @@ export interface components {
              * Format: date-time
              * @description When the message was sent. The envelope's `occurred_at` is this same instant.
              */
+            receivedAt?: string;
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description When the message was sent. The envelope's `occurred_at` is this same instant.
+             */
             received_at?: string;
         };
         /**
@@ -4428,8 +4499,18 @@ export interface components {
          */
         PortOrderStatusChangedEventData: {
             /** Format: uuid */
+            portOrderId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             port_order_id?: string;
             /** Format: uuid */
+            tenantId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             tenant_id?: string;
             /** @description Where the order stood before the move. */
             from?: components["schemas"]["PortOrderStatus"];
@@ -4439,8 +4520,18 @@ export interface components {
         /** @description How a bill reading ended, and nothing the bill said. Read the order for the values. */
         PortOrderBillExtractionSettledEventData: {
             /** Format: uuid */
+            portOrderId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             port_order_id?: string;
             /** Format: uuid */
+            tenantId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             tenant_id?: string;
             /**
              * @description The settled state, frozen at the event: `done`, `skipped` or `failed`. Never `pending` —
@@ -4470,13 +4561,32 @@ export interface components {
              * @description The customer whose recording this is. Null when the recorded domain resolves to none of
              *     your customers; only your tenant-scoped endpoints hear about that one.
              */
+            customerId?: string | null;
+            /**
+             * Format: uuid
+             * @deprecated
+             * @description The customer whose recording this is. Null when the recorded domain resolves to none of
+             *     your customers; only your tenant-scoped endpoints hear about that one.
+             */
             customer_id?: string | null;
             /**
              * @description The switch's own call identifier. Two captures of one call share it.
              * @example 20260912101500000002-00112233445566778899aabbccddeeff
              */
+            callId?: string;
+            /**
+             * @deprecated
+             * @description The switch's own call identifier. Two captures of one call share it.
+             * @example 20260912101500000002-00112233445566778899aabbccddeeff
+             */
             call_id?: string;
             /**
+             * @description Which capture of that call this recording is.
+             * @example 00b1
+             */
+            cccId?: string;
+            /**
+             * @deprecated
              * @description Which capture of that call this recording is.
              * @example 00b1
              */
@@ -4486,8 +4596,20 @@ export interface components {
              *     report a duration for the capture — the recording is still ours to serve, and
              *     `byte_size` still describes the bytes.
              */
+            durationSeconds?: number | null;
+            /**
+             * @deprecated
+             * @description How long the recorded audio runs. A supersede changes this. NULL when the switch did not
+             *     report a duration for the capture — the recording is still ours to serve, and
+             *     `byte_size` still describes the bytes.
+             */
             duration_seconds?: number | null;
             /** @description The size of the audio we hold. A supersede changes this. */
+            byteSize?: number;
+            /**
+             * @deprecated
+             * @description The size of the audio we hold. A supersede changes this.
+             */
             byte_size?: number;
             /**
              * @description The SHA-256 of the audio, so you can check a download against what we recorded. A
@@ -4504,9 +4626,21 @@ export interface components {
              * Format: date-time
              * @description When the recording started. Null when the switch did not report it.
              */
+            recordedAt?: string | null;
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description When the recording started. Null when the switch did not report it.
+             */
             recorded_at?: string | null;
             /**
              * Format: date-time
+             * @description When it stopped. Null when the switch did not report it.
+             */
+            endedAt?: string | null;
+            /**
+             * Format: date-time
+             * @deprecated
              * @description When it stopped. Null when the switch did not report it.
              */
             ended_at?: string | null;
@@ -4531,9 +4665,25 @@ export interface components {
              *     separately so that a future transcript with a key of its own does not change the meaning
              *     of a field you are already reading.
              */
+            recordingId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             * @description The recording this is a transcript of. Today it always equals `id`; it is named
+             *     separately so that a future transcript with a key of its own does not change the meaning
+             *     of a field you are already reading.
+             */
             recording_id?: string;
             /**
              * Format: uuid
+             * @description The customer whose call this is — the same one `call_recording.available` carried. Null
+             *     when the recorded domain resolves to none of your customers; only your tenant-scoped
+             *     endpoints hear about that one.
+             */
+            customerId?: string | null;
+            /**
+             * Format: uuid
+             * @deprecated
              * @description The customer whose call this is — the same one `call_recording.available` carried. Null
              *     when the recorded domain resolves to none of your customers; only your tenant-scoped
              *     endpoints hear about that one.
@@ -4543,8 +4693,20 @@ export interface components {
              * @description The switch's own call identifier. Two captures of one call share it.
              * @example 20260912101500000002-00112233445566778899aabbccddeeff
              */
+            callId?: string;
+            /**
+             * @deprecated
+             * @description The switch's own call identifier. Two captures of one call share it.
+             * @example 20260912101500000002-00112233445566778899aabbccddeeff
+             */
             call_id?: string;
             /**
+             * @description Which capture of that call was transcribed.
+             * @example 00b1
+             */
+            cccId?: string;
+            /**
+             * @deprecated
              * @description Which capture of that call was transcribed.
              * @example 00b1
              */
@@ -4556,6 +4718,12 @@ export interface components {
              */
             language?: string;
             /**
+             * @description How long the transcribed audio runs, rounded up to whole seconds. Null when the
+             *     transcription reported no duration.
+             */
+            durationSeconds?: number | null;
+            /**
+             * @deprecated
              * @description How long the transcribed audio runs, rounded up to whole seconds. Null when the
              *     transcription reported no duration.
              */
@@ -4571,6 +4739,13 @@ export interface components {
             region?: string;
             /**
              * Format: date-time
+             * @description When we published the beat — not when we reached you. A beat we could not deliver
+             *     promptly is discarded rather than sent late, so this is always recent.
+             */
+            emittedAt?: string;
+            /**
+             * Format: date-time
+             * @deprecated
              * @description When we published the beat — not when we reached you. A beat we could not deliver
              *     promptly is discarded rather than sent late, so this is always recent.
              */
@@ -4621,11 +4796,28 @@ export interface components {
          */
         PbxChangeEventData: {
             /** Format: uuid */
+            intentId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             intent_id?: string;
             /** Format: uuid */
+            tenantId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
+             */
             tenant_id?: string;
             /**
              * Format: uuid
+             * @description The deterministic id of the phone-system row the change was aimed at. Stable, and the
+             *     same id the platform's own read models use for that row.
+             */
+            targetId?: string;
+            /**
+             * Format: uuid
+             * @deprecated
              * @description The deterministic id of the phone-system row the change was aimed at. Stable, and the
              *     same id the platform's own read models use for that row.
              */
@@ -4645,6 +4837,12 @@ export interface components {
             fields?: string[];
             /**
              * Format: date-time
+             * @description When the change was accepted by the phone system, which is when the wait began.
+             */
+            submittedAt?: string;
+            /**
+             * Format: date-time
+             * @deprecated
              * @description When the change was accepted by the phone system, which is when the wait began.
              */
             submitted_at?: string;
@@ -4885,6 +5083,11 @@ export interface components {
          */
         MessageReceivedMediaPart: {
             /** @example image/jpeg */
+            contentType?: string;
+            /**
+             * @deprecated
+             * @example image/jpeg
+             */
             content_type?: string;
             /**
              * @description The part's filename, when it named one.
@@ -7429,16 +7632,16 @@ export interface operations {
                 "multipart/form-data": components["schemas"]["SendFaxMultipartRequest"];
                 /**
                  * @example {
-                 *       "fax_account": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *       "faxAccount": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
                  *       "to": "+13025556789",
                  *       "from": "+14075550100",
                  *       "resolution": "fine",
-                 *       "client_reference": "chart-4471",
+                 *       "clientReference": "chart-4471",
                  *       "tags": {
                  *         "clinic": "north"
                  *       },
-                 *       "cover_page": {
-                 *         "to_name": "Dr Ruiz",
+                 *       "coverPage": {
+                 *         "toName": "Dr Ruiz",
                  *         "subject": "Records"
                  *       },
                  *       "documents": [
@@ -7551,10 +7754,10 @@ export interface operations {
             /**
              * @description The request is malformed — a missing `Idempotency-Key`, a `to` that is not E.164, a
              *     JSON:API document body, more than five documents, uploads and URLs mixed in one request,
-             *     a document URL that is not `https` or points at a private address, a `fax_account` id
-             *     that names no account of yours, or — on a multipart send — a `tags` or `cover_page` part
+             *     a document URL that is not `https` or points at a private address, a `faxAccount` id
+             *     that names no account of yours, or — on a multipart send — a `tags` or `coverPage` part
              *     whose body is not a JSON object, or whose decoded fields fail the same shape and length
-             *     rules the JSON body enforces on `tags.*` / `cover_page.*` (`code: validation_failed`).
+             *     rules the JSON body enforces on `tags.*` / `coverPage.*` (`code: validation_failed`).
              */
             422: {
                 headers: {
@@ -7621,7 +7824,7 @@ export interface operations {
                      *           "resolution": "fine",
                      *           "clientReference": "chart-4471",
                      *           "coverPage": {
-                     *             "to_name": "Dr Ruiz",
+                     *             "toName": "Dr Ruiz",
                      *             "subject": "Records"
                      *           },
                      *           "read": false,
