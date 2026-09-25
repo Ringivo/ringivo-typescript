@@ -3673,6 +3673,17 @@ export interface components {
                 clientReference?: string | null;
                 /** Format: date-time */
                 createdAt?: string | null;
+                /**
+                 * @deprecated
+                 * @description Deprecated duplicate of `clientReference`, served during the v1 naming cleanup's transition window. Read `clientReference`.
+                 */
+                client_reference?: string | null;
+                /**
+                 * Format: date-time
+                 * @deprecated
+                 * @description Deprecated duplicate of `createdAt`, served during the v1 naming cleanup's transition window. Read `createdAt`.
+                 */
+                created_at?: string | null;
             };
         };
         CancelFaxResult: {
@@ -3700,6 +3711,17 @@ export interface components {
             byteSize: number;
             /** @description The digest of the bytes behind `url`, so you can verify what you downloaded. */
             sha256: string;
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
+             */
+            expires_at?: string;
+            /**
+             * @deprecated
+             * @description Deprecated duplicate of `byteSize`, served during the v1 naming cleanup's transition window. Read `byteSize`.
+             */
+            byte_size?: number;
         };
         FaxAccountAttributes: {
             name?: string;
@@ -4883,6 +4905,11 @@ export interface components {
             /** @example image/jpeg */
             contentType?: string;
             /**
+             * @deprecated
+             * @description Deprecated duplicate of `contentType`, served during the v1 naming cleanup's transition window. Read `contentType`.
+             */
+            content_type?: string;
+            /**
              * @description The part's filename, when it named one.
              * @example photo.jpg
              */
@@ -5707,6 +5734,12 @@ export interface components {
                  * @description The address the mail went to, echoed back.
                  */
                 sentTo?: string;
+                /**
+                 * Format: email
+                 * @deprecated
+                 * @description Deprecated duplicate of `sentTo`, served during the v1 naming cleanup's transition window. Read `sentTo`.
+                 */
+                sent_to?: string;
             };
         };
         /**
@@ -5968,6 +6001,12 @@ export interface components {
              * @description When the current binding lapses unless the phone system refreshes it.
              */
             expiresAt?: string | null;
+            /**
+             * Format: date-time
+             * @deprecated
+             * @description Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
+             */
+            expires_at?: string | null;
         } | null;
         SipTrunkAttributes: {
             name?: string;

@@ -90,13 +90,24 @@ info:
 
     ## Changes
 
-    ### The v1 naming cleanup (breaking)
+    ### The v1 naming cleanup
 
-    Every name on the resource surface is now camelCase, to the leaf. The old names are not
-    accepted: an old filter key is refused with a **400** like any unknown key, an old body member is
-    ignored or refused like any unknown member, and a response carries only the new name. Webhook
-    payloads, `multipart/form-data` parts and the `POST /v1/faxes` request body did not change.
-    Enum VALUES did not change either (`targetType: sip_trunk` is still `sip_trunk`).
+    The names below are now camelCase, to the leaf. **The old names keep working during a transition
+    window**, so you can move to the new ones on your own schedule:
+
+    - **A request may still send an old name.** An old filter key or body member is read as its new
+      name, and the response carries a `Deprecation` header (RFC 9745). Sending the old and the new
+      name of one member in one request is refused: a **400** for a filter key, a **422** for a body
+      member.
+    - **A response carries both names**, the new one and the old one, with the same value. The old
+      members are marked `deprecated` in this document.
+    - **The window closes in a later release, announced ahead.** After it, an old filter key is
+      refused with a **400** like any unknown key, an old body member is refused like any unknown
+      member, and a response carries only the new name. Move to the new names now; a response with
+      no `Deprecation` header means the request used none of the old ones.
+
+    Webhook payloads, `multipart/form-data` parts and the `POST /v1/faxes` request body did not
+    change. Enum VALUES did not change either (`targetType: sip_trunk` is still `sip_trunk`).
 
     | Where | Old name | New name |
     |---|---|---|
@@ -114,8 +125,8 @@ info:
     | `routing-targets` attribute (from `include=routingTarget` on `phone-numbers`) | `type` | `targetType` |
 
     A `source.pointer` on a refusal names the new member (`/faxAccount`). The Ringivo SDKs send and
-    read the new names from Python 0.15.0 and TypeScript 0.12.0; those versions also work against
-    the API before this change, so upgrade the SDK first.
+    read the new names from Python 0.15.0 and TypeScript 0.12.0, and those versions also work against
+    the API before this change.
   license:
     # A description of a proprietary service. `identifier` is an SPDX expression, and SPDX reserves
     # the `LicenseRef-` prefix for exactly this: a licence that is not one of the public ones.
@@ -8583,6 +8594,15 @@ components:
             to: { type: [string, 'null'] }
             clientReference: { type: [string, 'null'] }
             createdAt: { type: [string, 'null'], format: date-time }
+            client_reference:
+              type: [string, 'null']
+              deprecated: true
+              description: Deprecated duplicate of `clientReference`, served during the v1 naming cleanup's transition window. Read `clientReference`.
+            created_at:
+              type: [string, 'null']
+              format: date-time
+              deprecated: true
+              description: Deprecated duplicate of `createdAt`, served during the v1 naming cleanup's transition window. Read `createdAt`.
     CancelFaxResult:
       type: object
       required: [data]
@@ -8616,6 +8636,15 @@ components:
         sha256:
           type: string
           description: The digest of the bytes behind `url`, so you can verify what you downloaded.
+        expires_at:
+          type: string
+          format: date-time
+          deprecated: true
+          description: Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
+        byte_size:
+          type: integer
+          deprecated: true
+          description: Deprecated duplicate of `byteSize`, served during the v1 naming cleanup's transition window. Read `byteSize`.
 
     # -- fax-accounts ------------------------------------------------------------------------------
     FaxAccountAttributes:
@@ -10104,6 +10133,10 @@ components:
         bytes. If you need the file, ask your messaging provider.
       properties:
         contentType: { type: string, example: image/jpeg }
+        content_type:
+          type: string
+          deprecated: true
+          description: Deprecated duplicate of `contentType`, served during the v1 naming cleanup's transition window. Read `contentType`.
         filename: { type: [string, 'null'], description: 'The part''s filename, when it named one.', example: photo.jpg }
         encoding: { type: string, example: base64 }
         bytes: { type: integer, description: 'The part''s decoded size, in bytes.', example: 40213 }
@@ -11132,6 +11165,11 @@ components:
               type: string
               format: email
               description: The address the mail went to, echoed back.
+            sent_to:
+              type: string
+              format: email
+              deprecated: true
+              description: Deprecated duplicate of `sentTo`, served during the v1 naming cleanup's transition window. Read `sentTo`.
 
     # -- customers (the reads; console ADR-0023's pattern resource) --------------------------------
     CustomerRegionPreference:
@@ -11450,6 +11488,11 @@ components:
           type: [string, 'null']
           format: date-time
           description: When the current binding lapses unless the phone system refreshes it.
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          deprecated: true
+          description: Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
       example:
         state: registered
         contacts: 1
