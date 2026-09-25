@@ -114,7 +114,7 @@ info:
     | `routing-targets` attribute (from `include=routingTarget` on `phone-numbers`) | `type` | `targetType` |
 
     A `source.pointer` on a refusal names the new member (`/faxAccount`). The Ringivo SDKs send and
-    read the new names from Python 0.14.0 and TypeScript 0.11.0; those versions also work against
+    read the new names from Python 0.15.0 and TypeScript 0.12.0; those versions also work against
     the API before this change, so upgrade the SDK first.
   license:
     # A description of a proprietary service. `identifier` is an SPDX expression, and SPDX reserves
