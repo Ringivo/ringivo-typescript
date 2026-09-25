@@ -129,7 +129,7 @@ describe("send", () => {
     expect(request.headers.get("content-type")).toMatch(/^multipart\/form-data; boundary=/);
     // The four endpoints that are not JSON:API say so, and this is one.
     expect(request.headers.get("accept")).toBe("application/json");
-    expect(body).toContain('name="fax_account"');
+    expect(body).toContain('name="faxAccount"');
     expect(body).toContain(ACCOUNT_ID);
     expect(body).toContain('name="to"');
     // `documents[]` is how the spec says to spell the file parts.
@@ -231,20 +231,20 @@ describe("send", () => {
 
     expect(request.headers.get("content-type")).toBe("application/json");
     expect(sent).toEqual({
-      fax_account: ACCOUNT_ID,
+      faxAccount: ACCOUNT_ID,
       to: "+13025556789",
       from: "+14075550100",
       resolution: "fine",
-      client_reference: "chart-4471",
+      clientReference: "chart-4471",
       tags: { clinic: "north" },
-      cover_page: { to_name: "Dr Ruiz", subject: "Records" },
+      coverPage: { toName: "Dr Ruiz", subject: "Records" },
       documents: ["https://records.acme-vet.example/charts/4471.pdf"],
     });
     // A body carrying `data` is refused outright rather than half-obeyed.
     expect(sent.data).toBeUndefined();
   });
 
-  it("sends tags and cover_page as JSON-typed parts with NO filename", async () => {
+  it("sends tags and coverPage as JSON-typed parts with NO filename", async () => {
     // The spec's multipart `encoding` gives both members `contentType:
     // application/json`, so they travel as JSON-typed form fields rather
     // than as bare strings a server would have to guess at.
@@ -270,7 +270,9 @@ describe("send", () => {
     expect(body).toContain(
       'name="tags"\r\nContent-Type: application/json\r\n\r\n{"clinic":"north"}',
     );
-    expect(body).toContain('name="cover_page"\r\nContent-Type: application/json');
+    expect(body).toContain('name="coverPage"\r\nContent-Type: application/json');
+    // The documented snake_case cover-page keys go out camelCase.
+    expect(body).toContain('{"toName":"Dr Ruiz"}');
     // A form field, not an upload: no filename, or a server reads it as a page.
     expect(body).not.toContain('name="tags"; filename');
     expect(body).not.toContain('filename="blob"');
