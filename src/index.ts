@@ -58,8 +58,11 @@ export type { ListCustomersOptions } from "./customers.js";
 export {
   ApiError,
   AuthenticationError,
+  RecordingAudioMissingError,
   RingivoError,
   SignatureVerificationError,
+  TranscriptRequestLimitedError,
+  TranscriptionCappedError,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
 export { FaxAccountUsers } from "./faxAccountUsers.js";
@@ -101,6 +104,7 @@ export type {
   PbxSubscriberPage,
   Recording,
   Transcript,
+  TranscriptSegment,
   WebhookDelivery,
   WebhookDeliveryPage,
   WebhookEndpoint,

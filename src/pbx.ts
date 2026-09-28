@@ -1,13 +1,16 @@
 /**
  * Your customers' phone systems: who has an extension, what is registered,
- * what was called — and asking somebody's phone to place a call.
+ * what was called — asking somebody's phone to place a call, and asking for a
+ * call's transcript.
  *
- * -- ONE NAMESPACE, THREE COLLECTIONS AND AN ACTION -------------------------
+ * -- ONE NAMESPACE, THREE COLLECTIONS AND TWO ACTIONS -----------------------
  * `client.pbx.subscribers` are every extension on the phone system — people
  * AND machines, told apart by `kind` — `client.pbx.devices` the SIP
  * registrations their phones made, and `client.pbx.callRecords` the call log.
- * `client.pbx.subscribers.call()` is the only write on the whole surface: it
- * has a subscriber's phone place a call, so the call goes out as them.
+ * There are two writes. `client.pbx.subscribers.call()` has a subscriber's
+ * phone place a call, so the call goes out as them.
+ * `client.pbx.callRecords.requestTranscript()` asks the phone system to
+ * transcribe one capture of a call.
  *
  * They sit under `client.pbx` rather than at the top level because `devices`
  * is a word other products use for other things. One namespace keeps the
@@ -21,7 +24,8 @@
  * Narrow to one customer with `customer`.
  *
  * -- WHAT IS SPEC-TYPED, AND WHAT IS HAND-BUILT -----------------------------
- * The eight reads go through the `openapi-fetch` client in client.ts, so
+ * The nine reads and `callRecords.requestTranscript()`, which sends no body,
+ * go through the `openapi-fetch` client in client.ts, so
  * `src/_generated/schema.d.ts` type-checks their paths, their query members
  * and their response bodies at compile time.
  *
@@ -63,6 +67,7 @@ import {
   pbxSubscriberFromResource,
   pbxSubscriberPageFromDocument,
   recordingsFromDocument,
+  transcriptFromResource,
   transcriptsFromDocument,
 } from "./models.js";
 
@@ -358,7 +363,8 @@ export class CallRecords {
    *
    * **One item per RECORDING, not one per transcript that exists**: a
    * capture with no words yet still appears, as a `Transcript` with
-   * `status: "pending"` and every other field null, so you can tell "no
+   * `status: "not_requested"` or `"pending"` and every other field null, so
+   * you can tell "no
    * transcript yet" from "no recording at all". **NOT PAGINATED**, for the
    * same reason `recordings()` is not: the console's own transcript
    * collection document carries no `links.next` or `meta.page`.
@@ -366,11 +372,10 @@ export class CallRecords {
    * Each `Transcript.contentUrl` is short-lived, the same rule
    * `Recording.contentUrl` follows: call this again for a fresh one.
    *
-   * This is the collection read only — one HTTP call, one indexed query —
-   * and it never distinguishes a permanent failure from a wait; both
-   * currently read `pending` on the array this returns. Telling the two
-   * apart, and reading the turns of the conversation, needs the
-   * single-transcript endpoint, which this client does not yet wrap.
+   * This is the collection read only: `status` is `ready`, `pending` or
+   * `not_requested`, and it carries no speaker turns. `transcript()` reads one
+   * capture with its turns, and says when a transcription permanently gave up.
+   * `requestTranscript()` asks for one.
    *
    * A call outside your customers' domains answers **404**, not 403 — the
    * same posture `get()` and `recordings()` have.
@@ -391,6 +396,75 @@ export class CallRecords {
 
     return transcriptsFromDocument(isRecord(data) ? data : {});
   }
+
+  /**
+   * Read one capture's transcript, with its speaker turns.
+   *
+   * `recordingId` is the `id` of an item from `transcripts()` or
+   * `recordings()` — the same id on both. The answer carries `segments`, the
+   * turns of the conversation in the order they were spoken.
+   *
+   * **A 404 is not always "no such thing"**, and `ApiError.code` says which:
+   * `transcript_not_requested` (nobody asked — call `requestTranscript()`),
+   * `transcript_pending` (asked for, not written yet — ask again in a few
+   * minutes), `transcript_failed` (transcription gave up; there is nothing to
+   * wait for) or `not_found` (no such call of yours, or no such capture of it).
+   *
+   * Needs BOTH `pbx-call-records:read` AND `pbx-transcripts:read`.
+   */
+  async transcript(callRecordId: string, recordingId: string): Promise<Transcript> {
+    const { data } = await transportOf(this.client)[
+      "/v1/pbx/call-records/{callRecord}/transcripts/{recording}"
+    ].GET({ params: { path: transcriptPath(callRecordId, recordingId) } });
+
+    return transcriptFromResource(dataObject(data));
+  }
+
+  /**
+   * Ask for one capture's transcript. The work is asynchronous.
+   *
+   * Returns at once. A **202** answers a `Transcript` with `status: "pending"`:
+   * poll `transcript()` or `transcripts()` until it is `ready`, or subscribe to
+   * the `call_transcript.available` webhook. A capture that is already
+   * transcribed answers **200** with the `ready` transcript, and starts
+   * nothing new.
+   *
+   * **It is safe to repeat.** A capture already asked for answers 202 again and
+   * starts no second transcription.
+   *
+   * The refusals are typed, and both 429s carry `retryAfter` in seconds:
+   *
+   *  - `RecordingAudioMissingError` — 409: there is no audio for this capture.
+   *  - `TranscriptionCappedError` — 429: the daily transcription budget is
+   *    spent; it resets at 00:00 UTC.
+   *  - `TranscriptRequestLimitedError` — 429: this call was asked about the
+   *    maximum number of times in the window (3 a day by default, counted
+   *    across all of the call's captures).
+   *
+   * Anything else is a plain `ApiError`: 404 `transcript_failed` when this
+   * capture's transcription already gave up, or `not_found`; 503
+   * `transcription_unavailable` when transcription on demand is not available.
+   *
+   * Needs `pbx-call-records:read` AND `pbx-transcripts:write`.
+   */
+  async requestTranscript(callRecordId: string, recordingId: string): Promise<Transcript> {
+    const { data } = await transportOf(this.client)[
+      "/v1/pbx/call-records/{callRecord}/transcripts/{recording}"
+    ].POST({ params: { path: transcriptPath(callRecordId, recordingId) } });
+
+    return transcriptFromResource(dataObject(data));
+  }
+}
+
+/** The two path members of one transcript, each refused by its own name when empty. */
+function transcriptPath(
+  callRecordId: string,
+  recordingId: string,
+): { callRecord: string; recording: string } {
+  return {
+    callRecord: idParam(callRecordId, "a call record id is required"),
+    recording: idParam(recordingId, "a recording id is required"),
+  };
 }
 
 /** The `client.pbx.subscribers` namespace. */
@@ -565,7 +639,7 @@ export class PbxDevices {
   }
 }
 
-/** The `client.pbx` namespace: the three collections and the one action. */
+/** The `client.pbx` namespace: the three collections and the two actions. */
 export class Pbx {
   /** Your customers' call log. */
   readonly callRecords: CallRecords;

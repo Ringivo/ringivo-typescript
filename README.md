@@ -260,6 +260,9 @@ await writeFile("received.pdf", pdf);
 `mediaLink()` instead if you want the URL and its expiry — but do not cache
 it or pass it on: anyone holding it reads that document.
 
+`thumbnailLink()` mints the same kind of link for the first-page preview, a
+PNG — the one a list screen shows beside each fax.
+
 ## Fax accounts
 
 A fax account is a customer's container: the numbers routed to it, the faxes
@@ -691,7 +694,7 @@ for (const recording of await client.pbx.callRecords.recordings(call.id)) {
 }
 
 for (const transcript of await client.pbx.callRecords.transcripts(call.id)) {
-  console.log(transcript.id, transcript.status); // "ready" or "pending"
+  console.log(transcript.id, transcript.status); // "ready", "pending" or "not_requested"
 }
 ```
 
@@ -708,12 +711,45 @@ no further authorization.
 
 `transcripts()` answers one item per **recording**, not one per transcript
 that exists: a capture with no words yet still appears here, as a
-`Transcript` with `status: "pending"` and every other field `null`, so you
-can tell "no transcript yet" from "no recording at all". Needs
-`pbx-call-records:read` to fetch the call at all, and `pbx-transcripts:read`
-— a separate grant, because the words of a call are searchable and cheap to
-mine at scale in a way the call log itself is not — to see whether anyone
-spoke.
+`Transcript` with `status: "not_requested"` or `"pending"` and every other
+field `null`, so you can tell "no transcript yet" from "no recording at all".
+Needs `pbx-call-records:read` to fetch the call at all, and
+`pbx-transcripts:read` — a separate grant, because the words of a call are
+searchable and cheap to mine at scale in a way the call log itself is not —
+to see whether anyone spoke.
+
+#### Asking for a transcript, and reading its turns
+
+```ts
+import { TranscriptionCappedError, TranscriptRequestLimitedError } from "ringivo";
+
+try {
+  await client.pbx.callRecords.requestTranscript(call.id, recording.id);
+} catch (error) {
+  if (error instanceof TranscriptionCappedError || error instanceof TranscriptRequestLimitedError) {
+    console.log("try again in", error.retryAfter, "seconds");
+  } else throw error;
+}
+
+// later, or when the call_transcript.available webhook arrives:
+const transcript = await client.pbx.callRecords.transcript(call.id, recording.id);
+for (const turn of transcript.segments ?? []) {
+  console.log(turn.speaker, turn.start, turn.text);
+}
+```
+
+`requestTranscript()` returns at once. A 202 is a `pending` transcript; a
+capture already transcribed answers the `ready` one and starts nothing new,
+so it is safe to repeat. It needs `pbx-transcripts:write`. The refusals are
+typed: `RecordingAudioMissingError` (409 — no audio for that capture),
+`TranscriptionCappedError` (429 — the daily budget is spent; it resets at
+00:00 UTC) and `TranscriptRequestLimitedError` (429 — the call was asked
+about too often, 3 times a day by default across all of its captures). Both
+429s carry `retryAfter` in seconds.
+
+`transcript()` reads one capture with its `segments`, the turns of the
+conversation. Until the words are ready it is a 404 whose `code` says why:
+`transcript_not_requested`, `transcript_pending` or `transcript_failed`.
 
 ### Who is on the phone system, and what is registered
 
@@ -881,7 +917,10 @@ try {
 ```
 
 `AuthenticationError` (a subclass) means the credential itself was refused —
-the client had already replaced its token and retried once by then.
+the client had already replaced its token and retried once by then. Three
+transcript refusals have subclasses of their own:
+`RecordingAudioMissingError`, `TranscriptionCappedError` and
+`TranscriptRequestLimitedError`.
 Connection failures, timeouts and TLS errors are the platform's own
 exceptions and are deliberately not wrapped.
 
@@ -938,6 +977,7 @@ decision and not a library's.
 | `client.faxes.cancel(faxId)` | `fax:write` | Withdraw a fax before it is answered. |
 | `client.faxes.media(faxId, { format? })` | `fax:read` | The document's bytes, as a `Uint8Array`. |
 | `client.faxes.mediaLink(faxId, { format? })` | `fax:read` | The URL and its expiry, as a `MediaLink`. |
+| `client.faxes.thumbnailLink(faxId)` | `fax:read` | The first-page preview (a PNG): its URL and expiry, as a `MediaLink`. |
 | `client.faxAccounts.list({ customer?, status?, after?, before?, pageSize? })` | `fax:read` | A `FaxAccountPage`: `accounts` plus `nextCursor`. |
 | `client.faxAccounts.get(faxAccountId)` | `fax:read` | One `FaxAccount`. |
 | `client.faxAccounts.numbers(faxAccountId)` | `fax:read` | Every `FaxAccountNumber` routed to it, all pages walked. |
@@ -961,7 +1001,9 @@ decision and not a library's.
 | `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds what a click-to-dial became. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
-| `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "pending"` and every other field `null` for one with no words yet. Also NOT paginated. |
+| `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "not_requested"` or `"pending"` and every other field `null` for one with no words yet. Also NOT paginated. |
+| `client.pbx.callRecords.transcript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript`, with its `segments`. A 404 `code` says whether it was not requested, is pending, or failed. |
+| `client.pbx.callRecords.requestTranscript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:write` | Ask for one capture's transcript. Resolves to the `pending` (202) or `ready` (200) `Transcript`. Safe to repeat. |
 | `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxSubscriberPage`: `subscribers` plus `nextCursor`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
 | `client.pbx.subscribers.get(subscriberId)` | `pbx-users:read` | One `PbxSubscriber`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
 | `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
@@ -974,7 +1016,7 @@ decision and not a library's.
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
-`Transcript`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
+`Transcript`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
 `WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
 built from in `.raw` — so a member the API adds after this release reaches
 you without a new SDK. A member the API did not send reads `null`.

@@ -111,7 +111,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.faxes))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["cancel", "get", "list", "media", "mediaLink", "send"]);
+    ).toEqual(["cancel", "get", "list", "media", "mediaLink", "send", "thumbnailLink"]);
   });
 
   it("exposes the whole fax-account surface", async () => {
@@ -197,8 +197,8 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       scopes: ["pbx-users:read"],
     });
 
-    // Three collections hung off one namespace, and `call()` on the
-    // subscribers one — the only write on the whole surface.
+    // Three collections hung off one namespace, and the surface's two writes:
+    // `call()` on the subscribers one, `requestTranscript()` on the call log.
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx))
         .filter((name) => name !== "constructor")
@@ -209,7 +209,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.callRecords))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["get", "list", "recordings", "transcripts"]);
+    ).toEqual(["get", "list", "recordings", "requestTranscript", "transcript", "transcripts"]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.subscribers))
         .filter((name) => name !== "constructor")
