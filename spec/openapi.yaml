@@ -9132,14 +9132,18 @@ components:
             | `field:<v` `field:<=v` `field:>v` `field:>=v` | ordered comparison |
 
             A comparison is numeric only when the body's value is a JSON **number** and the literal
-            parses as a number; otherwise it compares the value's string form byte by byte. So a
-            field carrying `"10"` as a string is NOT greater than `2`. A boolean compares against the
-            tokens `true` and `false`. A value that is neither a scalar nor null (an array, an
-            object) matches `field:*` and nothing else.
+            is a decimal number (`12`, `-1.5`, `.5`, `2e3`; not `inf`, `nan`, `0x1p0` or `1_000`);
+            otherwise it compares the value's string form byte by byte. A number's string form is its
+            JSON text exactly as delivered (`0.30000000000000004`, `1.0e+25`). So a field carrying
+            `"10"` as a string is NOT greater than `2`. A boolean compares against the tokens `true`
+            and `false`. A value that is neither a scalar nor null (an array, an object) matches
+            `field:*` and nothing else. A path walks through objects only: `tags.0:x` is false, and a
+            term never matches "any element" of an array.
 
-            Values are bare tokens, or double-quoted strings in which `\"` is a quote and `\\` is a
-            backslash — quote anything carrying a space or a parenthesis. Inside quotes a `*` is a
-            literal `*`.
+            Values are bare tokens, or quoted strings — quote anything carrying a space or a
+            parenthesis. Use double quotes, in which `\"` is a quote and `\\` is a backslash, or single
+            quotes, in which `\'` is a quote and `\\` is a backslash. Inside quotes a `*` is a literal
+            `*`.
 
             Terms combine with `AND`, `OR` and parentheses, all case-insensitive. **`OR` binds more
             tightly than `AND`**, so `a:1 OR b:2 AND c:3` means `(a:1 OR b:2) AND c:3` — parenthesise
