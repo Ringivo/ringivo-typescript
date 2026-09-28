@@ -981,16 +981,21 @@ export interface Recording {
 }
 
 /**
- * The transcript of one capture, from `pbx.callRecords.transcripts()`.
+ * The transcript of one capture of a call.
  *
- * **One item per RECORDING of the call, not one per transcript that
- * exists**: a capture with no words yet still appears here, with
- * `status: "pending"` and every other field null, so a caller can tell
- * "no transcript yet" from "no recording at all". There is a third state,
- * `failed`, but this collection never reports it — telling a permanent
- * failure from a wait costs a lookup this list does not pay; that
- * distinction belongs to the single-transcript endpoint, which this
- * client does not yet wrap.
+ * `pbx.callRecords.transcripts()` answers one of these per RECORDING of the
+ * call, not one per transcript that exists: a capture with no words still
+ * appears, so a caller can tell "no transcript yet" from "no recording at
+ * all". `pbx.callRecords.transcript()` answers one, with its `segments`, and
+ * `pbx.callRecords.requestTranscript()` answers the one it asked for.
+ *
+ * `status` is the member to branch on. `ready` means the words are held and
+ * every field is filled. `not_requested` means nobody has asked for this
+ * capture's transcript — ask with `requestTranscript()`. `pending` means it was
+ * asked for and is on its way. Every field but `id`, `cccId` and `status` is
+ * null unless `status` is `ready`. A transcription that permanently gave up is
+ * not a status on the list: `transcript()` answers it as a 404 `ApiError` with
+ * `code === "transcript_failed"`.
  *
  * **No page here either**, for the same reason `Recording` has none: this
  * is the captures of one call, and the console's own transcript collection
@@ -1003,8 +1008,11 @@ export interface Recording {
  * `contentUrl` is a signed, time-limited link to the stored transcript
  * document (the speech-to-text provider's own response, not the audio) —
  * the same rule as `Recording.contentUrl`: do not cache it past
- * `expiresAt`. Every field but `id`, `cccId` and `status` is null while
- * `status` is `"pending"`.
+ * `expiresAt`.
+ *
+ * `segments` is the turns of the conversation, and only `transcript()` serves
+ * them: it is null on every other answer, which means "not served here",
+ * while an empty array means nobody spoke.
  */
 export interface Transcript {
   readonly id: string;
@@ -1018,6 +1026,22 @@ export interface Transcript {
   readonly model: string | null;
   readonly contentUrl: string | null;
   readonly expiresAt: Date | null;
+  readonly segments: readonly TranscriptSegment[] | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One turn of a conversation, from `pbx.callRecords.transcript()`.
+ *
+ * `speaker` is a label, not an identity: `Speaker 1`, `Speaker 2`, and so on.
+ * It is stable within one transcript and means nothing across two. `start`
+ * and `end` are seconds from the start of the recording.
+ */
+export interface TranscriptSegment {
+  readonly speaker: string | null;
+  readonly start: number | null;
+  readonly end: number | null;
+  readonly text: string | null;
   readonly raw: RawJson;
 }
 
@@ -1259,8 +1283,38 @@ export function transcriptFromResource(resource: RawJson): Transcript {
     model: text(attributes, "model"),
     contentUrl: text(attributes, "contentUrl"),
     expiresAt: instant(attributes["expiresAt"]),
+    segments: segmentsFrom(attributes),
     raw: resource,
   });
+}
+
+/**
+ * The `segments` member as a frozen array, or null when it was not served.
+ *
+ * Null and an empty array mean different things: the list endpoint does not
+ * serve turns at all, while an empty array is a real answer — nobody spoke.
+ */
+function segmentsFrom(attributes: RawJson): readonly TranscriptSegment[] | null {
+  const value = attributes["segments"];
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return Object.freeze(
+    value.filter(isRecord).map((segment) =>
+      Object.freeze({
+        speaker: text(segment, "speaker"),
+        start: finiteNumber(segment, "start"),
+        end: finiteNumber(segment, "end"),
+        text: text(segment, "text"),
+        raw: segment,
+      }),
+    ),
+  );
+}
+
+function finiteNumber(source: RawJson, key: string): number | null {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 /** The `transcripts` resources in one `pbx.callRecords.transcripts()` document. */

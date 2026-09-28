@@ -246,8 +246,8 @@ export class Ringivo {
         // The whole point of the seam. `openapi-fetch` builds and types the
         // request; this method is what actually sends it, so the typed calls
         // and the hand-written multipart send share one auth flow and one
-        // error path. The v1 naming cleanup bridge wraps it for 0.11.x only
-        // (src/filterBridge.ts), so the escape hatch below never sees it.
+        // error path. The v1 naming cleanup bridge (src/filterBridge.ts) wraps
+        // this seam only, so the escape hatch below never sees it.
         fetch: bridgeFilters((outgoing: Request) => this.request(outgoing), this.filterSpelling),
       }),
     );

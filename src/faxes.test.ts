@@ -827,6 +827,44 @@ describe("media", () => {
     expect(media.expiresAt?.toISOString()).toBe("2026-08-16T11:07:31.000Z");
   });
 
+  it("mints the first-page preview link with thumbnailLink()", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(`${FAX_URL}/thumbnail`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({
+          url: `${FAX_URL}/thumbnail/content?expires=1787057037&signature=abc`,
+          expiresAt: "2026-08-16T11:07:31+00:00",
+          byteSize: 128,
+          sha256: "d".repeat(64),
+        });
+      }),
+    );
+
+    const link = await client().faxes.thumbnailLink(FAX_ID);
+
+    expect(calls.last.request.headers.get("accept")).toBe("application/json");
+    // No `format`: the preview is one PNG, not a choice of document kinds.
+    expect(calls.last.url.searchParams.has("format")).toBe(false);
+    expect(link.url.endsWith("signature=abc")).toBe(true);
+    expect(link.byteSize).toBe(128);
+    expect(link.sha256).toBe("d".repeat(64));
+    expect(link.expiresAt?.toISOString()).toBe("2026-08-16T11:07:31.000Z");
+  });
+
+  it("raises a typed 404 for a fax with no preview", async () => {
+    server.use(
+      http.get(`${FAX_URL}/thumbnail`, () =>
+        HttpResponse.json(
+          { errors: [{ status: "404", code: "not_found", title: "Not found" }] },
+          { status: 404 },
+        ),
+      ),
+    );
+
+    await expect(client().faxes.thumbnailLink(FAX_ID)).rejects.toMatchObject({ statusCode: 404 });
+  });
+
   it("raises a typed 404 for a fax with no rendered document yet", async () => {
     server.use(
       http.get(`${FAX_URL}/media`, () =>

@@ -2,8 +2,8 @@
  * Send a fax, read one, list them, cancel one, fetch its pages.
  *
  * -- WHAT IS TYPED BY THE SPEC, AND WHAT IS HAND-WRITTEN --------------------
- * `get`, `list`, `cancel` and `mediaLink` go through the `openapi-fetch`
- * client in client.ts, so `src/_generated/schema.d.ts` type-checks their
+ * `get`, `list`, `cancel`, `mediaLink` and `thumbnailLink` go through the
+ * `openapi-fetch` client in client.ts, so `src/_generated/schema.d.ts` type-checks their
  * paths, their query members and their response bodies at compile time. That
  * is the whole benefit taken from the generated half — nothing generated is
  * on the wire and nothing generated crosses the public boundary, because the
@@ -330,6 +330,26 @@ export class Faxes {
         path: { fax: faxIdParam(faxId) },
         query: { format: options.format ?? "pdf" },
       },
+      headers: { Accept: JSON_MEDIA_TYPE },
+    });
+
+    return mediaLinkFromJson(isRecord(data) ? data : {});
+  }
+
+  /**
+   * Mint a short-lived download URL for a fax's first-page preview.
+   *
+   * The preview is a PNG of the first page, made when the fax was converted.
+   * Follow `url` with a plain GET and no `Authorization` header, the same way
+   * as a `mediaLink()` URL. Every call mints a fresh capability and records
+   * who asked, so do not cache the URL past `expiresAt` or pass it on.
+   *
+   * A fax that is not yours, or that has no preview, is an `ApiError` with
+   * status 404.
+   */
+  async thumbnailLink(faxId: string): Promise<MediaLink> {
+    const { data } = await transportOf(this.client)["/v1/faxes/{fax}/thumbnail"].GET({
+      params: { path: { fax: faxIdParam(faxId) } },
       headers: { Accept: JSON_MEDIA_TYPE },
     });
 

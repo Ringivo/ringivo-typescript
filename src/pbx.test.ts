@@ -25,7 +25,13 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
-import { ApiError, Ringivo } from "./index.js";
+import {
+  ApiError,
+  RecordingAudioMissingError,
+  Ringivo,
+  TranscriptRequestLimitedError,
+  TranscriptionCappedError,
+} from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -44,6 +50,7 @@ const CALL_RECORD_URL = `${CALL_RECORDS_URL}/${CALL_RECORD_ID}`;
 const CALL_RECORD_RECORDINGS_URL = `${CALL_RECORD_URL}/recordings`;
 const CALL_RECORD_TRANSCRIPTS_URL = `${CALL_RECORD_URL}/transcripts`;
 const RECORDING_ID = "0198c9aa-1111-7000-8000-0000000000b1";
+const CALL_RECORD_TRANSCRIPT_URL = `${CALL_RECORD_TRANSCRIPTS_URL}/${RECORDING_ID}`;
 const PBX_USER_URL = `${PBX_USERS_URL}/${PBX_USER_ID}`;
 const PBX_DEVICE_URL = `${PBX_DEVICES_URL}/${PBX_DEVICE_ID}`;
 const PLACE_CALL_URL = `${PBX_USERS_URL}/${PBX_USER_ID}/calls`;
@@ -813,6 +820,231 @@ describe("callRecords.transcripts", () => {
       statusCode: 404,
       code: "not_found",
     });
+  });
+});
+
+describe("callRecords.transcript", () => {
+  const SEGMENTS = [
+    { speaker: "Speaker 1", start: 0.08, end: 2.4, text: "Acme Dental, how can I help?" },
+    { speaker: "Speaker 2", start: 2.6, end: 5, text: "I need to move my appointment." },
+  ];
+
+  it("reads one transcript with its speaker turns", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPT_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: transcriptResource({ segments: SEGMENTS }) });
+      }),
+    );
+
+    const transcript = await client().pbx.callRecords.transcript(CALL_RECORD_ID, RECORDING_ID);
+
+    expect(calls.last.request.headers.get("accept")).toBe(JSONAPI);
+    expect(transcript.id).toBe(RECORDING_ID);
+    expect(transcript.status).toBe("ready");
+    expect(transcript.segments?.map(({ speaker, start, end, text }) => [speaker, start, end, text]))
+      .toEqual([
+        ["Speaker 1", 0.08, 2.4, "Acme Dental, how can I help?"],
+        ["Speaker 2", 2.6, 5, "I need to move my appointment."],
+      ]);
+    expect(transcript.segments?.[0]?.raw).toEqual(SEGMENTS[0]);
+    expect(Object.isFrozen(transcript.segments)).toBe(true);
+    expect(Object.isFrozen(transcript.segments?.[0])).toBe(true);
+  });
+
+  it("reads an empty turn list as an empty array — nobody spoke", async () => {
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPT_URL, () =>
+        HttpResponse.json({ data: transcriptResource({ segments: [] }) }),
+      ),
+    );
+
+    const transcript = await client().pbx.callRecords.transcript(CALL_RECORD_ID, RECORDING_ID);
+
+    expect(transcript.segments).toEqual([]);
+  });
+
+  it("leaves segments null on the list, which does not serve them", async () => {
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json({ data: [transcriptResource()] }),
+      ),
+    );
+
+    const [transcript] = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    expect(transcript?.segments).toBeNull();
+  });
+
+  it.each(["transcript_not_requested", "transcript_pending", "transcript_failed", "not_found"])(
+    "hands the 404 code %s through",
+    async (code) => {
+      server.use(
+        http.get(CALL_RECORD_TRANSCRIPT_URL, () =>
+          HttpResponse.json(errorBody(404, code, "Nothing to serve."), { status: 404 }),
+        ),
+      );
+
+      await expect(
+        client().pbx.callRecords.transcript(CALL_RECORD_ID, RECORDING_ID),
+      ).rejects.toMatchObject({ statusCode: 404, code });
+    },
+  );
+
+  it("keeps both ids inside their own path segments", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(`${BASE_URL}/*`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: transcriptResource() });
+      }),
+    );
+
+    await client().pbx.callRecords.transcript("../users/secret", "../x");
+
+    expect(calls.last.url.pathname).toBe(
+      "/v1/pbx/call-records/..%2Fusers%2Fsecret/transcripts/..%2Fx",
+    );
+  });
+
+  it("refuses an empty id by its own name", async () => {
+    await expect(client().pbx.callRecords.transcript("", RECORDING_ID)).rejects.toThrow(
+      /a call record id is required/,
+    );
+    await expect(client().pbx.callRecords.transcript(CALL_RECORD_ID, "")).rejects.toThrow(
+      /a recording id is required/,
+    );
+  });
+});
+
+describe("callRecords.requestTranscript", () => {
+  const PENDING = {
+    status: "pending",
+    language: null,
+    duration: null,
+    "byte-size": null,
+    sha256: null,
+    provider: null,
+    model: null,
+    "content-url": null,
+    "expires-at": null,
+  };
+
+  function refusal(status: number, code: string, retryAfter?: string): Response {
+    return HttpResponse.json(errorBody(status, code, "Refused."), {
+      status,
+      headers: retryAfter === undefined ? {} : { "Retry-After": retryAfter },
+    });
+  }
+
+  it("posts no body to the capture's own URL and reads the pending 202", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(CALL_RECORD_TRANSCRIPT_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: transcriptResource(PENDING) }, { status: 202 });
+      }),
+    );
+
+    const transcript = await client().pbx.callRecords.requestTranscript(
+      CALL_RECORD_ID,
+      RECORDING_ID,
+    );
+
+    expect(calls.last.request.method).toBe("POST");
+    expect(calls.last.url.pathname).toBe(
+      `/v1/pbx/call-records/${CALL_RECORD_ID}/transcripts/${RECORDING_ID}`,
+    );
+    expect(calls.last.body).toBe("");
+    expect(calls.last.request.headers.get("accept")).toBe(JSONAPI);
+    expect(transcript.id).toBe(RECORDING_ID);
+    expect(transcript.status).toBe("pending");
+    expect(transcript.contentUrl).toBeNull();
+  });
+
+  it("hands back the ready transcript when the capture is already transcribed", async () => {
+    server.use(
+      http.post(CALL_RECORD_TRANSCRIPT_URL, () =>
+        HttpResponse.json({ data: transcriptResource() }, { status: 200 }),
+      ),
+    );
+
+    const transcript = await client().pbx.callRecords.requestTranscript(
+      CALL_RECORD_ID,
+      RECORDING_ID,
+    );
+
+    expect(transcript.status).toBe("ready");
+    expect(transcript.contentUrl).toBe(`${BASE_URL}/v1/pbx/transcripts-content/signed-token`);
+  });
+
+  it("throws RecordingAudioMissingError for a capture with no audio", async () => {
+    server.use(
+      http.post(CALL_RECORD_TRANSCRIPT_URL, () => refusal(409, "recording_audio_missing")),
+    );
+
+    const failure = await client()
+      .pbx.callRecords.requestTranscript(CALL_RECORD_ID, RECORDING_ID)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(RecordingAudioMissingError);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure).toMatchObject({ statusCode: 409, code: "recording_audio_missing" });
+  });
+
+  it("throws TranscriptionCappedError with its Retry-After for a spent budget", async () => {
+    server.use(
+      http.post(CALL_RECORD_TRANSCRIPT_URL, () => refusal(429, "transcription_capped", "3600")),
+    );
+
+    const failure = await client()
+      .pbx.callRecords.requestTranscript(CALL_RECORD_ID, RECORDING_ID)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TranscriptionCappedError);
+    expect(failure).toMatchObject({
+      statusCode: 429,
+      code: "transcription_capped",
+      retryAfter: 3600,
+    });
+  });
+
+  it("throws TranscriptRequestLimitedError with its Retry-After for a call asked about too often", async () => {
+    server.use(
+      http.post(CALL_RECORD_TRANSCRIPT_URL, () =>
+        refusal(429, "transcript_request_limited", "120"),
+      ),
+    );
+
+    const failure = await client()
+      .pbx.callRecords.requestTranscript(CALL_RECORD_ID, RECORDING_ID)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(TranscriptRequestLimitedError);
+    expect(failure).toMatchObject({
+      statusCode: 429,
+      code: "transcript_request_limited",
+      retryAfter: 120,
+    });
+  });
+
+  it("leaves an ordinary refusal a plain ApiError", async () => {
+    server.use(http.post(CALL_RECORD_TRANSCRIPT_URL, () => refusal(404, "transcript_failed")));
+
+    const failure = await client()
+      .pbx.callRecords.requestTranscript(CALL_RECORD_ID, RECORDING_ID)
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ApiError);
+    expect((failure as Error).constructor).toBe(ApiError);
+    expect(failure).toMatchObject({ statusCode: 404, code: "transcript_failed" });
+  });
+
+  it("refuses an empty recording id by its own name", async () => {
+    await expect(
+      client().pbx.callRecords.requestTranscript(CALL_RECORD_ID, ""),
+    ).rejects.toThrow(/a recording id is required/);
   });
 });
 

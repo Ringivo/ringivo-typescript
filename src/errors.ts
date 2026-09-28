@@ -125,6 +125,42 @@ export class ApiError extends RingivoError {
 export class AuthenticationError extends ApiError {}
 
 /**
+ * A 409 `recording_audio_missing`: there is no audio for this capture.
+ *
+ * Thrown by `pbx.callRecords.requestTranscript()`. The platform holds no audio
+ * for the capture, so it cannot be transcribed. Asking again does not help.
+ */
+export class RecordingAudioMissingError extends ApiError {}
+
+/**
+ * A 429 `transcription_capped`: the daily transcription budget is spent.
+ *
+ * Thrown by `pbx.callRecords.requestTranscript()`. `retryAfter` gives the
+ * seconds until the budget resets at 00:00 UTC. Nothing was started.
+ */
+export class TranscriptionCappedError extends ApiError {}
+
+/**
+ * A 429 `transcript_request_limited`: this call was asked about too often.
+ *
+ * Thrown by `pbx.callRecords.requestTranscript()`. The limit counts asks per
+ * CALL, across all of its captures (3 a day by default). `retryAfter` gives
+ * the seconds until one more ask is accepted. Nothing was started.
+ */
+export class TranscriptRequestLimitedError extends ApiError {}
+
+/**
+ * The refusals that get a class of their own, by the API's `code`. The code is
+ * the stable vocabulary, so it decides — not the status alone, which a 429
+ * shares with the plain rate limiter.
+ */
+const BY_CODE: Readonly<Record<string, typeof ApiError>> = Object.freeze({
+  recording_audio_missing: RecordingAudioMissingError,
+  transcription_capped: TranscriptionCappedError,
+  transcript_request_limited: TranscriptRequestLimitedError,
+});
+
+/**
  * A webhook body did not prove it came from your provider, recently.
  *
  * One class for every failure — a missing header, a malformed one, a stale
@@ -283,7 +319,11 @@ export async function throwForResponse(response: Response): Promise<void> {
 
   const body = await response.text();
   const errors = errorsFromBody(body, response.status);
-  const Failure = response.status === 401 ? AuthenticationError : ApiError;
+  const code = errors[0]?.code ?? null;
+  const Failure =
+    response.status === 401
+      ? AuthenticationError
+      : ((code !== null && Object.hasOwn(BY_CODE, code) ? BY_CODE[code] : undefined) ?? ApiError);
 
   throw new Failure(message(response.status, errors, body), {
     statusCode: response.status,
