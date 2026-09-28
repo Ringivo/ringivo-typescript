@@ -1851,12 +1851,22 @@ export interface paths {
          *     `endUserAddress` stays writable because an order transcribed before the parts existed
          *     carries a hand-typed block and nothing else.
          *
-         *     ## Editing invalidates the letter
+         *     ## Editing a field the letter shows
          *
-         *     Any edit that changes something other than the label clears `unsignedLoa` and
-         *     `detailsConfirmedAt`: the generated Letter of Authorization was a render of the fields you
-         *     have just moved, and the confirmation was somebody's word that those fields matched the
-         *     bill. Generate the letter again afterwards.
+         *     An edit that changes a field the Letter of Authorization displays — the legal name, the
+         *     service address, the provider, the account number, the BTN, the PIN (or its "None"
+         *     attestation), the numbers not transferring, the requested transfer date, or the number set —
+         *     rewrites a letter nobody has signed yet: `unsignedLoa` is cleared, and you generate the
+         *     letter again. An edit to a field read off the bill also clears `detailsConfirmedAt`.
+         *
+         *     **An edit that would CANCEL A SIGNED LOA must say so.** A signed LOA (e-signed, or a wet scan
+         *     you uploaded) is cancelled by a change to any of those fields except the requested transfer
+         *     date, which is a request and never cancels a signature. Such a PATCH is a **409** naming the
+         *     attributes in `errors[0].meta.fields` (this API's names; `numbers` for the number set) and
+         *     the same in the letter's words in `errors[0].meta.labels`, and nothing is written. Send the same PATCH with a
+         *     top-level `"meta": {"cancelSignedLoa": true}` to save it and cancel the signed LOA; your
+         *     customer then signs a new one. A PATCH that changes only the requested date, or nothing on
+         *     the letter, never needs it.
          *
          *     ## When an edit is refused
          *
@@ -5786,6 +5796,13 @@ export interface components {
             e164: string;
         };
         PortOrderUpdateRequest: {
+            /**
+             * @description About this request, not the order. `cancelSignedLoa: true` confirms an edit that would
+             *     cancel the order's signed LOA; without it such an edit is a 409. Nothing stores it.
+             */
+            meta?: {
+                cancelSignedLoa?: boolean;
+            };
             data: {
                 /** @enum {string} */
                 type: "port-orders";
@@ -12243,23 +12260,17 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The order is past `draft`, and this was more than a rename. */
+            /**
+             * @description The order is past `draft`, and this was more than a rename — or the edit would cancel
+             *     the order's signed LOA and the document did not carry `meta.cancelSignedLoa: true`
+             *     (title `Signed LOA would be cancelled`; the attributes in `meta.fields`, the letter's words
+             *     for them in `meta.labels`). Nothing is written.
+             */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    /**
-                     * @example {
-                     *       "errors": [
-                     *         {
-                     *           "status": "409",
-                     *           "title": "Not editable",
-                     *           "detail": "Locked while your customer signs — use 'Edit the order' to reopen it."
-                     *         }
-                     *       ]
-                     *     }
-                     */
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
