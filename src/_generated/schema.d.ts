@@ -6836,8 +6836,11 @@ export interface components {
              */
             releaseText?: string | null;
             /**
-             * @description Is a recording held for this call? Existence only in this release — the media endpoint
-             *     that hands the audio back is a later one.
+             * @description Do we hold a recording of this call? True exactly when
+             *     `GET /v1/pbx/call-records/{id}/recordings` has at least one item to hand back. A
+             *     recording lands about a minute after the call ends, so a call that just finished reads
+             *     `false` until it does. A call the phone system never captured audio for — a cancelled
+             *     call, for one — stays `false`.
              */
             hasRecording?: boolean;
             /** @description Does the phone system hide this record from its own call log? */
