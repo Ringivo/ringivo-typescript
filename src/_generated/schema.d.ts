@@ -2593,8 +2593,10 @@ export interface paths {
          *     already asked for answers `202` again and starts no second transcription.
          *
          *     **The answer tells you now when the transcript cannot come.** No audio for the capture
-         *     answers `409 recording_audio_missing`; a spent daily transcription budget answers
-         *     `429 transcription_capped` with `Retry-After`; a call already asked about the maximum number
+         *     answers `409 recording_audio_missing`; an account that has made its daily number of
+         *     transcript requests (100 per UTC day by default, counted across all of its customers)
+         *     answers `429 transcription_daily_limit_reached` with `Retry-After` and the meter in the
+         *     error's `meta`; a call already asked about the maximum number
          *     of times in the window (3 a day by default, counted across all of the call's captures)
          *     answers `429 transcript_request_limited` with `Retry-After`; a capture whose transcription
          *     already gave up answers `404 transcript_failed`.
@@ -3402,7 +3404,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_capped" | "transcript_request_limited" | "transcription_unavailable";
+        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -13897,10 +13899,14 @@ export interface operations {
                 };
             };
             /**
-             * @description The daily transcription budget is spent (`code: transcription_capped`), and
-             *     `Retry-After` gives the seconds until it resets at 00:00 UTC. Or this call has been asked
-             *     about as many times as the window allows (`code: transcript_request_limited`), and
-             *     `Retry-After` gives the seconds until one more ask is accepted.
+             * @description Your account has made its transcript requests for today
+             *     (`code: transcription_daily_limit_reached`): `Retry-After` gives the seconds until the
+             *     count resets at 00:00 UTC, and the error's `meta` carries `limit`, `used` and `resetsAt`.
+             *     Only requests that were accepted count, and a request that later failed gives its place
+             *     back; asking about a capture that is already transcribed or already pending does not
+             *     count. Or this call has been asked about as many times as the window allows
+             *     (`code: transcript_request_limited`), and `Retry-After` gives the seconds until one more
+             *     ask is accepted.
              */
             429: {
                 headers: {
@@ -13909,6 +13915,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "429",
+                     *           "code": "transcription_daily_limit_reached",
+                     *           "title": "Daily transcription limit reached",
+                     *           "detail": "This account has made its 100 transcript requests for today. Ask again after the count resets at 00:00 UTC.",
+                     *           "meta": {
+                     *             "limit": 100,
+                     *             "used": 100,
+                     *             "resetsAt": "2026-09-29T00:00:00Z"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
