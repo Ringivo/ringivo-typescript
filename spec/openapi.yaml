@@ -134,11 +134,16 @@ info:
     | `routing-targets` attribute (from `include=routingTarget` on `phone-numbers`) | `type` | `targetType` |
     | `POST /v1/faxes` request (JSON body or multipart parts) | `fax_account`, `client_reference`, `cover_page` (`to_name`, `from_name`) | `faxAccount`, `clientReference`, `coverPage` (`toName`, `fromName`) |
     | `faxes` attribute `coverPage` | `to_name`, `from_name` | `toName`, `fromName` |
-    | every webhook body | `event_id`, `occurred_at`, and every snake_case key of `data` (`fax_account_id`, `pages_total`, `client_reference`, `created_at`, `failure_code`, `tenant_id`, `customer_id`, `ccc_id`, …) | `eventId`, `occurredAt`, and the camelCase twin of each (`faxAccountId`, `pagesTotal`, …) |
+    | every webhook body — legacy fields only, see below | `event_id`, `occurred_at`, and the pre-existing snake_case keys of `data` (`fax_account_id`, `pages_total`, `client_reference`, `created_at`, `failure_code`, `tenant_id`, `customer_id`, `ccc_id`, …) | `eventId`, `occurredAt`, and the camelCase twin of each (`faxAccountId`, `pagesTotal`, …) |
 
     A `source.pointer` on a refusal names the new member (`/faxAccount`). The Ringivo SDKs send and
     read the new names from Python 0.15.0 and TypeScript 0.12.0, and those versions also work against
     the API before this change.
+
+    **The webhook-body row covers only the snake_case keys that existed before this transition
+    window opened (frozen 2026-09-28).** A field added to a webhook payload after that date is
+    camelCase-only, like every other new field on this API, and is never given a manufactured
+    snake_case twin.
   license:
     # A description of a proprietary service. `identifier` is an SPDX expression, and SPDX reserves
     # the `LicenseRef-` prefix for exactly this: a licence that is not one of the public ones.
