@@ -1826,9 +1826,14 @@ export interface paths {
          *     is the one thing to get right — omitting is not the same as blanking.
          *
          *     **`numbers` is REPLACED wholesale, never merged.** Send the whole set every time. An entry
-         *     is a bare E.164 string, or an object `{"e164": …, "numberType": …}` where `numberType` is
-         *     `landline`, `wireless` or `voip` — what the BILL says the line is, which is not always what
-         *     the network says.
+         *     is a bare E.164 string, or an object `{"e164": …}` with no other member.
+         *
+         *     **Removed on 2026-09-28, with no transition window:** `loaSigner`, `contactName`,
+         *     `contactTitle`, `contactEmail`, `contactPhone`, and a number's `numberType`. Sending one of
+         *     the attributes is a **400** that names it; a number object carrying `numberType` is a
+         *     **422** on `numbers`. The signer names themselves and gives their contact when they sign —
+         *     on the e-signature page, or as the `signer` part of a wet-signed `loa` upload. No porting
+         *     carrier is sent a line type.
          *
          *     ## Two fields need explaining before you send them
          *
@@ -1916,9 +1921,10 @@ export interface paths {
          *
          *     1. **At least one number.**
          *     2. **Both documents** — the current phone bill and the signed LOA.
-         *     3. **The fields every carrier needs**: `endUserName`, `loaSigner`, `loaDate`,
+         *     3. **The fields every carrier needs**: `endUserName`, the signer, `loaDate`,
          *        `currentProvider`, `accountNumber`, `billingPhone`, the five service-address parts and an
-         *        explicit `portType`. On a `partial` port, `newBillingNumber` as well — the losing account
+         *        explicit `portType`. The signer is not an attribute: the signing records it, and a
+         *        refusal for it (`loa_signer`) carries no `source.pointer`. On a `partial` port, `newBillingNumber` as well — the losing account
          *        survives one, and a surviving account bills under a number.
          *     4. **The port-out PIN, or the word that there is none** — `accountPin`, or
          *        `accountPinAttestedNone`. Never both, and never neither.
@@ -2020,10 +2026,11 @@ export interface paths {
          *     what the signature task waits on: `tasks.signature` moves from `not_ready` to `ready` here.
          *
          *     **It asks for less than the submit gate does**, and deliberately: the numbers, plus
-         *     `endUserName`, `endUserAddress`, `loaSigner`, `loaDate`, `currentProvider` and
-         *     `accountNumber` — the six fields the document prints. It does NOT ask for the signed LOA,
-         *     because requiring a signature before the letter exists is a loop with no way in. A missing
-         *     item is the same one-error-object-per-gap **422** the submit gate answers with.
+         *     `endUserName`, `endUserAddress`, `currentProvider` and `accountNumber`. It does NOT ask for
+         *     the signed LOA, nor for the signer and `loaDate`: the signer names themselves and the day
+         *     is stamped when the letter is signed, so requiring either before the letter exists is a
+         *     loop with no way in. A missing item is the same one-error-object-per-gap **422** the submit
+         *     gate answers with.
          *
          *     **Generating again replaces the previous letter**, and so does any edit that moves a field
          *     it prints — see the PATCH above. The letter names no carrier: none has been chosen when it
@@ -5474,14 +5481,6 @@ export interface components {
          */
         PortType: "full" | "partial" | null;
         /**
-         * @description What the BILL says one line is. It is deliberately not corrected from what the network says —
-         *     the two disagree often, and a carrier works from the bill.
-         *
-         *     **`null` is a third reading and not a missing value:** the bill did not say.
-         * @enum {string|null}
-         */
-        PortNumberType: "landline" | "wireless" | "voip" | null;
-        /**
          * @description `missing` until the bill is in its slot, `received` afterwards.
          * @enum {string}
          */
@@ -5608,7 +5607,8 @@ export interface components {
             /**
              * @description The columns the reading carried a value for, in the snake_case the extractor names them
              *     by. `done` with an empty list is real and ordinary: the bill was read and every column
-             *     it could have filled was already filled.
+             *     it could have filled was already filled. `loa_signer` can appear although it is not an
+             *     attribute: the bill's addressee pre-fills the signer, and the signature replaces it.
              */
             fields?: string[];
             /** Format: date-time */
@@ -5636,8 +5636,6 @@ export interface components {
              *     the parts existed carries a hand-typed block and nothing else.
              */
             endUserAddress?: string | null;
-            /** @description Who signs the Letter of Authorization. */
-            loaSigner?: string | null;
             /**
              * Format: date
              * @description The day they sign it, as a plain `YYYY-MM-DD` — a day and not an instant, so nothing
@@ -5694,10 +5692,6 @@ export interface components {
              *     out when you named none, and keeps yours exactly when you did.
              */
             requestedFocDate?: string | null;
-            contactName?: string | null;
-            contactTitle?: string | null;
-            contactEmail?: string | null;
-            contactPhone?: string | null;
             /**
              * @description Free text for the lines staying behind on a partial port — a note for the desk, never a
              *     second number list.
@@ -5778,10 +5772,12 @@ export interface components {
                 };
             };
         };
-        /** @description One number to move: a bare E.164 string, or an object naming what the bill says the line is. */
+        /**
+         * @description One number to move: a bare E.164 string, or an object with `e164` alone. Any other member
+         *     of the object is a **422** — `numberType` was removed on 2026-09-28.
+         */
         PortOrderNumberInput: string | {
             e164: string;
-            numberType?: components["schemas"]["PortNumberType"];
         };
         PortOrderUpdateRequest: {
             data: {
@@ -5799,7 +5795,6 @@ export interface components {
                     label?: string | null;
                     endUserName?: string | null;
                     endUserAddress?: string | null;
-                    loaSigner?: string | null;
                     /** Format: date */
                     loaDate?: string | null;
                     currentProvider?: string | null;
@@ -5818,10 +5813,6 @@ export interface components {
                     serviceZip?: string | null;
                     /** Format: date-time */
                     requestedFocDate?: string | null;
-                    contactName?: string | null;
-                    contactTitle?: string | null;
-                    contactEmail?: string | null;
-                    contactPhone?: string | null;
                     numbersNotTransferring?: string | null;
                     numbers?: components["schemas"]["PortOrderNumberInput"][] | null;
                 } & {
@@ -5835,8 +5826,8 @@ export interface components {
          *
          *     `signed_on` and `signer` are REQUIRED on the `loa` slot and accepted on no other — a signed
          *     letter carries two facts the PDF cannot, and they are stored in the same transaction as the
-         *     document. They are named as parts rather than as the `loaDate`/`loaSigner` attributes the
-         *     JSON:API document uses, because this body is a form and has no `data.attributes`.
+         *     document. They are snake_case parts rather than camelCase attributes, because this body is a
+         *     form and has no `data.attributes`. `signer` is the only way this API names the signer.
          */
         PortOrderDocumentUploadRequest: {
             kind: components["schemas"]["PortDocumentKind"];
@@ -5855,8 +5846,7 @@ export interface components {
             signed_on?: string;
             /**
              * @description **`loa` only, and required there.** The name in the signature block — who actually
-             *     signed, which is not always who `loaSigner` said would. It OVERWRITES that attribute,
-             *     because what a carrier is told has to be what happened.
+             *     signed. It is the name each carrier is told.
              * @example Bea Whitfield
              */
             signer?: string;
@@ -11838,7 +11828,6 @@ export interface operations {
                      *             "status": "submitted",
                      *             "endUserName": "Second Chances Thrift, LLC",
                      *             "endUserAddress": "12 Market Street\nDover, DE 19901",
-                     *             "loaSigner": "Ada Lovelace",
                      *             "loaDate": "2026-08-10",
                      *             "currentProvider": "Twilio",
                      *             "accountNumber": "7ef81fe0",
@@ -11854,10 +11843,6 @@ export interface operations {
                      *             "serviceState": "DE",
                      *             "serviceZip": "19901",
                      *             "requestedFocDate": "2026-09-14T15:00:00Z",
-                     *             "contactName": "Grace Hopper",
-                     *             "contactTitle": "Office manager",
-                     *             "contactEmail": "grace@second-chances.example",
-                     *             "contactPhone": "+13025046251",
                      *             "numbersNotTransferring": null,
                      *             "numbers": [
                      *               "+13025046250",
@@ -12048,7 +12033,6 @@ export interface operations {
                      *           "status": "draft",
                      *           "endUserName": "Second Chances Thrift, LLC",
                      *           "endUserAddress": "12 Market Street\nDover, DE 19901",
-                     *           "loaSigner": "Ada Lovelace",
                      *           "loaDate": "2026-08-10",
                      *           "currentProvider": "Twilio",
                      *           "accountNumber": "7ef81fe0",
@@ -12064,10 +12048,6 @@ export interface operations {
                      *           "serviceState": "DE",
                      *           "serviceZip": "19901",
                      *           "requestedFocDate": null,
-                     *           "contactName": "Grace Hopper",
-                     *           "contactTitle": "Office manager",
-                     *           "contactEmail": "grace@second-chances.example",
-                     *           "contactPhone": "+13025046251",
                      *           "numbersNotTransferring": "+13025046299 stays with the alarm panel",
                      *           "numbers": [
                      *             "+13025046250",
@@ -12196,7 +12176,6 @@ export interface operations {
                  *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
                  *         "attributes": {
                  *           "endUserName": "Second Chances Thrift, LLC",
-                 *           "loaSigner": "Ada Lovelace",
                  *           "loaDate": "2026-08-10",
                  *           "currentProvider": "Twilio",
                  *           "accountNumber": "7ef81fe0",
@@ -12210,10 +12189,7 @@ export interface operations {
                  *           "accountPinAttestedNone": true,
                  *           "numbers": [
                  *             "+13025046250",
-                 *             {
-                 *               "e164": "+13025046251",
-                 *               "numberType": "landline"
-                 *             }
+                 *             "+13025046251"
                  *           ]
                  *         }
                  *       }
@@ -12230,6 +12206,32 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
+                };
+            };
+            /**
+             * @description The document names an attribute this resource does not declare — including one of the
+             *     attributes removed on 2026-09-28. Nothing is written.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "400",
+                     *           "title": "Non-Compliant JSON:API Document",
+                     *           "detail": "The field loaSigner is not a supported attribute.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12257,8 +12259,9 @@ export interface operations {
             };
             /**
              * @description A value the action refuses — an unknown `portType`, an `e164` that is not a phone
-             *     number, a date that is not `YYYY-MM-DD`, an attestation sent while a PIN is stored, or a
-             *     read-only attribute carrying a changed value. `source.pointer` names the member when the
+             *     number, a number object with a member other than `e164`, a date that is not
+             *     `YYYY-MM-DD`, an attestation sent while a PIN is stored, or a read-only attribute
+             *     carrying a changed value. `source.pointer` names the member when the
              *     refusal is about one field.
              */
             422: {
@@ -12485,8 +12488,8 @@ export interface operations {
                 };
             };
             /**
-             * @description The order does not yet carry the numbers and the six fields the document prints. One
-             *     error object per missing item.
+             * @description The order does not yet carry the numbers and the four fields the letter is written
+             *     from. One error object per missing item.
              */
             422: {
                 headers: {
@@ -12499,9 +12502,9 @@ export interface operations {
                      *         {
                      *           "status": "422",
                      *           "title": "Draft incomplete",
-                     *           "detail": "Still needed before this draft can be submitted: loa_signer.",
+                     *           "detail": "Still needed before this draft can be submitted: account_number.",
                      *           "source": {
-                     *             "pointer": "/data/attributes/loaSigner"
+                     *             "pointer": "/data/attributes/accountNumber"
                      *           }
                      *         }
                      *       ]
