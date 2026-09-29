@@ -5517,6 +5517,8 @@ export interface components {
          * @description Why ONE number left the port, beside the `failed` status it shares with every other way of
          *     ending. `withdrawn` — it was taken off the order before it moved, and nothing refused it.
          *     `carrier_refused` — a carrier declined this number while committing to the rest.
+         *     `moved` — our porting desk moved this number, while it was still in review, to a new order
+         *     of yours; `movedToOrderId` names that order, and the number is still being ported there.
          *
          *     **`null` is a third reading and not a missing value:** nobody stated a cause. It is what
          *     every number carries when the whole ORDER failed, whose own status says what happened.
@@ -5524,7 +5526,7 @@ export interface components {
          *     It names no carrier: `carrier_refused` says a carrier refused, never which one.
          * @enum {string|null}
          */
-        PortNumberFailureCause: "withdrawn" | "carrier_refused" | null;
+        PortNumberFailureCause: "withdrawn" | "carrier_refused" | "moved" | null;
         /**
          * @description The two slots an order has, and the whole vocabulary of an upload's `kind`. The generated
          *     letter is not one of them — nobody uploads a letter we write.
@@ -5601,6 +5603,14 @@ export interface components {
              * @description Since when, or null while nothing is held.
              */
             stoppedSince?: string | null;
+            /**
+             * Format: uuid
+             * @description The order of yours this number was moved to by our porting desk, or null. A number moved
+             *     while still in review reads `failed` with the cause `moved`; one that had been withdrawn
+             *     and was then filed again keeps the cause `withdrawn`. Either way, that order now carries
+             *     it. Read-only.
+             */
+            movedToOrderId?: string | null;
         };
         /**
          * @description One uploaded document, as a digest and a date — **never a handle**. These documents are
@@ -5776,6 +5786,13 @@ export interface components {
              *     this plane.
              */
             correctionsNote?: string | null;
+            /**
+             * Format: uuid
+             * @description The order of yours this one's numbers were moved off by our porting desk, or null. Such
+             *     an order starts already reviewed and signed: it shares the first order's letter of
+             *     authorization and bill. Read-only — a move is our desk's act, never an API write.
+             */
+            readonly splitFromId?: string | null;
             /**
              * @description Where each number stands, one entry per number. A port splits, so this and not the
              *     order's own `status` is what answers "which of my lines have moved?".

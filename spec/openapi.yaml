@@ -10922,6 +10922,8 @@ components:
         Why ONE number left the port, beside the `failed` status it shares with every other way of
         ending. `withdrawn` — it was taken off the order before it moved, and nothing refused it.
         `carrier_refused` — a carrier declined this number while committing to the rest.
+        `moved` — our porting desk moved this number, while it was still in review, to a new order
+        of yours; `movedToOrderId` names that order, and the number is still being ported there.
 
         **`null` is a third reading and not a missing value:** nobody stated a cause. It is what
         every number carries when the whole ORDER failed, whose own status says what happened.
@@ -10930,6 +10932,7 @@ components:
       enum:
         - withdrawn
         - carrier_refused
+        - moved
         - null
     PortDocumentKind:
       type: string
@@ -11009,6 +11012,14 @@ components:
           type: [string, 'null']
           format: date-time
           description: Since when, or null while nothing is held.
+        movedToOrderId:
+          type: [string, 'null']
+          format: uuid
+          description: |
+            The order of yours this number was moved to by our porting desk, or null. A number moved
+            while still in review reads `failed` with the cause `moved`; one that had been withdrawn
+            and was then filed again keeps the cause `withdrawn`. Either way, that order now carries
+            it. Read-only.
     PortOrderDocumentSlot:
       type: [object, 'null']
       description: |
@@ -11203,6 +11214,14 @@ components:
             has said anything — including every purely derived `correctionsRequired`, because the
             remedy for a carrier's stop lives in that carrier's own prose and that does not cross to
             this plane.
+        splitFromId:
+          type: [string, 'null']
+          format: uuid
+          readOnly: true
+          description: |
+            The order of yours this one's numbers were moved off by our porting desk, or null. Such
+            an order starts already reviewed and signed: it shares the first order's letter of
+            authorization and bill. Read-only — a move is our desk's act, never an API write.
         numberStates:
           type: array
           description: |
