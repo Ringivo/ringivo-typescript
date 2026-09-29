@@ -959,7 +959,7 @@ export interface paths {
          *
          *     `filter` narrows delivery BELOW that scope, matched against the body's `data` object — a
          *     customer-scoped endpoint asks for one fax account with
-         *     `fax_account_id:<id>`, which is how a per-inbox subscription is written. Its SYNTAX is
+         *     `faxAccountId:<id>`, which is how a per-inbox subscription is written. Its SYNTAX is
          *     checked here and a 422 names the character that could
          *     not be read; its FIELD NAMES are not checked against anything, so a filter naming a field
          *     the body does not carry is valid and matches nothing. The grammar is on the `filter`
@@ -2682,7 +2682,7 @@ export interface webhooks {
          *     consumer's first act is to fetch the PDF, and the PDF does not exist until the render has
          *     run.
          *
-         *     **It fires on a failed render too, with `render_failed: true`.** That means the fax is real
+         *     **It fires on a failed render too, with `renderFailed: true`.** That means the fax is real
          *     and its metadata is complete, and only the document is missing. A call that answered and
          *     turned out not to be a fax is NOT this event.
          */
@@ -2789,7 +2789,7 @@ export interface webhooks {
         put?: never;
         /**
          * The platform gave up on a fax
-         * @description `data.failure_code` says why, in a vocabulary of fixed size.
+         * @description `data.failureCode` says why, in a vocabulary of fixed size.
          */
         post: operations["onFaxFailed"];
         delete?: never;
@@ -2839,10 +2839,10 @@ export interface webhooks {
          *     that does not hear a message is one that did not ask for the type. A message belongs to a
          *     number, which belongs to a customer, which belongs to you — so a tenant-scoped endpoint and
          *     a customer-scoped one both hear it.
-         *     `data.customer_id` is null while the number sits unassigned in your own pool, and only your
+         *     `data.customerId` is null while the number sits unassigned in your own pool, and only your
          *     tenant-scoped endpoints are called for that one.
          *
-         *     `occurred_at` is the instant the message was sent — the same value as `data.received_at` —
+         *     `occurredAt` is the instant the message was sent — the same value as `data.receivedAt` —
          *     and never the moment we reached you.
          */
         post: operations["onMessageReceived"];
@@ -2943,7 +2943,7 @@ export interface webhooks {
          *     sitting there forever. That request is where authorization runs and where the access is
          *     recorded.
          *
-         *     **`duration_seconds` can be null.** The switch does not always report how long a capture
+         *     **`durationSeconds` can be null.** The switch does not always report how long a capture
          *     runs, and the recording is real either way — the audio is in our bucket and
          *     `GET /v1/pbx/call-records/{id}/recordings` serves it. Do not treat a null duration as a
          *     missing recording.
@@ -2951,31 +2951,31 @@ export interface webhooks {
          *     **`data.superseded` is why you may hear about one recording twice.** Both switches capture
          *     every call independently, and one capture can be short. When the longer one replaces it, the
          *     bytes behind the SAME recording change and we send this event again with `superseded: true`
-         *     — so `byte_size`, `duration_seconds` and above all `sha256` differ from what you were told
+         *     — so `byteSize`, `durationSeconds` and above all `sha256` differ from what you were told
          *     the first time. A digest that no longer matches a copy you already downloaded is this, not a
          *     corrupted download. The replacement happens at most once per recording.
          *
          *     **A format conversion is announced the same way.** Older recordings are converted from WAV to
          *     one-channel Opus in WebM. When that happens the bytes behind the SAME recording change, and
-         *     we send this event again with the new `sha256`, `byte_size` and `contentType`; `superseded`
+         *     we send this event again with the new `sha256`, `byteSize` and `contentType`; `superseded`
          *     keeps the value it had. Fetch the audio again if you keep a copy.
          *
          *     **One call can produce more than one recording.** Each is a separate capture with its own
-         *     `ccc_id` and its own event; `call_id` is what ties them to the same call.
+         *     `cccId` and its own event; `callId` is what ties them to the same call.
          *
          *     **You are told once per change, and never once per retry.** We send this event when a
          *     recording first arrives, when a supersede changes the audio behind it, and when we convert
-         *     its format — nothing else raises it, and re-processing an announcement we have already handled sends nothing. If one
-         *     does reach you twice, both copies carry the same `event_id`, because for this event the id
-         *     is derived from the recording and the `sha256` rather than minted per send. Dedupe on it,
-         *     as the envelope says.
+         *     its format — nothing else raises it, and re-processing an announcement we have already
+         *     handled sends nothing. If one does reach you twice, both copies carry the same `eventId`,
+         *     because for this event the id is derived from the recording and the `sha256` rather than
+         *     minted per send. Dedupe on it, as the envelope says.
          *
          *     **Scope: `tenant` and `customer`, never `fax_account`.** A recording belongs to a customer,
-         *     which belongs to you. `data.customer_id` is null for a recording on a domain we cannot
+         *     which belongs to you. `data.customerId` is null for a recording on a domain we cannot
          *     resolve to one of your customers, and only your tenant-scoped endpoints are called for it.
          *
-         *     `occurred_at` is the moment the recording became available to us, and never the moment we
-         *     reached you — so a supersede's `occurred_at` is later than the first event's.
+         *     `occurredAt` is the moment the recording became available to us, and never the moment we
+         *     reached you — so a supersede's `occurredAt` is later than the first event's.
          */
         post: operations["onCallRecordingAvailable"];
         delete?: never;
@@ -3012,74 +3012,24 @@ export interface webhooks {
          *     at all rather than an empty one. So treat the absence of this event as "no transcript",
          *     never as "not yet".
          *
-         *     **`duration_seconds` is the audio's length as the transcription measured it**, which can
+         *     **`durationSeconds` is the audio's length as the transcription measured it**, which can
          *     differ by a second or so from the same figure on `call_recording.available` — they are two
          *     measurements of one file, not one number reported twice.
          *
          *     **You are told once.** A transcript is written once per recording and never updated, so
          *     there is no superseding event here as there is for recordings. If one does reach you twice,
-         *     both copies carry the same `event_id` — for this event the id is derived from the transcript
+         *     both copies carry the same `eventId` — for this event the id is derived from the transcript
          *     and its text rather than minted per send. Dedupe on it, as the envelope says.
          *
          *     **Scope: `tenant` and `customer`, never `fax_account`** — and always the same pair the
-         *     recording carried, because a transcript's owner is its recording's owner. `data.customer_id`
+         *     recording carried, because a transcript's owner is its recording's owner. `data.customerId`
          *     is null for a call on a domain we cannot resolve to one of your customers, and only your
          *     tenant-scoped endpoints are called for it.
          *
-         *     `occurred_at` is the moment the transcript became available to us, and never the moment we
+         *     `occurredAt` is the moment the transcript became available to us, and never the moment we
          *     reached you.
          */
         post: operations["onCallTranscriptAvailable"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "call-recording.available": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * `call_recording.available`, delivered under its old name
-         * @deprecated
-         * @description **The old name of `call_recording.available`, kept for the rename's transition window.** An
-         *     endpoint subscribed to this name receives every `call_recording.available` event under it:
-         *     the same body, the same `event_id`, with `type: call-recording.available`. An endpoint
-         *     subscribed to both names receives each event once. Subscribe to `call_recording.available`
-         *     instead; this name is refused once the window closes.
-         */
-        post: operations["onCallRecordingAvailableDeprecatedName"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "call-transcript.available": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * `call_transcript.available`, delivered under its old name
-         * @deprecated
-         * @description **The old name of `call_transcript.available`, kept for the rename's transition window.** An
-         *     endpoint subscribed to this name receives every `call_transcript.available` event under it:
-         *     the same body, the same `event_id`, with `type: call-transcript.available`. An endpoint
-         *     subscribed to both names receives each event once. Subscribe to `call_transcript.available`
-         *     instead; this name is refused once the window closes.
-         */
-        post: operations["onCallTranscriptAvailableDeprecatedName"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3111,7 +3061,7 @@ export interface webhooks {
          *     happening and your endpoint being called is down, and that a real event raised in that
          *     window may not have reached you either. Nothing is queued up for later: we expire a beat
          *     rather than bank it, so after an outage you get the NEXT beat, not a burst of old ones. A
-         *     beat's `emitted_at` is therefore always recent, and a gap in the `sequence` you have seen
+         *     beat's `emittedAt` is therefore always recent, and a gap in the `sequence` you have seen
          *     is the record of the outage.
          *
          *     **`sequence` counts within one region** and increases by one per beat. It is what tells you
@@ -3125,7 +3075,7 @@ export interface webhooks {
          *     **Scope: `tenant` only.** A heartbeat is about our platform rather than about anything of
          *     one customer's, so a customer-scoped endpoint cannot subscribe to it.
          *
-         *     `occurred_at` equals `data.emitted_at`, and neither is the moment we reached you.
+         *     `occurredAt` equals `data.emittedAt`, and neither is the moment we reached you.
          */
         post: operations["onWebhookHeartbeat"];
         delete?: never;
@@ -3156,7 +3106,7 @@ export interface webhooks {
          *     reached by a phone-system key rather than through a customer of yours.
          *
          *     A change that was reported stalled and then landed sends `pbx_change.stalled` FIRST and this
-         *     second, for the same `intent_id`. A no-op save — one that asked for values the system already
+         *     second, for the same `intentId`. A no-op save — one that asked for values the system already
          *     held — sends nothing at all.
          */
         post: operations["onPbxChangeConfirmed"];
@@ -3179,7 +3129,7 @@ export interface webhooks {
          * A change you made has not shown up yet
          * @description **This is not a failure.** A change that has not appeared within the platform's watch window
          *     is reported here so you are not left guessing, but it very often lands a moment later — in
-         *     which case `pbx_change.confirmed` follows for the same `intent_id`. Treat this as "not yet"
+         *     which case `pbx_change.confirmed` follows for the same `intentId`. Treat this as "not yet"
          *     rather than "did not work", and do not re-send the change on it.
          *
          *     The window is an operator-tuned number, not a property of your change, so the same change may
@@ -3462,7 +3412,7 @@ export interface components {
          *     endpoint and a customer-scoped one both hear about the same fax.
          *
          *     A third value, `fax_account`, was retired on 2026-09-15 and is now refused like any other
-         *     unknown scope. Narrow below a customer with `filter: fax_account_id:<id>` instead — the
+         *     unknown scope. Narrow below a customer with `filter: faxAccountId:<id>` instead — the
          *     fax body already carries that field, and one expression generalizes where a per-object
          *     scope did not.
          * @enum {string}
@@ -3473,7 +3423,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call_recording.available" | "call_transcript.available" | "webhook.heartbeat" | "call-recording.available" | "call-transcript.available";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call_recording.available" | "call_transcript.available" | "webhook.heartbeat";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -3493,7 +3443,7 @@ export interface components {
         } | null;
         /**
          * @description The cover page this fax was sent with, as it was supplied: a recipient name, a sender name,
-         *     a subject and a message. A cover page IS a page — it is counted in `pages_total` and it
+         *     a subject and a message. A cover page IS a page — it is counted in `pagesTotal` and it
          *     bills.
          */
         CoverPage: {
@@ -3637,7 +3587,7 @@ export interface components {
         };
         /**
          * @description The four fields of the built-in cover page. A cover page IS a page — it is counted in
-         *     `pages_total` and it bills. `null` is accepted the same as omitting the field or sending
+         *     `pagesTotal` and it bills. `null` is accepted the same as omitting the field or sending
          *     `{}` — none of the three add a cover page.
          */
         CoverPageRequest: {
@@ -3710,17 +3660,6 @@ export interface components {
                 clientReference?: string | null;
                 /** Format: date-time */
                 createdAt?: string | null;
-                /**
-                 * @deprecated
-                 * @description Deprecated duplicate of `clientReference`, served during the v1 naming cleanup's transition window. Read `clientReference`.
-                 */
-                client_reference?: string | null;
-                /**
-                 * Format: date-time
-                 * @deprecated
-                 * @description Deprecated duplicate of `createdAt`, served during the v1 naming cleanup's transition window. Read `createdAt`.
-                 */
-                created_at?: string | null;
             };
         };
         CancelFaxResult: {
@@ -3748,17 +3687,6 @@ export interface components {
             byteSize: number;
             /** @description The digest of the bytes behind `url`, so you can verify what you downloaded. */
             sha256: string;
-            /**
-             * Format: date-time
-             * @deprecated
-             * @description Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
-             */
-            expires_at?: string;
-            /**
-             * @deprecated
-             * @description Deprecated duplicate of `byteSize`, served during the v1 naming cleanup's transition window. Read `byteSize`.
-             */
-            byte_size?: number;
         };
         FaxAccountAttributes: {
             name?: string;
@@ -4139,7 +4067,7 @@ export interface components {
              *     character it could not read. **The FIELD NAMES are not checked against anything.** A
              *     filter naming a field the body does not carry is valid and matches nothing, so the
              *     endpoint receives silence — check your field names against the event's documented body.
-             * @example fax_account_id:019a3c4d5e6f70819293a4b5c6d7e8f9
+             * @example faxAccountId:019a3c4d5e6f70819293a4b5c6d7e8f9
              * @example status:failed OR status:partial
              * @example -direction:outbound
              */
@@ -4316,61 +4244,26 @@ export interface components {
             id?: string;
             /** Format: uuid */
             faxAccountId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            fax_account_id?: string;
             /** Format: uuid */
             tenantId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            tenant_id?: string;
             /** Format: uuid */
             customerId?: string | null;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            customer_id?: string | null;
             direction?: components["schemas"]["FaxDirection"];
             status?: components["schemas"]["FaxStatus"];
             failureCode?: components["schemas"]["FaxFailureCode"];
-            /** @deprecated */
-            failure_code?: components["schemas"]["FaxFailureCode"];
             from?: string | null;
             to?: string | null;
             region?: string | null;
             pagesTotal?: number | null;
-            /** @deprecated */
-            pages_total?: number | null;
             pagesTransferred?: number | null;
-            /** @deprecated */
-            pages_transferred?: number | null;
             partial?: boolean | null;
             attemptCount?: number | null;
-            /** @deprecated */
-            attempt_count?: number | null;
             clientReference?: string | null;
-            /** @deprecated */
-            client_reference?: string | null;
             tags?: components["schemas"]["Tags"];
             /** Format: date-time */
             createdAt?: string | null;
-            /**
-             * Format: date-time
-             * @deprecated
-             */
-            created_at?: string | null;
             /** Format: date-time */
             completedAt?: string | null;
-            /**
-             * Format: date-time
-             * @deprecated
-             */
-            completed_at?: string | null;
         };
         FaxReceivedEventData: components["schemas"]["FaxEventData"] & {
             /**
@@ -4378,12 +4271,6 @@ export interface components {
              *     complete, and only the rendered document is missing.
              */
             renderFailed?: boolean;
-            /**
-             * @deprecated
-             * @description Always present, never conditional. `true` means the fax is real and its metadata is
-             *     complete, and only the rendered document is missing.
-             */
-            render_failed?: boolean;
         };
         /**
          * @description The envelope every outbound webhook body shares. `data` is added by the event schema that
@@ -4415,7 +4302,7 @@ export interface components {
          *
          *     ## Delivery is at-least-once
          *
-         *     Dedupe on `event_id`: a retried delivery of the same event carries the same id, and two
+         *     Dedupe on `eventId`: a retried delivery of the same event carries the same id, and two
          *     genuine transitions never share one. A failed delivery is retried after **at least 10s, 1m,
          *     5m, 30m, 2h and 6h** — seven POSTs in all, the last about eight and three-quarter hours after
          *     the event — and then dead-lettered. Ask
@@ -4425,7 +4312,7 @@ export interface components {
          *     or after its due time, so each number is the earliest that attempt can arrive and never a
          *     clock to synchronise against.
          *
-         *     `event_id` is repeated in a `Ringivo-Event-Id` header, and `type` in a `Ringivo-Event-Type`
+         *     `eventId` is repeated in a `Ringivo-Event-Id` header, and `type` in a `Ringivo-Event-Type`
          *     header, so a proxy or a queue in front of your handler can dedupe and route before anything
          *     parses the body. They are a convenience, never the authority: the signature covers the body,
          *     not the headers.
@@ -4437,35 +4324,22 @@ export interface components {
          *
          *     Events may arrive out of order, and nothing anywhere promises otherwise. A retry puts one
          *     event back on a ladder while later ones keep going, so a `fax.sending` that failed once can
-         *     land after the `fax.delivered` that followed it. Dedupe on `event_id`, order by
-         *     `occurred_at`, or refetch the resource and trust what it answers.
+         *     land after the `fax.delivered` that followed it. Dedupe on `eventId`, order by
+         *     `occurredAt`, or refetch the resource and trust what it answers.
          */
         WebhookEventEnvelope: {
             /**
              * Format: uuid
              * @description The dedupe key.
              */
-            eventId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             * @description The dedupe key.
-             */
-            event_id: string;
+            eventId: string;
             type: components["schemas"]["WebhookEventType"];
             /**
              * Format: date-time
              * @description When the transition happened — captured at the event, not at delivery, so a retry does
              *     not claim the fax was delivered when we finally reached you.
              */
-            occurredAt?: string;
-            /**
-             * Format: date-time
-             * @deprecated
-             * @description When the transition happened — captured at the event, not at delivery, so a retry does
-             *     not claim the fax was delivered when we finally reached you.
-             */
-            occurred_at: string;
+            occurredAt: string;
         };
         FaxEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["FaxEventData"];
@@ -4491,20 +4365,9 @@ export interface components {
             tenantId?: string;
             /**
              * Format: uuid
-             * @deprecated
-             */
-            tenant_id?: string;
-            /**
-             * Format: uuid
              * @description The customer who holds the number. Null while the number sits unassigned in your pool.
              */
             customerId?: string | null;
-            /**
-             * Format: uuid
-             * @deprecated
-             * @description The customer who holds the number. Null while the number sits unassigned in your pool.
-             */
-            customer_id?: string | null;
             kind?: components["schemas"]["InboundMessageKind"];
             /**
              * @description The sending number, in E.164.
@@ -4522,15 +4385,9 @@ export interface components {
             media?: components["schemas"]["MessageReceivedMediaPart"][];
             /**
              * Format: date-time
-             * @description When the message was sent. The envelope's `occurred_at` is this same instant.
+             * @description When the message was sent. The envelope's `occurredAt` is this same instant.
              */
             receivedAt?: string;
-            /**
-             * Format: date-time
-             * @deprecated
-             * @description When the message was sent. The envelope's `occurred_at` is this same instant.
-             */
-            received_at?: string;
         };
         /**
          * @description Both ends of one move, frozen when it happened. Nothing about the order's contents is here —
@@ -4539,18 +4396,8 @@ export interface components {
         PortOrderStatusChangedEventData: {
             /** Format: uuid */
             portOrderId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            port_order_id?: string;
             /** Format: uuid */
             tenantId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            tenant_id?: string;
             /** @description Where the order stood before the move. */
             from?: components["schemas"]["PortOrderStatus"];
             /** @description Where it stands now. */
@@ -4560,18 +4407,8 @@ export interface components {
         PortOrderBillExtractionSettledEventData: {
             /** Format: uuid */
             portOrderId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            port_order_id?: string;
             /** Format: uuid */
             tenantId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            tenant_id?: string;
             /**
              * @description The settled state, frozen at the event: `done`, `skipped` or `failed`. Never `pending` —
              *     that is the start of the wait this event ends.
@@ -4602,13 +4439,6 @@ export interface components {
              */
             customerId?: string | null;
             /**
-             * Format: uuid
-             * @deprecated
-             * @description The customer whose recording this is. Null when the recorded domain resolves to none of
-             *     your customers; only your tenant-scoped endpoints hear about that one.
-             */
-            customer_id?: string | null;
-            /**
              * @description The switch's own call identifier — the SIP Call-ID of the recorded leg. Two captures of
              *     one call share it. `filter[callId]` on `/v1/pbx/call-records` finds every record that
              *     carries it.
@@ -4616,19 +4446,12 @@ export interface components {
              */
             callId?: string;
             /**
-             * @deprecated
-             * @description The switch's own call identifier. Two captures of one call share it.
-             * @example 20260912101500000002-00112233445566778899aabbccddeeff
-             */
-            call_id?: string;
-            /**
              * Format: uuid
              * @description The ONE call record this recording belongs to — the `{callRecord}` of
              *     `GET /v1/pbx/call-records/{callRecord}/recordings`. It is the record in the recording's
              *     own domain whose call ids include `callId` and that was up when the capture opened. Null
              *     when the phone system had not written the call record when this event was built, or
-             *     could not be asked; `filter[callId]` then finds it. camelCase only: this member has no
-             *     snake_case twin.
+             *     could not be asked; `filter[callId]` then finds it.
              */
             callRecordId?: string | null;
             /**
@@ -4637,31 +4460,13 @@ export interface components {
              */
             cccId?: string;
             /**
-             * @deprecated
-             * @description Which capture of that call this recording is.
-             * @example 00b1
-             */
-            ccc_id?: string;
-            /**
              * @description How long the recorded audio runs. A supersede changes this. NULL when the switch did not
              *     report a duration for the capture — the recording is still ours to serve, and
-             *     `byte_size` still describes the bytes.
+             *     `byteSize` still describes the bytes.
              */
             durationSeconds?: number | null;
-            /**
-             * @deprecated
-             * @description How long the recorded audio runs. A supersede changes this. NULL when the switch did not
-             *     report a duration for the capture — the recording is still ours to serve, and
-             *     `byte_size` still describes the bytes.
-             */
-            duration_seconds?: number | null;
             /** @description The size of the audio we hold. A supersede or a format conversion changes this. */
             byteSize?: number;
-            /**
-             * @deprecated
-             * @description The size of the audio we hold. A supersede or a format conversion changes this.
-             */
-            byte_size?: number;
             /**
              * @description The SHA-256 of the audio, so you can check a download against what we recorded. A
              *     supersede or a format conversion changes this — see the operation description before
@@ -4670,8 +4475,7 @@ export interface components {
             sha256?: string;
             /**
              * @description The media type the recording's download serves: `audio/webm` (two-channel Opus) for new
-             *     recordings, `audio/wav` for older ones. Pick a file extension from this. New in this
-             *     payload, so it has no snake_case twin.
+             *     recordings, `audio/wav` for older ones. Pick a file extension from this.
              * @enum {string}
              */
             contentType?: "audio/webm" | "audio/wav";
@@ -4687,21 +4491,9 @@ export interface components {
             recordedAt?: string | null;
             /**
              * Format: date-time
-             * @deprecated
-             * @description When the recording started. Null when the switch did not report it.
-             */
-            recorded_at?: string | null;
-            /**
-             * Format: date-time
              * @description When it stopped. Null when the switch did not report it.
              */
             endedAt?: string | null;
-            /**
-             * Format: date-time
-             * @deprecated
-             * @description When it stopped. Null when the switch did not report it.
-             */
-            ended_at?: string | null;
         };
         CallRecordingAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["CallRecordingAvailableEventData"];
@@ -4726,27 +4518,11 @@ export interface components {
             recordingId?: string;
             /**
              * Format: uuid
-             * @deprecated
-             * @description The recording this is a transcript of. Today it always equals `id`; it is named
-             *     separately so that a future transcript with a key of its own does not change the meaning
-             *     of a field you are already reading.
-             */
-            recording_id?: string;
-            /**
-             * Format: uuid
              * @description The customer whose call this is — the same one `call_recording.available` carried. Null
              *     when the recorded domain resolves to none of your customers; only your tenant-scoped
              *     endpoints hear about that one.
              */
             customerId?: string | null;
-            /**
-             * Format: uuid
-             * @deprecated
-             * @description The customer whose call this is — the same one `call_recording.available` carried. Null
-             *     when the recorded domain resolves to none of your customers; only your tenant-scoped
-             *     endpoints hear about that one.
-             */
-            customer_id?: string | null;
             /**
              * @description The switch's own call identifier — the SIP Call-ID of the recorded leg. Two captures of
              *     one call share it.
@@ -4754,16 +4530,10 @@ export interface components {
              */
             callId?: string;
             /**
-             * @deprecated
-             * @description The switch's own call identifier. Two captures of one call share it.
-             * @example 20260912101500000002-00112233445566778899aabbccddeeff
-             */
-            call_id?: string;
-            /**
              * Format: uuid
              * @description The ONE call record the recording — and so this transcript — belongs to: the same value
              *     `call_recording.available` carried for it. Null when it could not be named when this
-             *     event was built. camelCase only: this member has no snake_case twin.
+             *     event was built.
              */
             callRecordId?: string | null;
             /**
@@ -4771,12 +4541,6 @@ export interface components {
              * @example 00b1
              */
             cccId?: string;
-            /**
-             * @deprecated
-             * @description Which capture of that call was transcribed.
-             * @example 00b1
-             */
-            ccc_id?: string;
             /**
              * @description The language of the transcript, as the transcription reported it, or as we asked for it
              *     when it reported none.
@@ -4788,12 +4552,6 @@ export interface components {
              *     transcription reported no duration.
              */
             durationSeconds?: number | null;
-            /**
-             * @deprecated
-             * @description How long the transcribed audio runs, rounded up to whole seconds. Null when the
-             *     transcription reported no duration.
-             */
-            duration_seconds?: number | null;
         };
         /** @description Which region beat, when, and which beat it was. There is nothing of yours in this body. */
         WebhookHeartbeatEventData: {
@@ -4810,13 +4568,6 @@ export interface components {
              */
             emittedAt?: string;
             /**
-             * Format: date-time
-             * @deprecated
-             * @description When we published the beat — not when we reached you. A beat we could not deliver
-             *     promptly is discarded rather than sent late, so this is always recent.
-             */
-            emitted_at?: string;
-            /**
              * @description Counts up by one per beat within `region`, and never resets. A gap is an outage window;
              *     a repeat or a rewind is a fault on our side.
              * @example 40213
@@ -4824,7 +4575,7 @@ export interface components {
             sequence?: number;
             /**
              * @description Unique to this beat and to you. It is what makes two beats two events — you do not need
-             *     to read it, and `event_id` is what you dedupe on.
+             *     to read it, and `eventId` is what you dedupe on.
              * @example 0199c1f0-1111-7000-8000-00000000000a
              */
             nonce?: string;
@@ -4863,31 +4614,14 @@ export interface components {
         PbxChangeEventData: {
             /** Format: uuid */
             intentId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            intent_id?: string;
             /** Format: uuid */
             tenantId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             */
-            tenant_id?: string;
             /**
              * Format: uuid
              * @description The deterministic id of the phone-system row the change was aimed at. Stable, and the
              *     same id the platform's own read models use for that row.
              */
             targetId?: string;
-            /**
-             * Format: uuid
-             * @deprecated
-             * @description The deterministic id of the phone-system row the change was aimed at. Stable, and the
-             *     same id the platform's own read models use for that row.
-             */
-            target_id?: string;
             /**
              * @description The phone-system table the row lives in, e.g. `sipbxdomain_subscriber_config`.
              * @example sipbxdomain_subscriber_config
@@ -4906,12 +4640,6 @@ export interface components {
              * @description When the change was accepted by the phone system, which is when the wait began.
              */
             submittedAt?: string;
-            /**
-             * Format: date-time
-             * @deprecated
-             * @description When the change was accepted by the phone system, which is when the wait began.
-             */
-            submitted_at?: string;
         };
         PbxChangeConfirmedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["PbxChangeEventData"];
@@ -5150,17 +4878,12 @@ export interface components {
         InboundMessageKind: "sms" | "mms";
         /**
          * @description One part of a picture message, DESCRIBED, as the `message.received` webhook payload carries
-         *     it — snake_case like every webhook payload. There is no image and no URL — we do not keep the
+         *     it — camelCase like every webhook payload. There is no image and no URL — we do not keep the
          *     bytes. If you need the file, ask your messaging provider.
          */
         MessageReceivedMediaPart: {
             /** @example image/jpeg */
             contentType?: string;
-            /**
-             * @deprecated
-             * @example image/jpeg
-             */
-            content_type?: string;
             /**
              * @description The part's filename, when it named one.
              * @example photo.jpg
@@ -5181,11 +4904,6 @@ export interface components {
         InboundMessageMediaPart: {
             /** @example image/jpeg */
             contentType?: string;
-            /**
-             * @deprecated
-             * @description Deprecated duplicate of `contentType`, served during the v1 naming cleanup's transition window. Read `contentType`.
-             */
-            content_type?: string;
             /**
              * @description The part's filename, when it named one.
              * @example photo.jpg
@@ -6018,12 +5736,6 @@ export interface components {
                  * @description The address the mail went to, echoed back.
                  */
                 sentTo?: string;
-                /**
-                 * Format: email
-                 * @deprecated
-                 * @description Deprecated duplicate of `sentTo`, served during the v1 naming cleanup's transition window. Read `sentTo`.
-                 */
-                sent_to?: string;
             };
         };
         /**
@@ -6285,12 +5997,6 @@ export interface components {
              * @description When the current binding lapses unless the phone system refreshes it.
              */
             expiresAt?: string | null;
-            /**
-             * Format: date-time
-             * @deprecated
-             * @description Deprecated duplicate of `expiresAt`, served during the v1 naming cleanup's transition window. Read `expiresAt`.
-             */
-            expires_at?: string | null;
         } | null;
         SipTrunkAttributes: {
             name?: string;
@@ -7039,10 +6745,8 @@ export interface components {
             meta?: components["schemas"]["ResourceMeta"];
         };
         /**
-         * @description **The old kebab-case names are still served** beside `cccId`, `byteSize`, `contentUrl` and
-         *     `expiresAt` during the rename's transition window, with the same values: `ccc-id`,
-         *     `byte-size`, `content-url`, `expires-at`. They are deprecated and not described here; read
-         *     the camelCase names. They are removed in a later, announced release.
+         * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
+         *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
          */
         RecordingAttributes: {
             /**
@@ -7149,10 +6853,8 @@ export interface components {
             text: string;
         };
         /**
-         * @description **The old kebab-case names are still served** beside `cccId`, `byteSize`, `contentUrl` and
-         *     `expiresAt` during the rename's transition window, with the same values: `ccc-id`,
-         *     `byte-size`, `content-url`, `expires-at`. They are deprecated and not described here; read
-         *     the camelCase names. They are removed in a later, announced release.
+         * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
+         *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
          */
         TranscriptAttributes: {
             /**
@@ -14233,29 +13935,29 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-a314-75d6-07d8-92031425364a",
+                 *       "eventId": "0198c4a1-a314-75d6-07d8-92031425364a",
                  *       "type": "fax.received",
-                 *       "occurred_at": "2026-08-16T11:02:31+00:00",
+                 *       "occurredAt": "2026-08-16T11:02:31+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "inbound",
                  *         "status": "received",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+13025556789",
                  *         "to": "+14075550100",
                  *         "region": "use1",
-                 *         "pages_total": 3,
-                 *         "pages_transferred": 3,
+                 *         "pagesTotal": 3,
+                 *         "pagesTransferred": 3,
                  *         "partial": false,
-                 *         "attempt_count": 1,
-                 *         "client_reference": null,
+                 *         "attemptCount": 1,
+                 *         "clientReference": null,
                  *         "tags": null,
-                 *         "created_at": "2026-08-16T11:02:20+00:00",
-                 *         "completed_at": "2026-08-16T11:02:31+00:00",
-                 *         "render_failed": false
+                 *         "createdAt": "2026-08-16T11:02:20+00:00",
+                 *         "completedAt": "2026-08-16T11:02:31+00:00",
+                 *         "renderFailed": false
                  *       }
                  *     }
                  */
@@ -14286,30 +13988,30 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-fd4a-7d5c-8035-9810682d6a03",
+                 *       "eventId": "0198c4a1-fd4a-7d5c-8035-9810682d6a03",
                  *       "type": "fax.queued",
-                 *       "occurred_at": "2026-08-16T11:02:31+00:00",
+                 *       "occurredAt": "2026-08-16T11:02:31+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "queued",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+14075550100",
                  *         "to": "+13025556789",
                  *         "region": "use1",
-                 *         "pages_total": null,
-                 *         "pages_transferred": null,
+                 *         "pagesTotal": null,
+                 *         "pagesTransferred": null,
                  *         "partial": false,
-                 *         "attempt_count": 0,
-                 *         "client_reference": "chart-4471",
+                 *         "attemptCount": 0,
+                 *         "clientReference": "chart-4471",
                  *         "tags": {
                  *           "clinic": "north"
                  *         },
-                 *         "created_at": "2026-08-16T11:02:31+00:00",
-                 *         "completed_at": null
+                 *         "createdAt": "2026-08-16T11:02:31+00:00",
+                 *         "completedAt": null
                  *       }
                  *     }
                  */
@@ -14337,30 +14039,30 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-999d-7848-b2e7-bbe702b70bbe",
+                 *       "eventId": "0198c4a1-999d-7848-b2e7-bbe702b70bbe",
                  *       "type": "fax.converting",
-                 *       "occurred_at": "2026-08-16T11:02:33+00:00",
+                 *       "occurredAt": "2026-08-16T11:02:33+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "converting",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+14075550100",
                  *         "to": "+13025556789",
                  *         "region": "use1",
-                 *         "pages_total": null,
-                 *         "pages_transferred": null,
+                 *         "pagesTotal": null,
+                 *         "pagesTransferred": null,
                  *         "partial": false,
-                 *         "attempt_count": 0,
-                 *         "client_reference": "chart-4471",
+                 *         "attemptCount": 0,
+                 *         "clientReference": "chart-4471",
                  *         "tags": {
                  *           "clinic": "north"
                  *         },
-                 *         "created_at": "2026-08-16T11:02:31+00:00",
-                 *         "completed_at": null
+                 *         "createdAt": "2026-08-16T11:02:31+00:00",
+                 *         "completedAt": null
                  *       }
                  *     }
                  */
@@ -14388,30 +14090,30 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-a9c5-7dfa-8b21-e496eb133f02",
+                 *       "eventId": "0198c4a1-a9c5-7dfa-8b21-e496eb133f02",
                  *       "type": "fax.sending",
-                 *       "occurred_at": "2026-08-16T11:03:12+00:00",
+                 *       "occurredAt": "2026-08-16T11:03:12+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "sending",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+14075550100",
                  *         "to": "+13025556789",
                  *         "region": "use1",
-                 *         "pages_total": 3,
-                 *         "pages_transferred": 0,
+                 *         "pagesTotal": 3,
+                 *         "pagesTransferred": 0,
                  *         "partial": false,
-                 *         "attempt_count": 1,
-                 *         "client_reference": "chart-4471",
+                 *         "attemptCount": 1,
+                 *         "clientReference": "chart-4471",
                  *         "tags": {
                  *           "clinic": "north"
                  *         },
-                 *         "created_at": "2026-08-16T11:02:31+00:00",
-                 *         "completed_at": null
+                 *         "createdAt": "2026-08-16T11:02:31+00:00",
+                 *         "completedAt": null
                  *       }
                  *     }
                  */
@@ -14439,30 +14141,30 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-c536-77f8-29fa-1425364a5b6c",
+                 *       "eventId": "0198c4a1-c536-77f8-29fa-1425364a5b6c",
                  *       "type": "fax.delivered",
-                 *       "occurred_at": "2026-08-16T11:06:02+00:00",
+                 *       "occurredAt": "2026-08-16T11:06:02+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "delivered",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+14075550100",
                  *         "to": "+13025556789",
                  *         "region": "use1",
-                 *         "pages_total": 3,
-                 *         "pages_transferred": 3,
+                 *         "pagesTotal": 3,
+                 *         "pagesTransferred": 3,
                  *         "partial": false,
-                 *         "attempt_count": 1,
-                 *         "client_reference": "chart-4471",
+                 *         "attemptCount": 1,
+                 *         "clientReference": "chart-4471",
                  *         "tags": {
                  *           "clinic": "north"
                  *         },
-                 *         "created_at": "2026-08-16T11:02:31+00:00",
-                 *         "completed_at": "2026-08-16T11:06:02+00:00"
+                 *         "createdAt": "2026-08-16T11:02:31+00:00",
+                 *         "completedAt": "2026-08-16T11:06:02+00:00"
                  *       }
                  *     }
                  */
@@ -14490,30 +14192,30 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-a042-7b22-8128-83269b5b6aae",
+                 *       "eventId": "0198c4a1-a042-7b22-8128-83269b5b6aae",
                  *       "type": "fax.partial",
-                 *       "occurred_at": "2026-08-16T14:21:48+00:00",
+                 *       "occurredAt": "2026-08-16T14:21:48+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-ad4e-7f76-aa5a-9d4fa78f680f",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "partial",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+14075550100",
                  *         "to": "+13025557788",
                  *         "region": "use1",
-                 *         "pages_total": 6,
-                 *         "pages_transferred": 4,
+                 *         "pagesTotal": 6,
+                 *         "pagesTransferred": 4,
                  *         "partial": true,
-                 *         "attempt_count": 2,
-                 *         "client_reference": "chart-4472",
+                 *         "attemptCount": 2,
+                 *         "clientReference": "chart-4472",
                  *         "tags": {
                  *           "clinic": "north"
                  *         },
-                 *         "created_at": "2026-08-16T14:18:02+00:00",
-                 *         "completed_at": "2026-08-16T14:21:48+00:00"
+                 *         "createdAt": "2026-08-16T14:18:02+00:00",
+                 *         "completedAt": "2026-08-16T14:21:48+00:00"
                  *       }
                  *     }
                  */
@@ -14541,30 +14243,30 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-8a0e-74d0-bb6b-f6912a204a16",
+                 *       "eventId": "0198c4a1-8a0e-74d0-bb6b-f6912a204a16",
                  *       "type": "fax.failed",
-                 *       "occurred_at": "2026-08-16T15:40:19+00:00",
+                 *       "occurredAt": "2026-08-16T15:40:19+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-a0df-7565-a317-611491d82c4b",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "failed",
-                 *         "failure_code": "no_answer",
+                 *         "failureCode": "no_answer",
                  *         "from": "+14075550100",
                  *         "to": "+13025554321",
                  *         "region": "use1",
-                 *         "pages_total": 2,
-                 *         "pages_transferred": 0,
+                 *         "pagesTotal": 2,
+                 *         "pagesTransferred": 0,
                  *         "partial": false,
-                 *         "attempt_count": 2,
-                 *         "client_reference": "chart-4473",
+                 *         "attemptCount": 2,
+                 *         "clientReference": "chart-4473",
                  *         "tags": {
                  *           "clinic": "south"
                  *         },
-                 *         "created_at": "2026-08-16T15:11:07+00:00",
-                 *         "completed_at": "2026-08-16T15:40:19+00:00"
+                 *         "createdAt": "2026-08-16T15:11:07+00:00",
+                 *         "completedAt": "2026-08-16T15:40:19+00:00"
                  *       }
                  *     }
                  */
@@ -14592,28 +14294,28 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-d684-7b7a-b815-35a1a923001a",
+                 *       "eventId": "0198c4a1-d684-7b7a-b815-35a1a923001a",
                  *       "type": "fax.cancelled",
-                 *       "occurred_at": "2026-08-16T16:02:55+00:00",
+                 *       "occurredAt": "2026-08-16T16:02:55+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-335a-710a-97ad-4f0121e05e45",
-                 *         "fax_account_id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "faxAccountId": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "direction": "outbound",
                  *         "status": "cancelled",
-                 *         "failure_code": null,
+                 *         "failureCode": null,
                  *         "from": "+14075550100",
                  *         "to": "+13025559090",
                  *         "region": "use1",
-                 *         "pages_total": 1,
-                 *         "pages_transferred": 0,
+                 *         "pagesTotal": 1,
+                 *         "pagesTransferred": 0,
                  *         "partial": false,
-                 *         "attempt_count": 1,
-                 *         "client_reference": "chart-4474",
+                 *         "attemptCount": 1,
+                 *         "clientReference": "chart-4474",
                  *         "tags": null,
-                 *         "created_at": "2026-08-16T16:02:40+00:00",
-                 *         "completed_at": "2026-08-16T16:02:55+00:00"
+                 *         "createdAt": "2026-08-16T16:02:40+00:00",
+                 *         "completedAt": "2026-08-16T16:02:55+00:00"
                  *       }
                  *     }
                  */
@@ -14641,26 +14343,26 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-e7b3-7a41-9c62-5f0d8a1b2c3d",
+                 *       "eventId": "0198c4a1-e7b3-7a41-9c62-5f0d8a1b2c3d",
                  *       "type": "message.received",
-                 *       "occurred_at": "2026-08-16T11:14:07+00:00",
+                 *       "occurredAt": "2026-08-16T11:14:07+00:00",
                  *       "data": {
                  *         "id": "0198c4a1-6f70-7182-b394-4d5e6f708192",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "kind": "mms",
                  *         "from": "+13025556789",
                  *         "to": "+14075550100",
                  *         "body": "Here is the referral form.",
                  *         "media": [
                  *           {
-                 *             "content_type": "image/jpeg",
+                 *             "contentType": "image/jpeg",
                  *             "filename": "photo.jpg",
                  *             "encoding": "base64",
                  *             "bytes": 40213
                  *           }
                  *         ],
-                 *         "received_at": "2026-08-16T11:14:07+00:00"
+                 *         "receivedAt": "2026-08-16T11:14:07+00:00"
                  *       }
                  *     }
                  */
@@ -14688,12 +14390,12 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-c8d9-7b06-9e14-7b2c3d4e5f60",
+                 *       "eventId": "0198c4a1-c8d9-7b06-9e14-7b2c3d4e5f60",
                  *       "type": "port_order.bill_extraction_settled",
-                 *       "occurred_at": "2026-08-16T09:41:12+00:00",
+                 *       "occurredAt": "2026-08-16T09:41:12+00:00",
                  *       "data": {
-                 *         "port_order_id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "portOrderId": "0198c4a1-9203-74c5-a6d7-819203142536",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
                  *         "status": "done"
                  *       }
                  *     }
@@ -14722,12 +14424,12 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e5f",
+                 *       "eventId": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e5f",
                  *       "type": "port_order.status_changed",
-                 *       "occurred_at": "2026-08-16T17:20:44+00:00",
+                 *       "occurredAt": "2026-08-16T17:20:44+00:00",
                  *       "data": {
-                 *         "port_order_id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "portOrderId": "0198c4a1-9203-74c5-a6d7-819203142536",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
                  *         "from": "awaiting_review",
                  *         "to": "submitted"
                  *       }
@@ -14757,20 +14459,20 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "6be0d8be-ef92-5045-97ff-43c277e2f1b6",
+                 *       "eventId": "6be0d8be-ef92-5045-97ff-43c277e2f1b6",
                  *       "type": "call_recording.available",
-                 *       "occurred_at": "2026-09-12T10:17:02+00:00",
+                 *       "occurredAt": "2026-09-12T10:17:02+00:00",
                  *       "data": {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
-                 *         "call_id": "20260912101500000002-00112233445566778899aabbccddeeff",
-                 *         "ccc_id": "00b1",
-                 *         "duration_seconds": 97,
-                 *         "byte_size": 1552000,
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "callId": "20260912101500000002-00112233445566778899aabbccddeeff",
+                 *         "cccId": "00b1",
+                 *         "durationSeconds": 97,
+                 *         "byteSize": 1552000,
                  *         "sha256": "abababababababababababababababababababababababababababababababab",
                  *         "superseded": false,
-                 *         "recorded_at": "2026-09-12T10:15:11+00:00",
-                 *         "ended_at": "2026-09-12T10:16:48+00:00"
+                 *         "recordedAt": "2026-09-12T10:15:11+00:00",
+                 *         "endedAt": "2026-09-12T10:16:48+00:00"
                  *       }
                  *     }
                  */
@@ -14798,64 +14500,20 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "1d3a6c02-5f21-5a44-b0c7-9e2f4471aa80",
+                 *       "eventId": "1d3a6c02-5f21-5a44-b0c7-9e2f4471aa80",
                  *       "type": "call_transcript.available",
-                 *       "occurred_at": "2026-09-12T10:21:37+00:00",
+                 *       "occurredAt": "2026-09-12T10:21:37+00:00",
                  *       "data": {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
-                 *         "recording_id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
-                 *         "customer_id": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
-                 *         "call_id": "20260912101500000002-00112233445566778899aabbccddeeff",
-                 *         "ccc_id": "00b1",
+                 *         "recordingId": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "callId": "20260912101500000002-00112233445566778899aabbccddeeff",
+                 *         "cccId": "00b1",
                  *         "language": "en-US",
-                 *         "duration_seconds": 97
+                 *         "durationSeconds": 97
                  *       }
                  *     }
                  */
-                "application/json": components["schemas"]["CallTranscriptAvailableEvent"];
-            };
-        };
-        responses: {
-            /** @description Any 2XX means you accepted it. */
-            "2XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    onCallRecordingAvailableDeprecatedName: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["CallRecordingAvailableEvent"];
-            };
-        };
-        responses: {
-            /** @description Any 2XX means you accepted it. */
-            "2XX": {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    onCallTranscriptAvailableDeprecatedName: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
                 "application/json": components["schemas"]["CallTranscriptAvailableEvent"];
             };
         };
@@ -14880,12 +14538,12 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "28bd5a88-2196-5e5d-ae52-54687a788ce3",
+                 *       "eventId": "28bd5a88-2196-5e5d-ae52-54687a788ce3",
                  *       "type": "webhook.heartbeat",
-                 *       "occurred_at": "2026-09-18T14:05:00+00:00",
+                 *       "occurredAt": "2026-09-18T14:05:00+00:00",
                  *       "data": {
                  *         "region": "usw1",
-                 *         "emitted_at": "2026-09-18T14:05:00+00:00",
+                 *         "emittedAt": "2026-09-18T14:05:00+00:00",
                  *         "sequence": 40213,
                  *         "nonce": "0199c1f0-1111-7000-8000-00000000000a",
                  *         "origin": "scheduler"
@@ -14916,19 +14574,19 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e60",
+                 *       "eventId": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e60",
                  *       "type": "pbx_change.confirmed",
-                 *       "occurred_at": "2026-09-16T01:20:44+00:00",
+                 *       "occurredAt": "2026-09-16T01:20:44+00:00",
                  *       "data": {
-                 *         "intent_id": "0198c4a1-9203-74c5-a6d7-819203142537",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "target_id": "0198c4a1-7731-5a2e-9c44-2b1908f6d3e1",
+                 *         "intentId": "0198c4a1-9203-74c5-a6d7-819203142537",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "targetId": "0198c4a1-7731-5a2e-9c44-2b1908f6d3e1",
                  *         "table": "sipbxdomain_subscriber_config",
                  *         "fields": [
                  *           "firstname",
                  *           "lastname"
                  *         ],
-                 *         "submitted_at": "2026-09-16T01:20:14+00:00"
+                 *         "submittedAt": "2026-09-16T01:20:14+00:00"
                  *       }
                  *     }
                  */
@@ -14956,18 +14614,18 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "event_id": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e61",
+                 *       "eventId": "0198c4a1-f10c-7e58-8d73-6a1b2c3d4e61",
                  *       "type": "pbx_change.stalled",
-                 *       "occurred_at": "2026-09-16T01:20:44+00:00",
+                 *       "occurredAt": "2026-09-16T01:20:44+00:00",
                  *       "data": {
-                 *         "intent_id": "0198c4a1-9203-74c5-a6d7-819203142538",
-                 *         "tenant_id": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "target_id": "0198c4a1-7731-5a2e-9c44-2b1908f6d3e1",
+                 *         "intentId": "0198c4a1-9203-74c5-a6d7-819203142538",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "targetId": "0198c4a1-7731-5a2e-9c44-2b1908f6d3e1",
                  *         "table": "sipbxdomain_domains_config",
                  *         "fields": [
                  *           "description"
                  *         ],
-                 *         "submitted_at": "2026-09-16T01:20:14+00:00"
+                 *         "submittedAt": "2026-09-16T01:20:14+00:00"
                  *       }
                  *     }
                  */
