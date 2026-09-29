@@ -880,10 +880,25 @@ export interface PbxDevicePage {
  * never an extension, a dial code or a star code. An extension is in
  * `fromExtension`, `routedByExtension` or `answeringExtension` instead.
  *
- * `hasRecording` says a recording is HELD for this call; it is not itself
- * the audio. Fetch the call's captures with
- * `pbx.callRecords.recordings(record.id)`, and a transcript the same way
- * from `pbx.callRecords.transcripts(record.id)`.
+ * -- recordingStatus AND transcriptStatus SAY WHERE THE MEDIA STANDS -------
+ * `recordingStatus` is `none`, `processing`, `available` or `failed`.
+ * `available` means a recording is HELD — it is not itself the audio: fetch
+ * the call's captures with `pbx.callRecords.recordings(record.id)`.
+ * `processing` means the phone system captured audio and it has not reached
+ * us yet (it lands about a minute after the call ends — ask again). `failed`
+ * means it had not arrived 15 minutes after the call ended; it can still
+ * become `available` later. `none` means nothing was recorded. When a call
+ * was captured more than once, the most useful answer wins.
+ *
+ * `transcriptStatus` is `none`, `requested`, `processing`, `available` or
+ * `failed`; read the transcript itself with
+ * `pbx.callRecords.transcripts(record.id)`. It is null unless your
+ * credential holds `pbx-transcripts:read`.
+ *
+ * Both are `string`, like `direction`: a value this release has no word for
+ * still arrives as itself, so match on the values you know.
+ *
+ * `hasRecording` is DEPRECATED — read `recordingStatus`.
  *
  * `fromSubscriberId` and `toSubscriberId` are the `pbx.subscribers`
  * resources on the two legs, off the `fromSubscriber` and `toSubscriber`
@@ -914,7 +929,19 @@ export interface CallRecord {
   readonly talkSeconds: number | null;
   readonly releaseCode: string | null;
   readonly releaseText: string | null;
+  /**
+   * @deprecated Read `recordingStatus`. True exactly when `recordingStatus`
+   * is `available`, so it cannot tell "on its way" from "never recorded" from
+   * "lost". The API still serves it until a later, announced release.
+   */
   readonly hasRecording: boolean | null;
+  /** `none`, `processing`, `available` or `failed`. */
+  readonly recordingStatus: string | null;
+  /**
+   * `none`, `requested`, `processing`, `available` or `failed`. Null unless
+   * your credential holds `pbx-transcripts:read`.
+   */
+  readonly transcriptStatus: string | null;
   /** Does the phone system hide this record from its own call log? */
   readonly hidden: boolean | null;
   // -- EXTENDED: served only when named in `fields` on list() ---------------
@@ -977,6 +1004,26 @@ export interface Recording {
   readonly superseded: boolean | null;
   readonly contentUrl: string | null;
   readonly expiresAt: Date | null;
+  /**
+   * The media type `contentUrl` serves: `audio/webm` (two-channel Opus — the
+   * first channel is the call's first leg, the second the other party) for
+   * new recordings, `audio/wav` for older ones. Pick a file extension from
+   * this, never from a guess.
+   */
+  readonly contentType: string | null;
+  /**
+   * Always `available` here — an item of this list is a recording the API
+   * holds. The same member, with the same vocabulary, as
+   * `CallRecord.recordingStatus`.
+   */
+  readonly recordingStatus: string | null;
+  /**
+   * The ONE call record this capture belongs to — the leg the phone system
+   * recorded. It need not be the record you read this list through. Null
+   * when that record is in a domain your credential cannot read, or the
+   * phone system has not written it yet.
+   */
+  readonly callRecordId: string | null;
   readonly raw: RawJson;
 }
 
@@ -1027,6 +1074,18 @@ export interface Transcript {
   readonly contentUrl: string | null;
   readonly expiresAt: Date | null;
   readonly segments: readonly TranscriptSegment[] | null;
+  /**
+   * The same vocabulary as `CallRecord.transcriptStatus`. `status` answers
+   * "may I ask for it?" and this answers "where is it?", so they differ in
+   * one case: after a request that ended without words, `status` is
+   * `not_requested` (you may ask again) and `transcriptStatus` is `failed`.
+   */
+  readonly transcriptStatus: string | null;
+  /**
+   * The ONE call record the capture — and so this transcript — belongs to.
+   * Same rule and same null as `Recording.callRecordId`.
+   */
+  readonly callRecordId: string | null;
   readonly raw: RawJson;
 }
 
@@ -1199,6 +1258,8 @@ export function callRecordFromResource(resource: RawJson): CallRecord {
     releaseCode: text(attributes, "releaseCode"),
     releaseText: text(attributes, "releaseText"),
     hasRecording: boolean(attributes, "hasRecording"),
+    recordingStatus: text(attributes, "recordingStatus"),
+    transcriptStatus: text(attributes, "transcriptStatus"),
     hidden: boolean(attributes, "hidden"),
     vendorId: text(attributes, "vendorId"),
     origCallId: text(attributes, "origCallId"),
@@ -1250,6 +1311,9 @@ export function recordingFromResource(resource: RawJson): Recording {
     superseded: boolean(attributes, "superseded"),
     contentUrl: text(attributes, "contentUrl"),
     expiresAt: instant(attributes["expiresAt"]),
+    contentType: text(attributes, "contentType"),
+    recordingStatus: text(attributes, "recordingStatus"),
+    callRecordId: text(attributes, "callRecordId"),
     raw: resource,
   });
 }
@@ -1284,6 +1348,8 @@ export function transcriptFromResource(resource: RawJson): Transcript {
     contentUrl: text(attributes, "contentUrl"),
     expiresAt: instant(attributes["expiresAt"]),
     segments: segmentsFrom(attributes),
+    transcriptStatus: text(attributes, "transcriptStatus"),
+    callRecordId: text(attributes, "callRecordId"),
     raw: resource,
   });
 }

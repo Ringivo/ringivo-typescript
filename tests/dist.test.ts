@@ -79,6 +79,22 @@ async function load(kind: "esm" | "cjs"): Promise<Surface> {
     : (require(DIST_CJS) as Surface);
 }
 
+describe("the built type declarations", () => {
+  it.each(["index.d.ts", "index.d.cts"])(
+    "%s marks CallRecord.hasRecording deprecated, so an editor strikes it through",
+    (file) => {
+      const declarations = readFileSync(
+        fileURLToPath(new URL(`../dist/${file}`, import.meta.url)),
+        "utf8",
+      );
+
+      expect(declarations).toMatch(
+        /\/\*\*(?:(?!\*\/)[\s\S])*@deprecated Read `recordingStatus`(?:(?!\*\/)[\s\S])*\*\/\s*readonly hasRecording: boolean \| null;/,
+      );
+    },
+  );
+});
+
 describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
   it("constructs a client", async () => {
     const { Ringivo, VERSION } = await load(kind);

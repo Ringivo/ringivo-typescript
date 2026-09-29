@@ -686,11 +686,23 @@ and `disposition` are both plain strings — the switch records one integer
 carrying the pair, and one it has no word for arrives as its own digits.
 Compare against the values you know rather than assuming there are no others.
 
+**`recordingStatus` says where the call's recording stands:** `none`,
+`processing`, `available` or `failed`. `available` means a recording is held;
+it is not itself the audio — fetch it with `recordings(call.id)`, below.
+`transcriptStatus` does the same for the transcript (`none`, `requested`,
+`processing`, `available` or `failed`), and is `null` unless your credential
+holds `pbx-transcripts:read`. Both are plain strings, like `direction`.
+
+**`hasRecording` is deprecated in 0.15.0** (your editor strikes it through).
+It is `true` exactly when `recordingStatus` is `available`, so it cannot tell
+"on its way" from "never recorded" from "lost". Read `recordingStatus`
+instead. The API still serves the old member until a later, announced release.
+
 ### Recordings and transcripts
 
 ```ts
 for (const recording of await client.pbx.callRecords.recordings(call.id)) {
-  console.log(recording.id, recording.duration, recording.contentUrl);
+  console.log(recording.id, recording.duration, recording.contentType, recording.contentUrl);
 }
 
 for (const transcript of await client.pbx.callRecords.transcripts(call.id)) {
@@ -708,6 +720,21 @@ cursor and nothing beyond the array you get back.
 links minted fresh on every call. Do not cache one past its `expiresAt` or
 hand it to anyone else — whoever holds the URL can fetch that document with
 no further authorization.
+
+**Save a recording with the extension its `contentType` names.** New
+recordings are `audio/webm` (two-channel Opus: the first channel is the call's
+first leg, the second the other party). Older ones may still be `audio/wav`.
+Do not assume `.wav`.
+
+`recording.callRecordId` and `transcript.callRecordId` name the ONE call
+record the capture belongs to — the leg the phone system recorded. It need not
+be the record you listed it through, and it is `null` when that record is in a
+domain your credential cannot read or is not written yet.
+`recording.recordingStatus` is always `available`, and
+`transcript.transcriptStatus` uses the call record's vocabulary. It differs
+from `transcript.status` in one case: after a request that ended without
+words, `status` is `not_requested` (you may ask again) and `transcriptStatus`
+is `failed`.
 
 `transcripts()` answers one item per **recording**, not one per transcript
 that exists: a capture with no words yet still appears here, as a
@@ -750,6 +777,56 @@ about too often, 3 times a day by default across all of its captures). Both
 `transcript()` reads one capture with its `segments`, the turns of the
 conversation. Until the words are ready it is a 404 whose `code` says why:
 `transcript_not_requested`, `transcript_pending` or `transcript_failed`.
+
+#### Waiting for a recording: webhooks, or polling the status
+
+A recording lands about a minute after the call ends, and a transcript later
+still. There are two ways to learn that it is ready.
+
+**Webhooks (preferred).** Subscribe an endpoint to `call_recording.available`
+and `call_transcript.available` (see [Webhook endpoints](#webhook-endpoints)).
+The event body names what arrived but carries no link to it. Read its
+`callRecordId` and ask for the media:
+
+```ts
+const event = JSON.parse(rawBody); // after verifyWebhook()
+if (event.type === "call_recording.available") {
+  const { callRecordId, callId } = event.data;
+  const recordings =
+    callRecordId !== null
+      ? await client.pbx.callRecords.recordings(callRecordId)
+      : null; // the call record was not written yet: list({ callId }) finds it
+}
+```
+
+`callRecordId` and `contentType` are new in these payloads, so they are
+**camelCase only**: they have no snake_case twin. The older members still carry
+both spellings during the naming transition window (`callId` and `call_id`, for
+example); read the camelCase ones.
+
+**Polling.** If you cannot receive webhooks, read the call record again until
+`recordingStatus` settles:
+
+```ts
+let record = await client.pbx.callRecords.get(call.id);
+for (let i = 0; i < 20 && record.recordingStatus === "processing"; i++) {
+  await new Promise((resolve) => setTimeout(resolve, 30_000));
+  record = await client.pbx.callRecords.get(call.id);
+}
+
+if (record.recordingStatus === "available") {
+  const recordings = await client.pbx.callRecords.recordings(call.id);
+} else if (record.recordingStatus === "failed") {
+  // not here 15 minutes after the call ended; treat it as lost
+} else {
+  // "none": nothing was recorded
+}
+```
+
+`failed` is not final: if a slow conversion completes later, the recording
+lands, the status becomes `available` and `call_recording.available` is sent
+as usual. Poll `transcriptStatus` the same way after `requestTranscript()`: it
+moves from `requested` to `processing` to `available` or `failed`.
 
 ### Who is on the phone system, and what is registered
 
@@ -862,7 +939,9 @@ for (const record of records.callRecords) {
 ```
 
 `callId` takes the `id` that `subscribers.call()` returned. The record appears once
-the call has ended.
+the call has ended. It also takes a leg's SIP Call-ID (`origCallId` or
+`termCallId` on a record) and the `callId` of a `call_recording.available` or
+`call_transcript.available` webhook.
 
 **The date range still applies.** The call id is matched only inside the
 months your range covers, and with no `startedAfter` or `startedBefore` that is
@@ -998,7 +1077,7 @@ decision and not a library's.
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
 | `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `ids` reads several customers by id in one request; `code` finds one customer. |
 | `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
-| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds what a click-to-dial became. |
+| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds the records that carry one call id: what a click-to-dial became, a leg's SIP Call-ID, or a recording webhook's `callId`. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
 | `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "not_requested"` or `"pending"` and every other field `null` for one with no words yet. Also NOT paginated. |

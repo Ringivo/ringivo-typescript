@@ -22,7 +22,7 @@
  *   the same text.
  */
 import { HttpResponse, http } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
 import {
@@ -32,6 +32,7 @@ import {
   TranscriptRequestLimitedError,
   TranscriptionCappedError,
 } from "./index.js";
+import type { components } from "./_generated/schema.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -107,6 +108,8 @@ function callRecordResource(attributeOverrides: Record<string, unknown> = {}): o
       releaseCode: "16",
       releaseText: "Normal Clearing",
       hasRecording: true,
+      recordingStatus: "available",
+      transcriptStatus: "none",
       hidden: false,
       ...attributeOverrides,
     },
@@ -137,6 +140,10 @@ function recordingResource(
       superseded: false,
       "content-url": `${BASE_URL}/v1/pbx/recordings-content/signed-token`,
       "expires-at": "2026-09-12T15:00:00Z",
+      // Members added after the kebab-case rename: camelCase only.
+      contentType: "audio/webm",
+      recordingStatus: "available",
+      callRecordId: CALL_RECORD_ID,
       ...attributeOverrides,
     },
   };
@@ -161,6 +168,9 @@ function transcriptResource(
       model: "nova-3",
       "content-url": `${BASE_URL}/v1/pbx/transcripts-content/signed-token`,
       "expires-at": "2026-09-12T15:00:00Z",
+      // Members added after the kebab-case rename: camelCase only.
+      transcriptStatus: "available",
+      callRecordId: CALL_RECORD_ID,
       ...attributeOverrides,
     },
   };
@@ -453,6 +463,9 @@ describe("callRecords.get", () => {
     expect(record.releaseCode).toBe("16");
     expect(record.releaseText).toBe("Normal Clearing");
     expect(record.hidden).toBe(false);
+    expect(record.recordingStatus).toBe("available");
+    expect(record.transcriptStatus).toBe("none");
+    // Deprecated, and still read off the wire until the API stops serving it.
     expect(record.hasRecording).toBe(true);
     // The extended tier was not asked for, so it is null — by design.
     expect(record.vendorId).toBeNull();
@@ -526,6 +539,72 @@ describe("callRecords.get", () => {
     expect(record.disposition).toBe("missed");
     expect(record.answeredAt).toBeNull();
     expect(record.talkSeconds).toBe(0);
+  });
+
+  it.each(["none", "processing", "available", "failed", "archived"])(
+    "reads recordingStatus %s as served, a word this SDK does not know included",
+    async (recordingStatus) => {
+      server.use(
+        http.get(CALL_RECORD_URL, () =>
+          HttpResponse.json({ data: callRecordResource({ recordingStatus }) }),
+        ),
+      );
+
+      const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
+
+      expect(record.recordingStatus).toBe(recordingStatus);
+    },
+  );
+
+  it.each(["none", "requested", "processing", "available", "failed", "archived", null])(
+    "reads transcriptStatus %s as served — null without pbx-transcripts:read",
+    async (transcriptStatus) => {
+      server.use(
+        http.get(CALL_RECORD_URL, () =>
+          HttpResponse.json({ data: callRecordResource({ transcriptStatus }) }),
+        ),
+      );
+
+      const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
+
+      expect(record.transcriptStatus).toBe(transcriptStatus);
+    },
+  );
+
+  it("reads no status, rather than a guess, from a record that carries none", async () => {
+    server.use(
+      http.get(CALL_RECORD_URL, () =>
+        HttpResponse.json({
+          data: callRecordResource({ recordingStatus: undefined, transcriptStatus: undefined }),
+        }),
+      ),
+    );
+
+    const record = await client().pbx.callRecords.get(CALL_RECORD_ID);
+
+    expect(record.recordingStatus).toBeNull();
+    expect(record.transcriptStatus).toBeNull();
+  });
+
+  it("pins the status vocabularies to the spec's", () => {
+    // Checked by `npm run typecheck`, not at run time: a spec sync that adds
+    // or renames a word fails here rather than in a caller's switch.
+    type Schemas = components["schemas"];
+    expectTypeOf<NonNullable<Schemas["CallRecordAttributes"]["recordingStatus"]>>().toEqualTypeOf<
+      "none" | "processing" | "available" | "failed"
+    >();
+    expectTypeOf<Schemas["CallRecordAttributes"]["transcriptStatus"]>().toEqualTypeOf<
+      "none" | "requested" | "processing" | "available" | "failed" | null | undefined
+    >();
+    expectTypeOf<
+      NonNullable<Schemas["RecordingAttributes"]["recordingStatus"]>
+    >().toEqualTypeOf<"available">();
+    expectTypeOf<NonNullable<Schemas["RecordingAttributes"]["contentType"]>>().toEqualTypeOf<
+      "audio/webm" | "audio/wav"
+    >();
+    expectTypeOf<NonNullable<Schemas["TranscriptAttributes"]["transcriptStatus"]>>().toEqualTypeOf<
+      "none" | "requested" | "processing" | "available" | "failed"
+    >();
   });
 
   it("passes a direction word this SDK does not know straight through", async () => {
@@ -649,7 +728,36 @@ describe("callRecords.recordings", () => {
     expect(recording?.superseded).toBe(false);
     expect(recording?.contentUrl).toBe(`${BASE_URL}/v1/pbx/recordings-content/signed-token`);
     expect(recording?.expiresAt?.toISOString()).toBe("2026-09-12T15:00:00.000Z");
+    expect(recording?.contentType).toBe("audio/webm");
+    expect(recording?.recordingStatus).toBe("available");
+    expect(recording?.callRecordId).toBe(CALL_RECORD_ID);
     expect(Object.isFrozen(recording)).toBe(true);
+  });
+
+  it.each(["audio/webm", "audio/wav"])("reads contentType %s as served", async (contentType) => {
+    server.use(
+      http.get(CALL_RECORD_RECORDINGS_URL, () =>
+        HttpResponse.json({ data: [recordingResource({ contentType })] }),
+      ),
+    );
+
+    const [recording] = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
+
+    expect(recording?.contentType).toBe(contentType);
+  });
+
+  it("reads a null callRecordId when the owning record cannot be named", async () => {
+    // Null when that record is in a domain the credential cannot read, or
+    // the phone system has not written it yet.
+    server.use(
+      http.get(CALL_RECORD_RECORDINGS_URL, () =>
+        HttpResponse.json({ data: [recordingResource({ callRecordId: null })] }),
+      ),
+    );
+
+    const [recording] = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
+
+    expect(recording?.callRecordId).toBeNull();
   });
 
   it("returns every capture in the server's own order", async () => {
@@ -739,7 +847,25 @@ describe("callRecords.transcripts", () => {
     expect(transcript?.model).toBe("nova-3");
     expect(transcript?.contentUrl).toBe(`${BASE_URL}/v1/pbx/transcripts-content/signed-token`);
     expect(transcript?.expiresAt?.toISOString()).toBe("2026-09-12T15:00:00.000Z");
+    expect(transcript?.transcriptStatus).toBe("available");
+    expect(transcript?.callRecordId).toBe(CALL_RECORD_ID);
     expect(Object.isFrozen(transcript)).toBe(true);
+  });
+
+  it("reads a failed transcript that may be asked for again", async () => {
+    // The one case where `status` and `transcriptStatus` differ.
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json({
+          data: [transcriptResource({ status: "not_requested", transcriptStatus: "failed" })],
+        }),
+      ),
+    );
+
+    const [transcript] = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    expect(transcript?.status).toBe("not_requested");
+    expect(transcript?.transcriptStatus).toBe("failed");
   });
 
   it("reads the pending state with every other field null", async () => {

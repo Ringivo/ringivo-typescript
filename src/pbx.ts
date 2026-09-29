@@ -111,9 +111,11 @@ export interface ListCallRecordsOptions {
    */
   subscriber?: string;
   /**
-   * The records of ONE click-to-dial call: pass the `id` that
-   * `pbx.subscribers.call()` returned. The call record appears once the call has
-   * ended.
+   * The records that carry ONE call id: the `id` that
+   * `pbx.subscribers.call()` returned, a leg's SIP Call-ID (`origCallId` or
+   * `termCallId` on a record), or the `callId` of a `call_recording.available`
+   * or `call_transcript.available` webhook. A click-to-dial call's record
+   * appears once the call has ended.
    *
    * **The date range still applies.** The call id is matched only inside the
    * months `startedAfter` and `startedBefore` cover, and with neither that is
@@ -123,8 +125,8 @@ export interface ListCallRecordsOptions {
    * An empty page means the call has not ended yet, it was placed outside the
    * range, or the id names no call. It is never an error.
    *
-   * One call writes two records — the phone system rings the subscriber
-   * first, then dials out — and by default the list returns the visible
+   * One click-to-dial call writes two records — the phone system rings the
+   * subscriber first, then dials out — and by default the list returns the visible
    * dial-out record. The hidden leg that rang the subscriber comes back only
    * with `includeHidden: true`.
    */
@@ -283,9 +285,11 @@ export class CallRecords {
    *
    * Hidden records are left out here and served by `get()`.
    *
-   * `callId` finds what a click-to-dial became: pass the `id` that
-   * `pbx.subscribers.call()` returned, once the call has ended. The date range above
-   * still applies to it, so name one that covers an older call.
+   * `callId` finds the records that carry one call id — what a click-to-dial
+   * became (pass the `id` that `pbx.subscribers.call()` returned, once the
+   * call has ended), a leg's SIP Call-ID, or a recording webhook's `callId`.
+   * The date range above still applies to it, so name one that covers an
+   * older call.
    *
    * Needs `pbx-call-records:read`.
    */
