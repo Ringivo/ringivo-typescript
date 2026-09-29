@@ -2485,9 +2485,14 @@ export interface paths {
          *     Do not cache a URL past its `expiresAt` or share it: anyone holding one listens to that
          *     call with no further authorization.
          *
+         *     **Only your own recordings are listed.** A recording belongs to the customer whose user had
+         *     call recording on. On a call between two customers, each customer sees the recording of its
+         *     own user's leg and never the other one's; when only one user records, the other customer
+         *     sees an empty list.
+         *
          *     **This collection is not paged.** It is the captures of one call, not a walk over a growing
          *     table, so there are no `page[...]` parameters and no `meta.page` — every recording of the
-         *     call is in the one response.
+         *     call that is yours is in the one response.
          */
         get: operations["listCallRecordRecordings"];
         put?: never;
@@ -2571,6 +2576,10 @@ export interface paths {
          *     **Every call mints fresh links and writes one audit entry per transcript**, naming who asked.
          *     Do not cache a URL past its `expiresAt` or share it: anyone holding one reads that call with
          *     no further authorization.
+         *
+         *     **Only your own recordings are listed.** A recording belongs to the customer whose user had
+         *     call recording on. On a call between two customers, each customer sees the transcript of its
+         *     own user's leg and never the other one's; asking for the other one by id answers 404.
          *
          *     **This collection is not paged.** It is the captures of one call, not a walk over a growing
          *     table, so there are no `page[...]` parameters and no `meta.page`.
