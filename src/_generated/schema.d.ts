@@ -2512,9 +2512,16 @@ export interface paths {
          *     minted, by the request that held your token. The link stops working at the `expiresAt` the
          *     list reported.
          *
-         *     The audio is streamed as `audio/wav` with `Content-Disposition: inline`. Range requests are
-         *     not supported: a `Range` header is ignored and the whole recording is returned with a 200,
-         *     so there is no seeking and no resumable download.
+         *     The audio is streamed with `Content-Disposition: inline` and the media type the recordings
+         *     list named as `contentType`: `audio/webm` (Opus) for new recordings, `audio/wav` for a
+         *     recording still held as a WAV. The file name in `Content-Disposition` ends in `.webm` or
+         *     `.wav` to match. Save the file by that type, not by a guess.
+         *
+         *     **One byte range is supported**, so a browser can seek and a download can resume. Every
+         *     answer carries `Accept-Ranges: bytes`. A `Range` of `bytes=a-b`, `bytes=a-` or `bytes=-n`
+         *     answers **206** with `Content-Range`; a range that starts at or past the end answers **416**
+         *     with `Content-Range: bytes *\/<size>`. Several ranges, another unit, a malformed range or any
+         *     `If-Range` header get the whole recording with a **200**.
          */
         get: operations["downloadRecording"];
         put?: never;
@@ -4656,6 +4663,13 @@ export interface components {
              *     corruption.
              */
             sha256?: string;
+            /**
+             * @description The media type the recording's download serves: `audio/webm` (two-channel Opus) for new
+             *     recordings, `audio/wav` for older ones. Pick a file extension from this. New in this
+             *     payload, so it has no snake_case twin.
+             * @enum {string}
+             */
+            contentType?: "audio/webm" | "audio/wav";
             /**
              * @description False on the first event for a recording, true when a longer capture has replaced the
              *     audio behind the same `id`.
@@ -7032,6 +7046,14 @@ export interface components {
              *     audio behind this id. The id does not change; the duration, size and digest do.
              */
             superseded?: boolean;
+            /**
+             * @description The media type `contentUrl` serves. New recordings are two-channel Opus in WebM
+             *     (`audio/webm`): the first channel is the call's first leg, the second channel the other
+             *     party. Older recordings may still be `audio/wav`. Pick a file extension from this, not
+             *     from a guess.
+             * @enum {string}
+             */
+            contentType?: "audio/webm" | "audio/wav";
             /**
              * Format: uri
              * @description A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
@@ -13720,7 +13742,14 @@ export interface operations {
                 /** @description Part of the signature, minted for you. Do not edit it. */
                 signature: string;
             };
-            header?: never;
+            header?: {
+                /**
+                 * @description One byte range, `bytes=a-b`, `bytes=a-` or `bytes=-n` (RFC 9110). Anything else is
+                 *     ignored and the whole recording is returned.
+                 * @example bytes=0-1
+                 */
+                Range?: string;
+            };
             path: {
                 /**
                  * @description The recording's id, from an item of `GET /v1/pbx/call-records/{callRecord}/recordings`. It
@@ -13733,12 +13762,34 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The audio itself. */
+            /** @description The whole recording. */
             200: {
                 headers: {
+                    /** @description Always `bytes`. */
+                    "Accept-Ranges"?: "bytes";
                     [name: string]: unknown;
                 };
                 content: {
+                    "audio/webm": string;
+                    "audio/wav": string;
+                };
+            };
+            /** @description The one byte range the request asked for. */
+            206: {
+                headers: {
+                    /** @description Always `bytes`. */
+                    "Accept-Ranges"?: "bytes";
+                    /**
+                     * @description The range served and the recording's full size, `bytes a-b/size`.
+                     * @example bytes 0-1/147000
+                     */
+                    "Content-Range"?: string;
+                    /** @description The number of bytes in this range. */
+                    "Content-Length"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "audio/webm": string;
                     "audio/wav": string;
                 };
             };
@@ -13766,6 +13817,25 @@ export interface operations {
              */
             404: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The range starts at or past the end of the recording. `Content-Range: bytes *\/<size>`
+             *     gives the size, so you can ask again. The error document carries no `code`.
+             */
+            416: {
+                headers: {
+                    /**
+                     * @description `bytes *\/<size>` — the recording's full size.
+                     * @example bytes *\/147000
+                     */
+                    "Content-Range"?: string;
+                    /** @description Always `bytes`. */
+                    "Accept-Ranges"?: "bytes";
                     [name: string]: unknown;
                 };
                 content: {

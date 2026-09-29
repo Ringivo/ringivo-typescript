@@ -99,6 +99,15 @@ info:
 
     ## Changes
 
+    ### Recordings may be `audio/webm` (2026-09-28)
+
+    New call recordings are two-channel Opus in WebM (`audio/webm`): the first channel is the call's
+    first leg, the second channel the other party. Older recordings may still be `audio/wav`, and
+    over time they are converted to one-channel Opus in WebM. A client that saved every recording
+    download as `.wav` must now read `contentType` on the recordings list (or `contentType` on the
+    `call_recording.available` webhook, or the download's own `Content-Type`) and save the file with
+    the matching extension. The download also answers one byte range (`206`), so a browser can seek.
+
     ### The v1 naming cleanup
 
     The names below are now camelCase, to the leaf. **The old names keep working during a transition
@@ -6593,12 +6602,27 @@ paths:
         minted, by the request that held your token. The link stops working at the `expiresAt` the
         list reported.
 
-        The audio is streamed as `audio/wav` with `Content-Disposition: inline`. Range requests are
-        not supported: a `Range` header is ignored and the whole recording is returned with a 200,
-        so there is no seeking and no resumable download.
+        The audio is streamed with `Content-Disposition: inline` and the media type the recordings
+        list named as `contentType`: `audio/webm` (Opus) for new recordings, `audio/wav` for a
+        recording still held as a WAV. The file name in `Content-Disposition` ends in `.webm` or
+        `.wav` to match. Save the file by that type, not by a guess.
+
+        **One byte range is supported**, so a browser can seek and a download can resume. Every
+        answer carries `Accept-Ranges: bytes`. A `Range` of `bytes=a-b`, `bytes=a-` or `bytes=-n`
+        answers **206** with `Content-Range`; a range that starts at or past the end answers **416**
+        with `Content-Range: bytes */<size>`. Several ranges, another unit, a malformed range or any
+        `If-Range` header get the whole recording with a **200**.
       security: []
       parameters:
         - $ref: '#/components/parameters/RecordingId'
+        - name: Range
+          in: header
+          required: false
+          description: |
+            One byte range, `bytes=a-b`, `bytes=a-` or `bytes=-n` (RFC 9110). Anything else is
+            ignored and the whole recording is returned.
+          schema: { type: string }
+          example: bytes=0-1
         - name: expires
           in: query
           required: true
@@ -6611,8 +6635,32 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: The audio itself.
+          description: The whole recording.
+          headers:
+            Accept-Ranges:
+              description: Always `bytes`.
+              schema: { type: string, enum: [bytes] }
           content:
+            audio/webm:
+              schema: { type: string, format: binary }
+            audio/wav:
+              schema: { type: string, format: binary }
+        '206':
+          description: The one byte range the request asked for.
+          headers:
+            Accept-Ranges:
+              description: Always `bytes`.
+              schema: { type: string, enum: [bytes] }
+            Content-Range:
+              description: The range served and the recording's full size, `bytes a-b/size`.
+              schema: { type: string }
+              example: bytes 0-1/147000
+            Content-Length:
+              description: The number of bytes in this range.
+              schema: { type: integer }
+          content:
+            audio/webm:
+              schema: { type: string, format: binary }
             audio/wav:
               schema: { type: string, format: binary }
         '403':
@@ -6633,6 +6681,22 @@ paths:
             and `sha256` recorded for the audio, which is metadata; this endpoint answers for the
             bytes. Retry the list, and treat a repeat as "the recording is not available" rather
             than as a transport failure.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '416':
+          description: |
+            The range starts at or past the end of the recording. `Content-Range: bytes */<size>`
+            gives the size, so you can ask again. The error document carries no `code`.
+          headers:
+            Content-Range:
+              description: '`bytes */<size>` — the recording''s full size.'
+              schema: { type: string }
+              example: bytes */147000
+            Accept-Ranges:
+              description: Always `bytes`.
+              schema: { type: string, enum: [bytes] }
           content:
             application/vnd.api+json:
               schema:
@@ -9799,6 +9863,14 @@ components:
             The SHA-256 of the audio, so you can check a download against what we recorded. A
             supersede changes this — see the operation description before treating a mismatch as
             corruption.
+        contentType:
+          type: string
+          enum: [audio/webm, audio/wav]
+          x-external-vocabulary: IANA media types
+          description: |
+            The media type the recording's download serves: `audio/webm` (two-channel Opus) for new
+            recordings, `audio/wav` for older ones. Pick a file extension from this. New in this
+            payload, so it has no snake_case twin.
         superseded:
           type: boolean
           description: |
@@ -12700,6 +12772,15 @@ components:
           description: |
             False on a first capture, true once a longer capture of the same call has replaced the
             audio behind this id. The id does not change; the duration, size and digest do.
+        contentType:
+          type: string
+          enum: [audio/webm, audio/wav]
+          x-external-vocabulary: IANA media types
+          description: |
+            The media type `contentUrl` serves. New recordings are two-channel Opus in WebM
+            (`audio/webm`): the first channel is the call's first leg, the second channel the other
+            party. Older recordings may still be `audio/wav`. Pick a file extension from this, not
+            from a guess.
         contentUrl:
           type: string
           format: uri
