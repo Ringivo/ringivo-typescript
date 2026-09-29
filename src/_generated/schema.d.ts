@@ -2464,8 +2464,12 @@ export interface paths {
          * List a call record's recordings, each with a download link
          * @description One call can be captured more than once — the phone system keys a recording by
          *     `(call id, capture id)`, and a call record names BOTH of its legs' call ids — so this
-         *     answers a **collection**, not a single link. Use it whenever `hasRecording` is true on the
-         *     call record.
+         *     answers a **collection**, not a single link. Use it whenever `recordingStatus` is
+         *     `available` on the call record.
+         *
+         *     **Each item names the ONE call record it belongs to** in `callRecordId` — the leg that was
+         *     recorded. That is not always the record you read this list through: the list matches either
+         *     of this record's call ids, and a call id can sit on two records.
          *
          *     **Each item carries its own `contentUrl`**, a time-limited link on your own API host.
          *     Follow it with a plain `GET` and **no `Authorization` header**: the signature it carries is
@@ -4593,7 +4597,9 @@ export interface components {
              */
             customer_id?: string | null;
             /**
-             * @description The switch's own call identifier. Two captures of one call share it.
+             * @description The switch's own call identifier — the SIP Call-ID of the recorded leg. Two captures of
+             *     one call share it. `filter[callId]` on `/v1/pbx/call-records` finds every record that
+             *     carries it.
              * @example 20260912101500000002-00112233445566778899aabbccddeeff
              */
             callId?: string;
@@ -4603,6 +4609,16 @@ export interface components {
              * @example 20260912101500000002-00112233445566778899aabbccddeeff
              */
             call_id?: string;
+            /**
+             * Format: uuid
+             * @description The ONE call record this recording belongs to — the `{callRecord}` of
+             *     `GET /v1/pbx/call-records/{callRecord}/recordings`. It is the record in the recording's
+             *     own domain whose call ids include `callId` and that was up when the capture opened. Null
+             *     when the phone system had not written the call record when this event was built, or
+             *     could not be asked; `filter[callId]` then finds it. camelCase only: this member has no
+             *     snake_case twin.
+             */
+            callRecordId?: string | null;
             /**
              * @description Which capture of that call this recording is.
              * @example 00b1
@@ -4713,7 +4729,8 @@ export interface components {
              */
             customer_id?: string | null;
             /**
-             * @description The switch's own call identifier. Two captures of one call share it.
+             * @description The switch's own call identifier — the SIP Call-ID of the recorded leg. Two captures of
+             *     one call share it.
              * @example 20260912101500000002-00112233445566778899aabbccddeeff
              */
             callId?: string;
@@ -4723,6 +4740,13 @@ export interface components {
              * @example 20260912101500000002-00112233445566778899aabbccddeeff
              */
             call_id?: string;
+            /**
+             * Format: uuid
+             * @description The ONE call record the recording — and so this transcript — belongs to: the same value
+             *     `call_recording.available` carried for it. Null when it could not be named when this
+             *     event was built. camelCase only: this member has no snake_case twin.
+             */
+            callRecordId?: string | null;
             /**
              * @description Which capture of that call was transcribed.
              * @example 00b1
@@ -6855,13 +6879,56 @@ export interface components {
              */
             releaseText?: string | null;
             /**
-             * @description Do we hold a recording of this call? True exactly when
-             *     `GET /v1/pbx/call-records/{id}/recordings` has at least one item to hand back. A
-             *     recording lands about a minute after the call ends, so a call that just finished reads
-             *     `false` until it does. A call the phone system never captured audio for — a cancelled
-             *     call, for one — stays `false`.
+             * @deprecated
+             * @description DEPRECATED — read `recordingStatus`. True exactly when `recordingStatus` is `available`,
+             *     which is when `GET /v1/pbx/call-records/{id}/recordings` has at least one item to hand
+             *     back. It cannot tell "on its way" from "never recorded" from "lost", and
+             *     `recordingStatus` can. It is still served, with the same value, until a later, announced
+             *     release removes it.
              */
             hasRecording?: boolean;
+            /**
+             * @description Where this call's recording stands.
+             *
+             *     - `available` — we hold a recording: `GET /v1/pbx/call-records/{id}/recordings` hands it
+             *       back.
+             *     - `processing` — the phone system captured audio and we do not hold it yet. A recording
+             *       lands about a minute after the call ends. Ask again later.
+             *     - `failed` — the phone system captured audio and it had not reached us 15 minutes after
+             *       the call ended. Treat it as lost and tell support if you need it — but it is not
+             *       final: if a slow conversion completes later, the recording lands and this becomes
+             *       `available`, and `call_recording.available` is sent as usual.
+             *     - `none` — nothing was recorded: the call was not set to record, the capture closed
+             *       with no audio, or no audio ever reached the phone system (a cancelled call, or a
+             *       forward whose audio never crossed it). Also `none` for a call from before
+             *       2026-09-17, when we began to keep recordings.
+             *
+             *     When a call was captured more than once, the most useful answer wins: `available`, then
+             *     `processing`, then `failed`.
+             * @example available
+             * @enum {string}
+             */
+            recordingStatus?: "none" | "processing" | "available" | "failed";
+            /**
+             * @description Where the transcript of this call's recording stands. **Null unless your credential
+             *     holds `pbx-transcripts:read`** — the call log alone does not say which calls have
+             *     transcripts.
+             *
+             *     - `available` — we hold the words: `GET /v1/pbx/call-records/{id}/transcripts`.
+             *     - `processing` — the phone system took the request, or sent us the audio, and the words
+             *       are not written yet.
+             *     - `requested` — you asked for it and the request has not reached the phone system yet.
+             *     - `failed` — the last request ended without words, or it was still unfinished an hour
+             *       after it last moved. You may ask again; the single-transcript endpoint says so if the
+             *       transcription gave up for good (`code: transcript_failed`).
+             *     - `none` — nobody asked, or there is no recording to transcribe.
+             *
+             *     When a call was captured more than once, the most useful answer wins: `available`, then
+             *     `processing`, `requested`, `failed`.
+             * @example none
+             * @enum {string|null}
+             */
+            transcriptStatus?: "none" | "requested" | "processing" | "available" | "failed" | null;
             /** @description Does the phone system hide this record from its own call log? */
             hidden?: boolean;
             /**
@@ -6978,6 +7045,21 @@ export interface components {
              * @description When `contentUrl` stops working. Ask for the list again to mint a fresh one.
              */
             expiresAt?: string;
+            /**
+             * @description Always `available` here — an item of this list is a recording we hold. It is the same
+             *     member, with the same vocabulary, as `recordingStatus` on the call record.
+             * @enum {string}
+             */
+            recordingStatus?: "available";
+            /**
+             * Format: uuid
+             * @description The ONE call record this recording belongs to — the leg the phone system recorded. It is
+             *     the record whose call ids include this recording's, in the domain that owns the
+             *     recording, that was up when the capture opened. It need not be the record you read this
+             *     list through. Null when that record is in a domain your credential cannot read, or the
+             *     phone system has not written it.
+             */
+            callRecordId?: string | null;
         };
         RecordingResource: {
             /** @enum {string} */
@@ -7093,6 +7175,20 @@ export interface components {
              * @description When `contentUrl` stops working. Ask for the list again to mint a fresh one.
              */
             expiresAt?: string | null;
+            /**
+             * @description Where this transcript stands — the same vocabulary as `transcriptStatus` on the call
+             *     record. `status` above answers "may I ask for it?"; this answers "where is it?", so the
+             *     two differ in one case: after a request that ended without words, `status` is
+             *     `not_requested` (you may ask again) and `transcriptStatus` is `failed`.
+             * @enum {string}
+             */
+            transcriptStatus?: "none" | "requested" | "processing" | "available" | "failed";
+            /**
+             * Format: uuid
+             * @description The ONE call record the recording — and so this transcript — belongs to. Same rule and
+             *     same null as `callRecordId` on the recordings list.
+             */
+            callRecordId?: string | null;
         };
         TranscriptResource: {
             /** @enum {string} */
@@ -13424,13 +13520,19 @@ export interface operations {
                 /** @description Calls with this PBX **subscriber id** on either leg — placed by them or taken by them. */
                 "filter[subscriber]"?: string;
                 /**
-                 * @description The records of ONE click-to-dial call — the `id` that `POST /v1/pbx/subscribers/{subscriber}/calls`
-                 *     answered with.
+                 * @description The records that carry ONE call id. Three kinds of id match:
                  *
-                 *     **One call writes two records.** The phone system rings the user first and then dials
-                 *     out, and it records each leg once the call ends. It records the leg that rang the user as
-                 *     hidden, so this list answers the outbound leg alone; add `filter[includeHidden]=true` for
-                 *     both.
+                 *     - the `id` that `POST /v1/pbx/subscribers/{subscriber}/calls` answered with (a
+                 *       click-to-dial call);
+                 *     - a leg's SIP Call-ID — `origCallId` or `termCallId` on a record;
+                 *     - the `callId` of a `call_recording.available` or `call_transcript.available` webhook,
+                 *       which is the SIP Call-ID of the recorded leg. (The webhook's `callRecordId` names that
+                 *       record directly; this finds every record that carries the id.)
+                 *
+                 *     **One click-to-dial call writes two records.** The phone system rings the user first and
+                 *     then dials out, and it records each leg once the call ends. It records the leg that rang
+                 *     the user as hidden, so this list answers the outbound leg alone; add
+                 *     `filter[includeHidden]=true` for both.
                  *
                  *     **The date range still applies.** Only the months in the range are searched — this month
                  *     and last unless you send `filter[startedAfter]` or `filter[startedBefore]` — so look up
@@ -13482,6 +13584,8 @@ export interface operations {
                      *             "releaseCode": "end",
                      *             "releaseText": "Orig: Bye",
                      *             "hasRecording": true,
+                     *             "recordingStatus": "available",
+                     *             "transcriptStatus": "none",
                      *             "hidden": false
                      *           },
                      *           "relationships": {
