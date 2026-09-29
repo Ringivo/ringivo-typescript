@@ -278,6 +278,13 @@ export interface paths {
          *     outright rather than half-obeyed. Send either `multipart/form-data` with `documents[]` file
          *     parts, or JSON whose `documents` is a list of `https` URLs — never both in one request.
          *
+         *     **An unknown member is refused.** A body member this endpoint does not know is a **400** that
+         *     names it, the same answer every other JSON:API route gives for an unknown field, and nothing is
+         *     sent. This includes the old snake_case names that were removed on 2026-09-29 (`fax_account`,
+         *     `client_reference`, `cover_page`, `coverPage.to_name`, `coverPage.from_name`). Before this, an
+         *     unknown member was dropped in silence and the fax still went out without it, so a client that
+         *     sends an extra field now gets a 400.
+         *
          *     **`Idempotency-Key` is mandatory.** A second POST carrying the same key replays the first
          *     rather than sending a second fax, and the replay is marked with an `Idempotent-Replay: true`
          *     response header. That header is the ONLY thing that tells the two apart: the body is the
@@ -1567,7 +1574,7 @@ export interface paths {
          *
          *     **The id field is required for its own kind and refused for any other**, rather than ignored:
          *     a body carrying `faxAccount` and no `targetType` would otherwise be told its PBX route
-         *     succeeded. For the same reason a member the body does not take is refused with a 422, so a
+         *     succeeded. For the same reason a member the body does not take is refused with a 400, so a
          *     body still spelled `target_type` is refused rather than routed to the phone system.
          *
          *     **The body is flat JSON, and a JSON:API document is refused with a 400.** A wrapped document
@@ -3397,7 +3404,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable";
+        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -7566,6 +7573,34 @@ export interface operations {
                     "application/json": components["schemas"]["SendFaxAccepted"];
                 };
             };
+            /**
+             * @description The body has a member this endpoint does not know. Each unknown member is its own error:
+             *     `code` is `unknown_member`, `detail` reads `The field <name> is not a supported attribute.` and `source.parameter` is
+             *     the member (`coverPage.to_name` for one inside `coverPage`). Nothing is sent.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "400",
+                     *           "code": "unknown_member",
+                     *           "title": "Non-Compliant JSON:API Document",
+                     *           "detail": "The field cover_page is not a supported attribute.",
+                     *           "source": {
+                     *             "parameter": "cover_page"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             401: components["responses"]["Unauthenticated"];
             /**
              * @description Either the credential may not create faxes, or `from` is a well-formed number this fax
@@ -11267,7 +11302,9 @@ export interface operations {
             };
             /**
              * @description The body was a JSON:API document. Send `targetType` at the top level of a flat JSON body,
-             *     or send no body at all.
+             *     or send no body at all. Or the body carries a member this endpoint does not take (the
+             *     retired `target_type` is one): each is its own error with `code: unknown_member`, `detail`
+             *     `The field <name> is not a supported attribute.` and `source.parameter` naming it.
              */
             400: {
                 headers: {
@@ -11318,8 +11355,7 @@ export interface operations {
                 };
             };
             /**
-             * @description A field you sent is wrong, and `source.pointer` names it: the body carries a member it
-             *     does not take (the retired `target_type` is one); `targetType` is not one of the
+             * @description A field you sent is wrong, and `source.pointer` names it: `targetType` is not one of the
              *     three values; `faxAccount` or `sipTrunk` is missing for its own kind, or was sent with
              *     another kind; the id names no destination of that customer's; or the destination refuses
              *     the attach — a suspended fax account, a disabled SIP trunk.
