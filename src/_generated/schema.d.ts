@@ -5008,8 +5008,11 @@ export interface components {
          *     `awaiting_signature` the number's own end user has not signed the authorization yet, so
          *     nothing has been sent and nothing will be until they do · `scheduled` it has not been sent
          *     yet · `submitted` it is with the provider · `completed` the number can text · `failed` it
-         *     ended without messaging being turned on. The two terminal values are final: a failed request
-         *     is never revived, it is retried, and a retry is a new request.
+         *     ended without messaging being turned on. The two terminal values are final with one
+         *     exception: a `failed` request the provider shows DID go through (one whose sending could not
+         *     be confirmed, or one held for review of its authorization) is corrected to what the provider
+         *     holds. Otherwise a failed request is never revived; it is retried, and a retry is a new
+         *     request.
          *
          *     `awaiting_signature` appears only on a request created by a hosted messaging order, where the
          *     number's calls are carried by another provider: the subscriber of record is then the end user
@@ -5018,15 +5021,17 @@ export interface components {
          */
         MessagingEnablementStatus: "awaiting_signature" | "scheduled" | "submitted" | "completed" | "failed";
         /**
-         * @description Why a failed request ended, in four words.
+         * @description Why a failed request ended, in five words.
          *
          *     `provider_rejected` somebody refused the authorization · `withdrawn` it was taken off before
          *     it was ever sent, which includes a number leaving a port · `submission_error` we could not
-         *     send it · `poll_gave_up` we stopped waiting for an answer. Only the first means anybody said
-         *     no; `detail` carries the sentence to show a person.
+         *     send it · `poll_gave_up` we stopped waiting for an answer · `checkout_unconfirmed` it was sent
+         *     and we could not confirm it arrived, so it may still go through — it cannot be retried, and it
+         *     is corrected when the outcome is confirmed. Only the first means anybody said no; `detail`
+         *     carries the sentence to show a person.
          * @enum {string}
          */
-        MessagingEnablementFailureCause: "provider_rejected" | "withdrawn" | "submission_error" | "poll_gave_up";
+        MessagingEnablementFailureCause: "provider_rejected" | "withdrawn" | "submission_error" | "poll_gave_up" | "checkout_unconfirmed";
         MessagingEnablementAttributes: {
             /**
              * @description The number this request is about. It is held as digits rather than as a link, so it
@@ -5045,7 +5050,8 @@ export interface components {
             stage?: number;
             /**
              * @description The one word to print beneath a progress meter — `Scheduled`, `Submitted`, `In review`,
-             *     `Active`, `Removed` or `Failed`.
+             *     `Active`, `Removed`, `Failed` or `Confirming` (a request that was sent and whose arrival is
+             *     still being confirmed).
              *
              *     **Display copy, not a vocabulary to branch on**; use `stage` and `status` for that. It is
              *     deliberately not an enum here, because it is wording we may improve.
