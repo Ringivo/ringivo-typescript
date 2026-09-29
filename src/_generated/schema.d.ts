@@ -1741,26 +1741,30 @@ export interface paths {
          * @description ## The lifecycle, in words
          *
          *     ```
-         *     draft  ⇄  awaiting_signature  →  awaiting_review  →  submitted  →  foc_assigned  →  completed
-         *                                                                                       →  failed
+         *     draft  →  awaiting_review  →  submitted  →  foc_assigned  →  completed
+         *       │                                                     →  failed
+         *       └ reads awaiting_signature while the letter is out
          *     ```
          *
-         *     A port order starts as a **`draft`**: yours to edit, yours to throw away, and shown to
-         *     nobody. **`awaiting_signature`** is the same order with the Letter of Authorization in front
-         *     of your customer — it is read-only there, because the document a stranger is reading is a
-         *     render of these fields and an edit under it would leave them signing wording nobody agreed
-         *     to. Reopening for editing returns it to `draft`, which is the one edge in this lifecycle
-         *     that goes backwards. **`awaiting_review`** is our desk's: the request is in, and from here
-         *     on it is worked rather than edited. Everything past it — `submitted` to a carrier,
+         *     A port order starts as a **`draft`**: yours to edit, yours to throw away, and not yet with
+         *     our desk. **`awaiting_signature`** is a draft whose Letter of Authorization has been handed
+         *     to your customer to sign. It is still a draft: you can edit it, upload to it, submit it or
+         *     discard it exactly as before the hand-over. An edit to a field the letter prints replaces
+         *     the letter your customer is reading, and cancels a signed one; an edit that would cancel a
+         *     signed letter is refused until you confirm it. The order reads `awaiting_signature` from the
+         *     hand-over until it is submitted, whether or not your customer has signed yet.
+         *     **`awaiting_review`** is our desk's: the request is in, and from here on it is worked rather
+         *     than edited. Our desk can return it to `draft` with a note, which is the one edge in this
+         *     lifecycle that goes backwards. Everything past it — `submitted` to a carrier,
          *     `foc_assigned` once one commits to a cutover date, then `completed` or `failed` — is us
          *     working the port.
          *
-         *     **No operation on this API moves an order into `awaiting_signature` or back out of it.**
-         *     What this API does owe you is how an order in that state behaves here, and every operation
-         *     below says so: an edit beyond a rename answers **409**, and `submit` is still accepted.
+         *     **No operation on this API hands the letter over.** An order reads `awaiting_signature`
+         *     after the hand-over in the portal, and `port_order.status_changed` reports the move
+         *     (`draft` → `awaiting_signature`) like any other.
          *
-         *     **The numbers share the lifecycle, except that one state.** A port splits — a carrier can
-         *     commit to three lines and refuse the fourth — so each number carries its own status in
+         *     **The numbers share the lifecycle, except `awaiting_signature`.** A port splits — a carrier
+         *     can commit to three lines and refuse the fourth — so each number carries its own status in
          *     `numberStates`, and a number has no paperwork of its own, so it stays `draft` until the
          *     order enters review.
          *
@@ -1812,7 +1816,8 @@ export interface paths {
          *
          *     **Only a draft.** Anything from `awaiting_review` onward is a **409**: past that gate the row
          *     is our record of what we actually sent, so an order that reached our desk is FAILED with a
-         *     reason rather than removed. An order locked for signature is reopened first.
+         *     reason rather than removed. An order that reads `awaiting_signature` is a draft, and is
+         *     discarded like one.
          */
         delete: operations["deletePortOrder"];
         options?: never;
@@ -1875,10 +1880,9 @@ export interface paths {
          *     nobody's transcription. The carve-out is tested on the whole payload, so a snapshot field
          *     riding along with a new label is not a rename.
          *
-         *     The two refusals read differently on purpose. In `awaiting_signature` the order is locked
-         *     while your customer signs and the way out is to reopen it. Past `awaiting_review` the
-         *     refusal is permanent: our desk works from what was actually filed, so a wrong order is
-         *     failed and a new one opened rather than edited underneath a carrier.
+         *     An order that reads `awaiting_signature` is a draft, so it is edited like one. Past
+         *     `awaiting_review` the refusal is permanent: our desk works from what was actually filed, so
+         *     a wrong order is failed and a new one opened rather than edited underneath a carrier.
          *
          *     Read-only attributes behave the way they do everywhere on this surface: echo the value you
          *     were given and it passes, send a different one and it is a **422** naming the field.
@@ -1906,9 +1910,9 @@ export interface paths {
          *     background, whether your numbers can move — which is not a thing to put behind a field
          *     assignment.
          *
-         *     **Legal from `draft` and from `awaiting_signature`**, and from nowhere else: a 409 otherwise.
-         *     Signing does not submit an order for you; you still send this, from wherever the order
-         *     stands.
+         *     **Legal from `draft`** — including an order that reads `awaiting_signature` — and from
+         *     nowhere else: a 409 otherwise. Signing does not submit an order for you; you still send
+         *     this, from wherever the order stands.
          *
          *     It answers **200 and not 202**. The transition is finished by the time you read the
          *     response: the order is in `awaiting_review`. The carrier questions are asked in the background
@@ -2047,8 +2051,9 @@ export interface paths {
          *     is written, and a named one in a document you can open would tell your customer who we file
          *     through.
          *
-         *     Legal in `draft` and in `awaiting_signature` — regenerating is exactly what a locked order
-         *     whose brand or wording moved underneath it needs. A **409** anywhere else.
+         *     Legal in `draft`, including an order that reads `awaiting_signature` — regenerating is
+         *     exactly what a letter out for signature needs when its brand or wording moved underneath
+         *     it. A **409** anywhere else.
          */
         post: operations["generatePortOrderLoa"];
         delete?: never;
@@ -2093,7 +2098,7 @@ export interface paths {
          *     read any. The one exception is the letter being signed, which is displayed because that is
          *     the task.
          *
-         *     Intake states only — `draft` or `awaiting_signature` — and a **409** anywhere else, along
+         *     Drafts only — including one that reads `awaiting_signature` — and a **409** anywhere else, along
          *     with a 409 if your reseller account has no canonical domain to serve the page from. That
          *     check runs BEFORE anything is minted, so a refusal never spends your live link.
          */
@@ -2135,8 +2140,8 @@ export interface paths {
          *     your customer has already uploaded or signed is lost: the ORDER keeps its paperwork, and
          *     only the door changes.
          *
-         *     Same rules as the endpoint it replaces the link for: intake states only (`draft` or
-         *     `awaiting_signature`, a **409** anywhere else), a 409 if your reseller account has no
+         *     Same rules as the endpoint it replaces the link for: drafts only (including one that reads
+         *     `awaiting_signature`; a **409** anywhere else), a 409 if your reseller account has no
          *     canonical domain, and a fresh 90-day expiry stamped now. The canonical-domain check runs
          *     BEFORE anything is minted, so a refusal never shuts your customer's door for nothing.
          */
@@ -2902,7 +2907,10 @@ export interface webhooks {
         /**
          * A port order moved from one status to another
          * @description Fired when an existing order changes status, with both ends of the move in the body. A
-         *     CREATED ORDER FIRES NOTHING: there is no `from` to name.
+         *     CREATED ORDER FIRES NOTHING: there is no `from` to name. Both ends are the `status` the
+         *     order reads on `GET /v1/port-orders/{portOrder}`, so handing the Letter of Authorization to
+         *     your customer fires `draft` → `awaiting_signature`, and submitting that order fires
+         *     `awaiting_signature` → `awaiting_review`.
          *
          *     **Four keys, and never the contents of the order.** No customer name, no numbers, no
          *     port-out PIN. Read `GET /v1/port-orders/{portOrder}` with your own credential when you want
@@ -5224,15 +5232,17 @@ export interface components {
             };
         };
         /**
-         * @description Where an order stands. `draft` is yours to edit; `awaiting_signature` is the same order
-         *     locked while your customer signs the Letter of Authorization, and an edit returns it to
-         *     `draft`; `awaiting_review` is with our desk; `submitted` means the paperwork went to a
-         *     carrier; `foc_assigned` means one committed to a cutover date; `completed` and `failed` are
-         *     the two ends.
+         * @description Where an order stands. `draft` is yours to edit; `awaiting_signature` is a draft whose
+         *     Letter of Authorization is with your customer to sign — still yours to edit, and it reads
+         *     this way from the hand-over until you submit it; `awaiting_review` is with our desk;
+         *     `submitted` means the paperwork went to a carrier; `foc_assigned` means one committed to a
+         *     cutover date; `completed` and `failed` are the two ends.
          *
          *     **The order and each of its numbers share this vocabulary, except `awaiting_signature`.**
          *     That one is the order's alone: it is a fact about the paperwork, and a number has none of
-         *     its own — so a number stays `draft` until the order enters review.
+         *     its own — so a number stays `draft` until the order enters review. `filter[status]` takes
+         *     the same words: `awaiting_signature` selects the drafts whose letter is out, and `draft`
+         *     the ones whose letter is not.
          * @enum {string}
          */
         PortOrderStatus: "draft" | "awaiting_signature" | "awaiting_review" | "submitted" | "foc_assigned" | "completed" | "failed";
@@ -5533,8 +5543,10 @@ export interface components {
             detailsConfirmedAt?: string | null;
             /**
              * Format: date-time
-             * @description When the letter went to your customer. Not the request link's own age — a link is minted
-             *     for the bill task days earlier and survives a reopen.
+             * @description When the letter went to your customer — the moment the order started to read
+             *     `awaiting_signature`. Not the request link's own age: a link is minted for the bill task
+             *     days earlier. It clears when our desk returns the order to `draft`, because the letter
+             *     it dated is no longer out.
              */
             signatureRequestedAt?: string | null;
             billExtraction?: components["schemas"]["PortOrderBillExtraction"];
