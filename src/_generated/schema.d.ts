@@ -2955,12 +2955,17 @@ export interface webhooks {
          *     the first time. A digest that no longer matches a copy you already downloaded is this, not a
          *     corrupted download. The replacement happens at most once per recording.
          *
+         *     **A format conversion is announced the same way.** Older recordings are converted from WAV to
+         *     one-channel Opus in WebM. When that happens the bytes behind the SAME recording change, and
+         *     we send this event again with the new `sha256`, `byte_size` and `contentType`; `superseded`
+         *     keeps the value it had. Fetch the audio again if you keep a copy.
+         *
          *     **One call can produce more than one recording.** Each is a separate capture with its own
          *     `ccc_id` and its own event; `call_id` is what ties them to the same call.
          *
          *     **You are told once per change, and never once per retry.** We send this event when a
-         *     recording first arrives and when a supersede changes the audio behind it — nothing else
-         *     raises it, and re-processing an announcement we have already handled sends nothing. If one
+         *     recording first arrives, when a supersede changes the audio behind it, and when we convert
+         *     its format — nothing else raises it, and re-processing an announcement we have already handled sends nothing. If one
          *     does reach you twice, both copies carry the same `event_id`, because for this event the id
          *     is derived from the recording and the `sha256` rather than minted per send. Dedupe on it,
          *     as the envelope says.
@@ -4650,17 +4655,17 @@ export interface components {
              *     `byte_size` still describes the bytes.
              */
             duration_seconds?: number | null;
-            /** @description The size of the audio we hold. A supersede changes this. */
+            /** @description The size of the audio we hold. A supersede or a format conversion changes this. */
             byteSize?: number;
             /**
              * @deprecated
-             * @description The size of the audio we hold. A supersede changes this.
+             * @description The size of the audio we hold. A supersede or a format conversion changes this.
              */
             byte_size?: number;
             /**
              * @description The SHA-256 of the audio, so you can check a download against what we recorded. A
-             *     supersede changes this — see the operation description before treating a mismatch as
-             *     corruption.
+             *     supersede or a format conversion changes this — see the operation description before
+             *     treating a mismatch as corruption.
              */
             sha256?: string;
             /**
@@ -7055,7 +7060,8 @@ export interface components {
             byteSize?: number;
             /**
              * @description The SHA-256 of the audio, so you can check a download against what we recorded. A
-             *     supersede changes it — see `superseded` before treating a mismatch as corruption.
+             *     supersede changes it (see `superseded`), and so does converting an older recording from
+             *     WAV to Opus (see `contentType`) — neither is corruption.
              */
             sha256?: string;
             /**
