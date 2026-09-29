@@ -2987,6 +2987,15 @@ export interface webhooks {
          *     **One call can produce more than one recording.** Each is a separate capture with its own
          *     `cccId` and its own event; `callId` is what ties them to the same call.
          *
+         *     **Find the call record by `callId`, not by `callRecordId`.** Ask
+         *     `GET /v1/pbx/call-records?filter[callId]={callId}&filter[customer]={customerId}`, with
+         *     `filter[startedAfter]` and `filter[startedBefore]` around the call. Expect a list: one call
+         *     record for each domain that saw the call, and sometimes two in one domain. The list can be
+         *     empty for a few minutes, because the phone system writes the call record when the call ends;
+         *     ask again until it is not, for up to 10 minutes after `occurredAt`. `callRecordId` is a
+         *     best-effort value, looked up once when this event was built. It can be null, and it is never
+         *     sent again. It is deprecated and still sent.
+         *
          *     **You are told once per change, and never once per retry.** We send this event when a
          *     recording first arrives, when a supersede changes the audio behind it, and when we convert
          *     its format — nothing else raises it, and re-processing an announcement we have already
@@ -3035,6 +3044,12 @@ export interface webhooks {
          *     system's own setting, not ours, and a recording we could not transcribe produces no event
          *     at all rather than an empty one. So treat the absence of this event as "no transcript",
          *     never as "not yet".
+         *
+         *     **Find the call record by `callId`, not by `callRecordId`**, the same way as for
+         *     `call_recording.available`:
+         *     `GET /v1/pbx/call-records?filter[callId]={callId}&filter[customer]={customerId}`, with a date
+         *     range around the call. Expect a list, and ask again while it is empty. `callRecordId` is
+         *     deprecated and still sent.
          *
          *     **`durationSeconds` is the audio's length as the transcription measured it**, which can
          *     differ by a second or so from the same figure on `call_recording.available` — they are two
@@ -4471,7 +4486,9 @@ export interface components {
             callId?: string;
             /**
              * Format: uuid
-             * @description The ONE call record this recording belongs to — the `{callRecord}` of
+             * @deprecated
+             * @description DEPRECATED — find the call record with `filter[callId]` (see the event's description).
+             *     Still sent. The ONE call record this recording belongs to — the `{callRecord}` of
              *     `GET /v1/pbx/call-records/{callRecord}/recordings`. It is the record in the recording's
              *     own domain whose call ids include `callId` and that was up when the capture opened. Null
              *     when the phone system had not written the call record when this event was built, or
@@ -4555,9 +4572,11 @@ export interface components {
             callId?: string;
             /**
              * Format: uuid
-             * @description The ONE call record the recording — and so this transcript — belongs to: the same value
-             *     `call_recording.available` carried for it. Null when it could not be named when this
-             *     event was built.
+             * @deprecated
+             * @description DEPRECATED — find the call record with `filter[callId]` (see the event's description).
+             *     Still sent. The ONE call record the recording — and so this transcript — belongs to: the
+             *     same value `call_recording.available` carried for it. Null when it could not be named
+             *     when this event was built.
              */
             callRecordId?: string | null;
             /**
@@ -13330,8 +13349,10 @@ export interface operations {
                  *       click-to-dial call);
                  *     - a leg's SIP Call-ID — `origCallId` or `termCallId` on a record;
                  *     - the `callId` of a `call_recording.available` or `call_transcript.available` webhook,
-                 *       which is the SIP Call-ID of the recorded leg. (The webhook's `callRecordId` names that
-                 *       record directly; this finds every record that carries the id.)
+                 *       which is the SIP Call-ID of the recorded leg. This is the way to find a webhook's call
+                 *       record; its deprecated `callRecordId` can be null. It also finds the call record of a
+                 *       recording the second phone-system core made, when the call moved between our two
+                 *       cores.
                  *
                  *     **One click-to-dial call writes two records.** The phone system rings the user first and
                  *     then dials out, and it records each leg once the call ends. It records the leg that rang
