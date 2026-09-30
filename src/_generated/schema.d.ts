@@ -3075,6 +3075,61 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "call_record.completed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A call ended and its call record is ready to read
+         * @description Fired once for each call record the phone system writes: when a call ends, a few seconds
+         *     after it is released. `data` is the call record itself, in the shape
+         *     `GET /v1/pbx/call-records/{id}` answers, so you do not have to ask for it.
+         *
+         *     **Match a click-to-dial without a second request.** `data.callId` is the id
+         *     `POST /v1/pbx/subscribers/{subscriber}/calls` answered, and it is null for a call that was not
+         *     placed that way. `data.origCallId` and `data.termCallId` are the SIP call-ids of the two legs;
+         *     one of them is the `callId` a `call_recording.available` for this call carries.
+         *     `filter[callId]` on `GET /v1/pbx/call-records` matches all three.
+         *
+         *     **What `data` leaves out, and where to find it.** The rest of the EXTENDED tier is not sent,
+         *     as a request that names no `fields[call-records]` does not get it. Nor are `hasRecording`,
+         *     `recordingStatus` and `transcriptStatus`: when this event is sent they are not settled — the
+         *     recording lands about a minute after the call ends, so `none` and `processing` can still
+         *     change. Subscribe to `call_recording.available` and `call_transcript.available` to hear when
+         *     they change. The `fromSubscriber` and `toSubscriber` relationships are not sent either: match
+         *     a subscriber by `domain` with `fromExtension` or `answeringExtension`. `data.id` is the call
+         *     record's id, and `GET` on it answers all of these.
+         *
+         *     **One event per call record your call log shows.** The phone system writes one call record for
+         *     each domain a call touches, and sometimes two in one domain. Each has its own `data.id` and
+         *     its own `eventId`, and you are called only for the ones on your customers' domains. A record
+         *     the phone system HIDES from its own call log raises no event — the same records
+         *     `GET /v1/pbx/call-records` leaves out unless you send `filter[includeHidden]=true`. So one
+         *     click-to-dial, which writes a hidden ring leg and the dial-out leg, is one event.
+         *
+         *     **You may hear about one call record twice. Dedupe on `eventId`.** We keep a copy of every
+         *     event in two regions, so that either can send it. When the sending region changes, the new
+         *     one sends again the events of the last few seconds, and each copy carries the SAME
+         *     `eventId`. So does a retry. The id is derived from the call record, never minted per send.
+         *
+         *     **Scope: `tenant` and `customer`.** A call record belongs to the customer whose domain it is
+         *     on. A call record on a domain that is not one of your customers' raises no event.
+         *
+         *     `occurredAt` is the moment the call was released — `data.releasedAt` — and never the moment
+         *     we reached you.
+         */
+        post: operations["onCallRecordCompleted"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "webhook.heartbeat": {
         parameters: {
             query?: never;
@@ -3462,7 +3517,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call_recording.available" | "call_transcript.available" | "webhook.heartbeat";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call_recording.available" | "call_transcript.available" | "call_record.completed" | "webhook.heartbeat";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -4635,6 +4690,81 @@ export interface components {
         };
         CallTranscriptAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["CallTranscriptAvailableEventData"];
+        };
+        /**
+         * @description The call record, in the shape `GET /v1/pbx/call-records/{id}` answers: its `id`, its
+         *     `customer` as `customerId`, the call ids, then the STANDARD attributes, each exactly as that
+         *     resource serves it (`CallRecordAttributes` describes every one). Left out: the rest of the
+         *     EXTENDED tier, `hasRecording`, `recordingStatus`, `transcriptStatus`, and the two subscriber
+         *     relationships — see the event's own description for why and where to find them.
+         */
+        CallRecordCompletedEventData: {
+            /**
+             * Format: uuid
+             * @description The call record's id — the same id `GET /v1/pbx/call-records/{id}` takes.
+             */
+            id: string;
+            /**
+             * Format: uuid
+             * @description The customer whose domain the call is on.
+             */
+            customerId: string;
+            /**
+             * @description The id `POST /v1/pbx/subscribers/{subscriber}/calls` answered when this call was placed
+             *     as a click-to-dial. Null for any other call.
+             */
+            callId?: string | null;
+            /** @description The SIP Call-ID of the originating leg — the extended member of the same name. */
+            origCallId?: string | null;
+            /** @description The SIP Call-ID of the terminating leg — the extended member of the same name. */
+            termCallId?: string | null;
+            direction?: components["schemas"]["CallDirection"];
+            disposition?: components["schemas"]["CallDisposition"];
+            /**
+             * Format: uuid
+             * @description The reseller the customer belongs to.
+             */
+            tenantId: string;
+            /** @description The phone system domain the call is on. */
+            domain: string;
+            /** @description The phone system territory the domain belongs to. */
+            territory?: string | null;
+            /** @description As on the call-record resource: E.164 or null. */
+            fromNumber?: string | null;
+            /** @description As on the call-record resource. */
+            fromExtension?: string | null;
+            /** @description As on the call-record resource. */
+            fromName?: string | null;
+            /** @description As on the call-record resource: E.164 or null. */
+            toNumber?: string | null;
+            /** @description As on the call-record resource: E.164 or null. */
+            dialedNumber?: string | null;
+            /** @description As on the call-record resource. */
+            routedByExtension?: string | null;
+            /** @description As on the call-record resource. */
+            answeringExtension?: string | null;
+            /** Format: date-time */
+            startedAt?: string | null;
+            /**
+             * Format: date-time
+             * @description Null when nobody answered.
+             */
+            answeredAt?: string | null;
+            /** Format: date-time */
+            releasedAt?: string | null;
+            /** @description Seconds, end to end. */
+            durationSeconds?: number | null;
+            /** @description Seconds anybody was actually talking. */
+            talkSeconds?: number | null;
+            /** @description The phone system's own code for how the call ended. */
+            releaseCode?: string | null;
+            /** @description The phone system's own sentence for how the call ended. */
+            releaseText?: string | null;
+            /** @description Does the phone system hide this record from its own call log? */
+            hidden?: boolean;
+        };
+        CallRecordCompletedEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["CallRecordCompletedEventData"];
         };
         MessageReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["MessageReceivedEventData"];
@@ -14593,6 +14723,62 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["CallTranscriptAvailableEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onCallRecordCompleted: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "eventId": "cb31ddae-1e36-5d6f-a7f1-af191e5cbcaf",
+                 *       "type": "call_record.completed",
+                 *       "occurredAt": "2026-09-12T14:01:04+00:00",
+                 *       "data": {
+                 *         "id": "a2b0f2c4-6c1e-5d7a-9f3e-0b1c2d3e4f50",
+                 *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
+                 *         "callId": null,
+                 *         "origCallId": "0gQAAC8WAAACBAAALxYAAB2vwxs7m1m7@carrier.example",
+                 *         "termCallId": "20260912140000000001-9e8d7c6b5a4f3e2d1c0b",
+                 *         "direction": "inbound",
+                 *         "disposition": "answered",
+                 *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
+                 *         "domain": "acme.example",
+                 *         "territory": "acme-reseller",
+                 *         "fromNumber": "+17406495415",
+                 *         "fromExtension": null,
+                 *         "fromName": "WIRELESS CALLER",
+                 *         "toNumber": "+17402084385",
+                 *         "dialedNumber": "+17402084385",
+                 *         "routedByExtension": null,
+                 *         "answeringExtension": "101",
+                 *         "startedAt": "2026-09-12T14:00:00Z",
+                 *         "answeredAt": "2026-09-12T14:00:04Z",
+                 *         "releasedAt": "2026-09-12T14:01:04Z",
+                 *         "durationSeconds": 64,
+                 *         "talkSeconds": 60,
+                 *         "releaseCode": "end",
+                 *         "releaseText": "Orig: Bye",
+                 *         "hidden": false
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["CallRecordCompletedEvent"];
             };
         };
         responses: {
