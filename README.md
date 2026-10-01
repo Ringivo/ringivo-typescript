@@ -751,12 +751,14 @@ each `TranscriptSegment` has a `channel` (0 or 1; 0 on a mono recording).
 `cccId` is removed from `Recording`. `Transcript.status` is deprecated: read
 `transcriptStatus`. Faxes: `send()`, `cancel()`, `mediaLink()` and
 `thumbnailLink()` now ask for JSON:API, and `MediaLink` gains `id`, `kind` and
-`contentType`.
+`contentType` (`null` when an older server answers). Code that reads a removed
+field, or BUILDS a `MediaLink` or `Transcript` value itself, no longer
+type-checks: remove the reads, and add the new members (`null` is allowed).
 
 `transcripts()` answers one item per **recording**, not one per transcript
 that exists: a capture with no words yet still appears here, as a
-`Transcript` with `status: "not_requested"` or `"pending"` and every other
-field `null`, so you can tell "no transcript yet" from "no recording at all".
+`Transcript` with `transcriptStatus` of `none` or `requested`, no `segments` and
+no `channels`, so you can tell "no transcript yet" from "no recording at all".
 Needs `pbx-call-records:read` to fetch the call at all, and
 `pbx-transcripts:read` — a separate grant, because the words of a call are
 searchable and cheap to mine at scale in a way the call log itself is not —

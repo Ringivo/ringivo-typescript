@@ -2686,6 +2686,10 @@ export interface paths {
          *     capture, which is why the list does not do it for captures you did not ask about. There is
          *     no download of the stored document: the words are served only in this API's own shape.
          *
+         *     **Every read is recorded.** Each transcript with words that a response hands you writes one
+         *     entry to your audit trail, naming who asked — on this list and on the single-transcript
+         *     read alike.
+         *
          *     **Only your own recordings are listed.** A recording belongs to the customer whose user had
          *     call recording on. On a call between two customers, each customer sees the transcript of its
          *     own user's leg and never the other one's; asking for the other one by id answers 404.
