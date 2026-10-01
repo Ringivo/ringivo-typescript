@@ -7032,6 +7032,8 @@ export interface components {
         /**
          * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
          *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
+         *     `provider` and `model` were removed on 2026-10-01: which speech-to-text service made a
+         *     transcript is not part of the API.
          */
         TranscriptAttributes: {
             /**
@@ -7073,18 +7075,6 @@ export interface components {
              *     Null unless `status` is `ready`.
              */
             sha256?: string | null;
-            /**
-             * @description Which speech-to-text service produced this transcript. `stub` marks a canned transcript
-             *     made for a platform test call, never for a real customer's call. Null unless `status` is
-             *     `ready`.
-             * @example deepgram
-             */
-            provider?: string | null;
-            /**
-             * @description Which of that service's models produced it. Null unless `status` is `ready`.
-             * @example nova-3
-             */
-            model?: string | null;
             /**
              * Format: uri
              * @description A time-limited download URL on your own API host for the provider's own response
@@ -13821,8 +13811,6 @@ export interface operations {
                      *             "duration": 97,
                      *             "byteSize": 18422,
                      *             "sha256": "abababababababababababababababababababababababababababababababab",
-                     *             "provider": "deepgram",
-                     *             "model": "nova-3",
                      *             "contentUrl": "https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
                      *             "expiresAt": "2026-09-17T11:07:31+00:00"
                      *           }
@@ -13837,8 +13825,6 @@ export interface operations {
                      *             "duration": null,
                      *             "byteSize": null,
                      *             "sha256": null,
-                     *             "provider": null,
-                     *             "model": null,
                      *             "contentUrl": null,
                      *             "expiresAt": null
                      *           }
@@ -13903,8 +13889,6 @@ export interface operations {
                      *           "duration": 97,
                      *           "byteSize": 18422,
                      *           "sha256": "abababababababababababababababababababababababababababababababab",
-                     *           "provider": "deepgram",
-                     *           "model": "nova-3",
                      *           "contentUrl": "https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
                      *           "expiresAt": "2026-09-17T11:07:31+00:00",
                      *           "segments": [
@@ -13993,8 +13977,6 @@ export interface operations {
                      *           "duration": null,
                      *           "byteSize": null,
                      *           "sha256": null,
-                     *           "provider": null,
-                     *           "model": null,
                      *           "contentUrl": null,
                      *           "expiresAt": null
                      *         }
