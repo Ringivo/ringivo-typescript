@@ -2636,7 +2636,8 @@ export interface paths {
          *
          *     **The answer tells you now when the transcript cannot come.** No audio for the capture
          *     answers `409 recording_audio_missing`; an account that has made its daily number of
-         *     transcript requests (100 per UTC day by default, counted across all of its customers)
+         *     transcript requests, only where a daily limit is configured (there is none by default; a
+         *     configured limit counts per UTC day across all of an account's customers)
          *     answers `429 transcription_daily_limit_reached` with `Retry-After` and the meter in the
          *     error's `meta`; a call already asked about the maximum number
          *     of times in the window (3 a day by default, counted across all of the call's captures)
@@ -14014,7 +14015,8 @@ export interface operations {
                 };
             };
             /**
-             * @description Your account has made its transcript requests for today
+             * @description Only where a daily limit is configured (there is none by default), your account has
+             *     made its transcript requests for today
              *     (`code: transcription_daily_limit_reached`): `Retry-After` gives the seconds until the
              *     count resets at 00:00 UTC, and the error's `meta` carries `limit`, `used` and `resetsAt`.
              *     Only requests that were accepted count, and a request that later failed gives its place
