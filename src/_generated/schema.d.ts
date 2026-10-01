@@ -389,7 +389,8 @@ export interface paths {
          *     list screen asks for a preview from a different place in your code than the one that
          *     downloads a fax.
          *
-         *     Follow `url` the same way — a plain `GET`, no `Authorization` header.
+         *     Follow `contentUrl` (or `url`, in the deprecated body) the same way — a plain `GET`, no
+         *     `Authorization` header.
          */
         get: operations["getFaxThumbnail"];
         put?: never;
@@ -1142,6 +1143,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/available-numbers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search the numbers you can buy
+         * @description Numbers the carriers can sell you now, each with the `offerToken` you spend to buy it with
+         *     `POST /v1/number-orders`. An offer is the carriers' answer to this one search, not a stored
+         *     record, so there is no `GET` by id: search again for fresh offers.
+         *
+         *     **Search one way at a time.** By area code (`filter[npa]`, and `filter[nxx]` for one
+         *     exchange), by place (`filter[state]`, and `filter[rateCenter]` within it), or toll-free
+         *     (`filter[tollFree]=true`, with `filter[npa]` as the toll-free prefix). Mixing the area-code
+         *     and place searches is refused with a 422 that names the parameter.
+         *
+         *     **A query key this search does not have is refused, never ignored.** A dropped filter would
+         *     widen the search and offer numbers you did not ask for. The bare keys this endpoint took
+         *     before 2026-10-01 (`npa`, `toll_free`, `rate_center`, `quantity`, …) are refused the same way.
+         */
+        get: operations["searchAvailableNumbers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/number-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Buy numbers you found with the availability search
+         * @description Buy up to 25 numbers by the `offerToken`s `GET /v1/available-numbers` handed you.
+         *
+         *     It answers **202**: the numbers are yours and in your inventory at once, each `pending`, and
+         *     the carrier activates them in the background. Read a number back at
+         *     `GET /v1/phone-numbers/{phoneNumber}` to see it become `active`. Do not send the order again
+         *     to hurry it — a second order is a second purchase.
+         */
+        post: operations["orderNumbers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read your rate sheet
+         * @description Every rate you are charged, one `rates` resource per rate. Each tier's `amount` is YOUR price:
+         *     a price agreed for your account where there is one, the standard price otherwise. The list is
+         *     ordered by category, then by service name.
+         *
+         *     **Not paged.** It is one rate sheet, not a walk over a growing table.
+         */
+        get: operations["listRates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read where you may place a customer
+         * @description The values `POST /v1/customers` accepts for `dataResidencyCountry` and `regionPreference`:
+         *     one `regions` resource per country a customer's data may be kept in, whose `id` is the
+         *     country code and whose `options` are the primary regions you may choose there.
+         *
+         *     **It is about your account.** The leading `partner_default` option appears only when your
+         *     own default region is in that country, labelled with the region it resolves to today. A
+         *     country where no region can take a customer yet is not listed.
+         *
+         *     **Not paged.** The list is a handful of countries.
+         */
+        get: operations["listRegions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/number-lookups": {
         parameters: {
             query?: never;
@@ -1172,9 +1281,10 @@ export interface paths {
          *     proxies, prefetchers and retry logic are entitled to repeat one — and each repeat would be
          *     another charge.
          *
-         *     **Nothing is stored.** We return the answer and keep no copy of it, so there is no
-         *     `GET /v1/number-lookups/{id}` to come back to and no id to come back with. Keep what you need
-         *     from the response.
+         *     **Nothing is stored.** We return the answer and keep no copy of it. The answer is a
+         *     `number-lookups` resource whose `id` is the number looked up, in E.164 — but there is no
+         *     `GET /v1/number-lookups/{id}` to come back to and no `self` link, because there is nothing to
+         *     fetch again. Keep what you need from the response.
          *
          *     ## The two geographies are two different facts
          *
@@ -2562,27 +2672,19 @@ export interface paths {
          *     keys a recording by `(call id, capture id)` — so this answers a **collection**, with one item
          *     per capture rather than one item per transcript.
          *
-         *     **`status` is the member to branch on.** `ready` means we hold the words and the item carries
-         *     them. Every other status leaves the rest of the item null: `not_requested` means nobody has
-         *     asked for this capture's transcript — ask with
-         *     `POST /v1/pbx/call-records/{callRecord}/transcripts/{recording}`; `pending` means it was asked
-         *     for and is on its way, normally within a few minutes. A request that ended without words
-         *     leaves the capture `not_requested` again, so it can be asked for again. Whether a capture's
-         *     transcription permanently gave up is answered by the single-transcript endpoint (404
-         *     `code: transcript_failed`), not by this list.
+         *     **`transcriptStatus` is the member to branch on.** `available` means we hold the words.
+         *     `none` means nobody has asked for this capture's transcript — ask with
+         *     `POST /v1/pbx/call-records/{callRecord}/transcripts/{recording}`; `requested` and
+         *     `processing` mean it was asked for and is on its way, normally within a few minutes;
+         *     `failed` means the last request ended without words, and it can be asked for again. Until
+         *     the words are ours, `language` and `duration` are null. `status` is deprecated: read
+         *     `transcriptStatus` instead.
          *
          *     **The words themselves are not here.** Ask
          *     `GET /v1/pbx/call-records/{callRecord}/transcripts/{recording}` for one transcript with its
-         *     `segments`, or follow `contentUrl` for the raw provider JSON. Deriving turns costs a read of
-         *     the stored document per capture, which is why the list does not do it for captures you did
-         *     not ask about.
-         *
-         *     **`byteSize` and `sha256` describe the DOCUMENT behind `contentUrl`**, not the audio. They
-         *     are not comparable with the same members on the recordings list, which describe the audio.
-         *
-         *     **Every call mints fresh links and writes one audit entry per transcript**, naming who asked.
-         *     Do not cache a URL past its `expiresAt` or share it: anyone holding one reads that call with
-         *     no further authorization.
+         *     `segments` and its `channels`. Deriving turns costs a read of the stored document per
+         *     capture, which is why the list does not do it for captures you did not ask about. There is
+         *     no download of the stored document: the words are served only in this API's own shape.
          *
          *     **Only your own recordings are listed.** A recording belongs to the customer whose user had
          *     call recording on. On a call between two customers, each customer sees the transcript of its
@@ -2610,7 +2712,16 @@ export interface paths {
         /**
          * Read one transcript, with its speaker turns
          * @description One capture's transcript, with `segments` — the turns of the conversation, each carrying a
-         *     speaker label, its bounds in seconds and what was said.
+         *     speaker label, the channel it was said on, its bounds in seconds and what was said — and
+         *     `channels`, which says who is on each channel.
+         *
+         *     **`channels` names the person on each side of a two-channel recording.** Each entry is a
+         *     channel that carries a person: `party` is the extension, or the phone number in E.164, and
+         *     `role` says whether that person placed the call (`caller`) or received it (`callee`). Which
+         *     side is on which channel is NOT fixed — it depends on which leg the phone system recorded
+         *     first — so read it here rather than assuming. A one-sided recording (the other end never
+         *     answered) lists one entry. A one-channel (mono) recording, which holds both voices mixed,
+         *     lists none: `channels` is `[]` and every segment is `channel: 0`.
          *
          *     **It is nested under the call record on purpose.** A transcript is reachable only through a
          *     call you may already read, which is what makes another account's transcript answer 404 rather
@@ -2628,8 +2739,9 @@ export interface paths {
         /**
          * Ask for one capture's transcript
          * @description Transcribe one capture of a recorded call, on demand. The request has no body: the path names
-         *     the capture. Poll `GET` on this same URL (or read the list) until `status` is `ready`, or
-         *     subscribe to `pbx.transcript.created`, which is sent when the words are ours.
+         *     the capture. Poll `GET` on this same URL (or read the list) until `transcriptStatus` is
+         *     `available`, or
+         *     subscribe to `call_transcript.available`, which is sent when the words are ours.
          *
          *     **It is safe to repeat.** A capture already transcribed answers `200` with the transcript; one
          *     already asked for answers `202` again and starts no second transcription.
@@ -2648,39 +2760,6 @@ export interface paths {
          *     the transcript also appears in the phone system's own portal, like any other transcript.
          */
         post: operations["requestCallRecordTranscript"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/pbx/transcripts/{recording}/content": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Download a transcript's source document (the URL the transcripts list names)
-         * @description **You do not build this URL — you follow it.** Each `ready` item of
-         *     `GET /v1/pbx/call-records/{callRecord}/transcripts` carries a `contentUrl`, and this is
-         *     where it points. Treat it as opaque: the signature covers the whole address, so editing the
-         *     path, the host or any query parameter invalidates it.
-         *
-         *     Send **no `Authorization` header**. The signature is the authorization here, which is why
-         *     this operation publishes no security scheme — the entitlement was checked when the link was
-         *     minted, by the request that held your token. The link stops working at the `expiresAt` the
-         *     list reported.
-         *
-         *     **What you get is the speech-to-text provider's own response, gzipped and unmodified.** It is
-         *     the lossless copy we keep, so it carries more than `segments` does — word timings and
-         *     confidences among them — and its shape is the provider's rather than ours. If you want a
-         *     stable shape, read `segments` on the transcript instead.
-         */
-        get: operations["downloadTranscript"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2946,7 +3025,7 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
-    "pbx.recording.created": {
+    "call_recording.available": {
         parameters: {
             query?: never;
             header?: never;
@@ -2986,7 +3065,7 @@ export interface webhooks {
          *     keeps the value it had. Fetch the audio again if you keep a copy.
          *
          *     **One call can produce more than one recording.** Each is a separate capture with its own
-         *     `cccId` and its own event; `callId` is what ties them to the same call.
+         *     `id` and its own event; `callId` is what ties them to the same call.
          *
          *     **Find the call record by `callId`, not by `callRecordId`.** Ask
          *     `GET /v1/pbx/call-records?filter[callId]={callId}&filter[customer]={customerId}`, with
@@ -3018,7 +3097,7 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
-    "pbx.transcript.created": {
+    "call_transcript.available": {
         parameters: {
             query?: never;
             header?: never;
@@ -3030,7 +3109,7 @@ export interface webhooks {
         /**
          * A written transcript of a call is ready to read
          * @description Fired when we have transcribed the recording of a call. It is a separate moment from
-         *     `pbx.recording.created` and always later: the audio has to exist before it can be
+         *     `call_recording.available` and always later: the audio has to exist before it can be
          *     transcribed, and the transcription itself takes a little while. Subscribing to one does not
          *     subscribe you to the other.
          *
@@ -3047,13 +3126,13 @@ export interface webhooks {
          *     never as "not yet".
          *
          *     **Find the call record by `callId`, not by `callRecordId`**, the same way as for
-         *     `pbx.recording.created`:
+         *     `call_recording.available`:
          *     `GET /v1/pbx/call-records?filter[callId]={callId}&filter[customer]={customerId}`, with a date
          *     range around the call. Expect a list, and ask again while it is empty. `callRecordId` is
          *     deprecated and still sent.
          *
          *     **`durationSeconds` is the audio's length as the transcription measured it**, which can
-         *     differ by a second or so from the same figure on `pbx.recording.created` — they are two
+         *     differ by a second or so from the same figure on `call_recording.available` — they are two
          *     measurements of one file, not one number reported twice.
          *
          *     **You are told once.** A transcript is written once per recording and never updated, so
@@ -3076,7 +3155,7 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
-    "pbx.cdr.created": {
+    "call_record.completed": {
         parameters: {
             query?: never;
             header?: never;
@@ -3094,14 +3173,14 @@ export interface webhooks {
          *     **Match a click-to-dial without a second request.** `data.callId` is the id
          *     `POST /v1/pbx/subscribers/{subscriber}/calls` answered, and it is null for a call that was not
          *     placed that way. `data.origCallId` and `data.termCallId` are the SIP call-ids of the two legs;
-         *     one of them is the `callId` a `pbx.recording.created` for this call carries.
+         *     one of them is the `callId` a `call_recording.available` for this call carries.
          *     `filter[callId]` on `GET /v1/pbx/call-records` matches all three.
          *
          *     **What `data` leaves out, and where to find it.** The rest of the EXTENDED tier is not sent,
          *     as a request that names no `fields[call-records]` does not get it. Nor are `hasRecording`,
          *     `recordingStatus` and `transcriptStatus`: when this event is sent they are not settled — the
          *     recording lands about a minute after the call ends, so `none` and `processing` can still
-         *     change. Subscribe to `pbx.recording.created` and `pbx.transcript.created` to hear when
+         *     change. Subscribe to `call_recording.available` and `call_transcript.available` to hear when
          *     they change. The `fromSubscriber` and `toSubscriber` relationships are not sent either: match
          *     a subscriber by `domain` with `fromExtension` or `answeringExtension`. `data.id` is the call
          *     record's id, and `GET` on it answers all of these.
@@ -3518,7 +3597,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "pbx.recording.created" | "pbx.transcript.created" | "pbx.cdr.created" | "webhook.heartbeat";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call_recording.available" | "call_transcript.available" | "call_record.completed" | "webhook.heartbeat";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -3741,8 +3820,9 @@ export interface components {
             documents: string[];
         };
         /**
-         * @description A flat acknowledgement, not a JSON:API document. Read the whole fax at
-         *     `GET /v1/faxes/{fax}`.
+         * @description DEPRECATED (2026-10-01): the body answered to a caller that does not ask for
+         *     `application/vnd.api+json`. A flat acknowledgement, not a JSON:API document. Read the whole
+         *     fax at `GET /v1/faxes/{fax}`.
          */
         SendFaxAccepted: {
             data: {
@@ -3757,6 +3837,10 @@ export interface components {
                 createdAt?: string | null;
             };
         };
+        /**
+         * @description DEPRECATED (2026-10-01): the body answered to a caller that does not ask for
+         *     `application/vnd.api+json`, which gets the `faxes` resource instead.
+         */
         CancelFaxResult: {
             data: {
                 /** Format: uuid */
@@ -3765,8 +3849,50 @@ export interface components {
             };
         };
         /**
-         * @description A capability that expires, plus the facts about what is behind it. Not a JSON:API resource:
-         *     there is no stored member this URI could be a collection of.
+         * @description One stored document of a fax, with a freshly minted download link. The `id` is the stored
+         *     document's own. There is no `self` link: the download URL expires, and every read mints a
+         *     new one and is recorded in your audit trail.
+         */
+        FaxMediaDocumentResource: {
+            /** @enum {string} */
+            type: "fax-documents";
+            /** Format: uuid */
+            id: string;
+            attributes: {
+                /**
+                 * @description `pdf` the readable document, `tiff` the image that went on the wire, `thumb` the first-page preview.
+                 * @enum {string}
+                 */
+                kind?: "pdf" | "tiff" | "thumb";
+                /** @description The media type `contentUrl` serves. */
+                contentType?: string;
+                /** @description The size of the file behind `contentUrl`. */
+                byteSize?: number;
+                /** @description The SHA-256 of that file, so you can check a download. */
+                sha256?: string;
+                /**
+                 * Format: uri
+                 * @description A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
+                 *     `Authorization` header. Do not cache it past `expiresAt` or share it.
+                 */
+                contentUrl?: string;
+                /**
+                 * Format: date-time
+                 * @description When `contentUrl` stops working.
+                 */
+                expiresAt?: string;
+            };
+            relationships?: {
+                fax?: components["schemas"]["RelationshipToOne"];
+            };
+        };
+        FaxMediaDocumentResponse: {
+            data: components["schemas"]["FaxMediaDocumentResource"];
+        };
+        /**
+         * @description DEPRECATED (2026-10-01): the body answered to a caller that does not ask for
+         *     `application/vnd.api+json`, which gets a `fax-documents` resource instead. A capability that
+         *     expires, plus the facts about what is behind it.
          */
         MediaLink: {
             /**
@@ -4552,11 +4678,6 @@ export interface components {
              */
             callRecordId?: string | null;
             /**
-             * @description Which capture of that call this recording is.
-             * @example 00b1
-             */
-            cccId?: string;
-            /**
              * @description How long the recorded audio runs. A supersede changes this. NULL when the switch did not
              *     report a duration for the capture — the recording is still ours to serve, and
              *     `byteSize` still describes the bytes.
@@ -4615,7 +4736,7 @@ export interface components {
             recordingId?: string;
             /**
              * Format: uuid
-             * @description The customer whose call this is — the same one `pbx.recording.created` carried. Null
+             * @description The customer whose call this is — the same one `call_recording.available` carried. Null
              *     when the recorded domain resolves to none of your customers; only your tenant-scoped
              *     endpoints hear about that one.
              */
@@ -4631,15 +4752,10 @@ export interface components {
              * @deprecated
              * @description DEPRECATED — find the call record with `filter[callId]` (see the event's description).
              *     Still sent. The ONE call record the recording — and so this transcript — belongs to: the
-             *     same value `pbx.recording.created` carried for it. Null when it could not be named
+             *     same value `call_recording.available` carried for it. Null when it could not be named
              *     when this event was built.
              */
             callRecordId?: string | null;
-            /**
-             * @description Which capture of that call was transcribed.
-             * @example 00b1
-             */
-            cccId?: string;
             /**
              * @description The language of the transcript, as the transcription reported it, or as we asked for it
              *     when it reported none.
@@ -4915,9 +5031,7 @@ export interface components {
             callerName: components["schemas"]["NumberLookupCallerNameComponent"];
             messaging: components["schemas"]["NumberLookupMessagingComponent"];
         };
-        NumberLookup: {
-            /** @description The number that was looked up, normalized to E.164. */
-            number: string;
+        NumberLookupAttributes: {
             /**
              * Format: date-time
              * @description When the components ran — so you can tell "we asked and learned nothing" from "we never
@@ -4932,8 +5046,126 @@ export interface components {
             dialedNumber: components["schemas"]["DialedNumberGeography"];
             components: components["schemas"]["NumberLookupComponents"];
         };
-        NumberLookupResult: {
-            data: components["schemas"]["NumberLookup"];
+        /**
+         * @description One lookup. Its `id` is the number looked up, normalized to E.164 — the thing the answer is
+         *     about. Nothing is stored, so it has no `self` link and cannot be read again by id.
+         */
+        NumberLookupResource: {
+            /** @enum {string} */
+            type: "number-lookups";
+            /**
+             * @description The number that was looked up, normalized to E.164.
+             * @example +16502530000
+             */
+            id: string;
+            attributes: components["schemas"]["NumberLookupAttributes"];
+        };
+        NumberLookupDocument: {
+            data: components["schemas"]["NumberLookupResource"];
+        };
+        /**
+         * @description One number on offer. Its `id` is the number in E.164. An offer is the answer to one search,
+         *     not a stored record: there is no `self` link and no `GET` by id.
+         */
+        AvailableNumberResource: {
+            /** @enum {string} */
+            type: "available-numbers";
+            /** @description The number in E.164. */
+            id: string;
+            attributes: {
+                /** @description The number in E.164. */
+                e164?: string;
+                /** @description ISO country code. */
+                country?: string;
+                /** @description Its state, from our own number-plan data; null when we hold none. */
+                state?: string | null;
+                /** @description Its rate center, from the same data; null for toll-free. */
+                rateCenter?: string | null;
+                /** @description What the number can do. */
+                capabilities?: ("sms" | "mms" | "voice" | "fax" | "emergency")[];
+                /**
+                 * @description Opaque. Spend it with `POST /v1/number-orders` to buy this number. It is issued to
+                 *     your account alone and is refused for any other.
+                 */
+                offerToken?: string;
+            };
+        };
+        AvailableNumberCollectionDocument: {
+            data: components["schemas"]["AvailableNumberResource"][];
+        };
+        NumberOrderRequest: {
+            /** @description The `offerToken`s of the numbers to buy, from `GET /v1/available-numbers`. */
+            offerTokens: string[];
+        };
+        RateResource: {
+            /** @enum {string} */
+            type: "rates";
+            /** Format: uuid */
+            id: string;
+            attributes: {
+                slug?: string;
+                name?: string;
+                /**
+                 * @description `nrc` a one-time charge; `mrc` a monthly one.
+                 * @enum {string}
+                 */
+                kind?: "nrc" | "mrc";
+                /** @description What one is: `number`, `minute`, `message`, … */
+                unit?: string;
+                /** @description How the price is worked out, where a number alone does not say it. */
+                pricingNote?: string | null;
+                /** @description The service this rate belongs to. */
+                service?: {
+                    /** Format: uuid */
+                    id?: string;
+                    slug?: string;
+                    name?: string;
+                };
+                /** @description The section of the rate sheet the service is in. */
+                category?: {
+                    slug?: string;
+                    name?: string;
+                };
+                /** @description The price per quantity band, lowest band first. */
+                tiers?: {
+                    /** Format: uuid */
+                    id?: string;
+                    minQty?: number;
+                    /** @description Null for an open-ended top band. */
+                    maxQty?: number | null;
+                    /**
+                     * @description YOUR price, in dollars, as a decimal string — a price agreed for your account
+                     *     where there is one, the standard price otherwise. Null when the price is not
+                     *     fixed yet ("ask us").
+                     */
+                    amount?: string | null;
+                }[];
+            };
+        };
+        RateCollectionDocument: {
+            data: components["schemas"]["RateResource"][];
+        };
+        /**
+         * @description The primary regions a customer may be placed in, for one country its data may be kept in. The
+         *     `id` is the country code — the value of `dataResidencyCountry`.
+         */
+        RegionResource: {
+            /** @enum {string} */
+            type: "regions";
+            /** @description ISO country code. */
+            id: string;
+            attributes: {
+                /** @description The values `regionPreference` takes in this country, in the order to offer them. */
+                options?: {
+                    /** @description The `regionPreference` value. */
+                    value?: string;
+                    /** @description A name to show a person. */
+                    label?: string;
+                }[];
+            };
+        };
+        RegionCollectionDocument: {
+            data: components["schemas"]["RegionResource"][];
         };
         /**
          * @description Where a queued write against somebody else's system stands. `pending` — we have recorded what
@@ -5836,62 +6068,28 @@ export interface components {
              */
             signer?: string;
         };
-        /**
-         * @description A flat acknowledgement, not a JSON:API document. Read the whole order back at
-         *     `GET /v1/port-orders/{portOrder}`.
-         */
-        PortOrderSubmitted: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                status?: components["schemas"]["PortOrderStatus"];
-                /** @description The set the order went in with, as it now stands. */
-                numbers?: string[];
-            };
-        };
-        PortOrderDocumentStored: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                kind?: components["schemas"]["PortDocumentKind"];
-                /**
-                 * @description The digest of the bytes as stored — the handle-free way to check we hold the file
-                 *     you sent.
-                 */
-                sha256?: string | null;
-            };
-        };
-        PortOrderLoaGenerated: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                /** @description The digest of the letter now waiting to be signed. */
-                sha256?: string | null;
-            };
-        };
-        PortOrderRequestLinkIssued: {
-            data: {
-                /** Format: uuid */
-                id?: string;
+        PortOrderRequestLinkDocument: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta: {
                 /**
                  * Format: uri
-                 * @description Your customer's link, on your own branded portal host. **Ask again whenever you need
-                 *     it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same URL for
-                 *     as long as the link is live, so you need not store it. It was the only copy until
-                 *     2026-09-01, when the token stopped being stored hashed-only.
+                 * @description Your customer's link, on your own branded portal host. **Ask again whenever you
+                 *     need it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same
+                 *     URL for as long as the link is live, so you need not store it.
                  */
-                url?: string;
+                url: string;
             };
         };
-        PortOrderRequestLinkRevoked: {
-            data: {
-                /** Format: uuid */
-                id?: string;
+        PortOrderRequestLinkRevokedDocument: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta: {
                 /**
                  * @description Whether anything was live to revoke. `false` is an ordinary answer — most orders
                  *     never have a link at all — and not an error.
                  */
-                revoked?: boolean;
+                revoked: boolean;
             };
         };
         PortOrderRequestLinkSendRequest: {
@@ -5905,15 +6103,15 @@ export interface components {
             /** @description Your own sentence to your customer, carried in the mail. */
             note?: string | null;
         };
-        PortOrderRequestLinkSent: {
-            data: {
-                /** Format: uuid */
-                id?: string;
+        PortOrderRequestLinkSentDocument: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta: {
                 /**
                  * Format: email
                  * @description The address the mail went to, echoed back.
                  */
-                sentTo?: string;
+                sentTo: string;
             };
         };
         /**
@@ -6817,7 +7015,7 @@ export interface components {
              *     - `failed` — the phone system captured audio and it had not reached us 15 minutes after
              *       the call ended. Treat it as lost and tell support if you need it — but it is not
              *       final: if a slow conversion completes later, the recording lands and this becomes
-             *       `available`, and `pbx.recording.created` is sent as usual.
+             *       `available`, and `call_recording.available` is sent as usual.
              *     - `none` — nothing was recorded: the call was not set to record, the capture closed
              *       with no audio, or no audio ever reached the phone system (a cancelled call, or a
              *       forward whose audio never crossed it). Also `none` for a call from before
@@ -6925,13 +7123,9 @@ export interface components {
         /**
          * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
          *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
+         *     `cccId` was removed on 2026-10-01: the recording's `id` names the capture.
          */
         RecordingAttributes: {
-            /**
-             * @description Which capture of the call this is — the phone system's own capture id.
-             * @example 00b1
-             */
-            cccId?: string;
             /**
              * @description How long the audio runs, in seconds. NULL when the phone system did not report a
              *     duration for the capture — the recording is still ours to serve, and `byteSize` still
@@ -7018,6 +7212,13 @@ export interface components {
              */
             speaker: string;
             /**
+             * @description Which channel of the recording this turn was said on, counted from 0. On a two-channel
+             *     recording each side is its own channel, and `channels` on the transcript says who is on
+             *     which. On a one-channel (mono) recording both voices are mixed, so every turn is 0.
+             * @example 0
+             */
+            channel: number;
+            /**
              * Format: double
              * @description When this turn begins, in seconds from the start of the recording.
              */
@@ -7031,70 +7232,62 @@ export interface components {
             text: string;
         };
         /**
+         * @description Who is on one channel of a two-channel recording. The person comes from the recording
+         *     itself; whether they placed or received the call comes from the call record, read once when
+         *     the transcript was made.
+         */
+        TranscriptChannel: {
+            /**
+             * @description The channel, counted from 0 — the same number a segment's `channel` carries.
+             * @example 0
+             */
+            channel: number;
+            /**
+             * @description Who is on this channel: the extension (`105`), or the phone number in E.164
+             *     (`+15125550100`).
+             * @example 105
+             */
+            party: string;
+            /**
+             * @description `caller` placed the call; `callee` received it. Left out — never null — when the call
+             *     record does not say which side this person was on.
+             * @enum {string}
+             */
+            role?: "caller" | "callee";
+        };
+        /**
          * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
          *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
          *     `provider` and `model` were removed on 2026-10-01: which speech-to-text service made a
-         *     transcript is not part of the API.
+         *     transcript is not part of the API. `cccId`, `byteSize`, `sha256`, `contentUrl` and
+         *     `expiresAt` were removed on 2026-10-01 with the transcript download: the words are served
+         *     only as `segments`, in this API's own shape.
          */
         TranscriptAttributes: {
             /**
-             * @description Which capture of the call this transcript is of — the phone system's own capture id.
-             * @example 00b1
-             */
-            cccId?: string;
-            /**
-             * @description `ready` when we hold the words. Every other status leaves every member below null:
-             *     `not_requested` when nobody has asked for this capture's transcript (ask with
-             *     `POST /v1/pbx/call-records/{callRecord}/transcripts/{recording}`), `pending` when it was
-             *     asked for and is on its way. An on-demand request that ended without words (the phone
-             *     system refused it, could not be reached, or never sent the audio on) leaves the capture
-             *     `not_requested`, and it can be asked for again. `failed` is reserved for a transcription
-             *     that permanently gave up; no read answers it in this member today — a capture in that
-             *     state reads `not_requested` here, and the single-transcript endpoint checks for it and
-             *     answers 404 `code: transcript_failed`.
+             * @deprecated
+             * @description DEPRECATED — read `transcriptStatus`, which says the same and more. Still sent; it will
+             *     be removed in a later version, announced ahead. `ready` when we hold the words,
+             *     `pending` when it was asked for and is on its way, `not_requested` when nobody has asked
+             *     (or the last request ended without words). `failed` is never sent here.
              * @enum {string}
              */
             status?: "ready" | "pending" | "failed" | "not_requested";
             /**
-             * @description The language the audio was transcribed as. Null unless `status` is `ready`.
+             * @description The language the audio was transcribed as. Null until `transcriptStatus` is `available`.
              * @example en-US
              */
             language?: string | null;
             /**
-             * @description How long the AUDIO runs, in seconds — not how long the text is. Null unless `status` is `ready`,
-             *     and null when the phone system never reported a duration for the capture.
+             * @description How long the AUDIO runs, in seconds — not how long the text is. Null until
+             *     `transcriptStatus` is `available`, and null when the phone system never reported a
+             *     duration for the capture.
              */
             duration?: number | null;
             /**
-             * @description The size of the document behind `contentUrl`, which is the speech-to-text provider's
-             *     gzipped response — NOT the audio. Not comparable with `byteSize` on the recordings list.
-             *     Null unless `status` is `ready`.
-             */
-            byteSize?: number | null;
-            /**
-             * @description The SHA-256 of that same document, so you can check a download against what we stored.
-             *     Null unless `status` is `ready`.
-             */
-            sha256?: string | null;
-            /**
-             * Format: uri
-             * @description A time-limited download URL on your own API host for the provider's own response
-             *     document. Fetch it with a plain `GET` and no `Authorization` header — the signature it
-             *     carries is the authorization. Opaque: the signature covers the whole address, so any edit
-             *     invalidates it. Short-lived — do not cache it past `expiresAt` or share it. Null while
-             *     `status` is `pending`.
-             */
-            contentUrl?: string | null;
-            /**
-             * Format: date-time
-             * @description When `contentUrl` stops working. Ask for the list again to mint a fresh one.
-             */
-            expiresAt?: string | null;
-            /**
              * @description Where this transcript stands — the same vocabulary as `transcriptStatus` on the call
-             *     record. `status` above answers "may I ask for it?"; this answers "where is it?", so the
-             *     two differ in one case: after a request that ended without words, `status` is
-             *     `not_requested` (you may ask again) and `transcriptStatus` is `failed`.
+             *     record. The member to branch on. After a request that ended without words it is
+             *     `failed`, and the capture can be asked for again.
              * @enum {string}
              */
             transcriptStatus?: "none" | "requested" | "processing" | "available" | "failed";
@@ -7116,19 +7309,28 @@ export interface components {
             id: string;
             attributes?: components["schemas"]["TranscriptAttributes"];
         };
-        /** @description Everything `TranscriptAttributes` carries, plus the turns. */
+        /** @description Everything `TranscriptAttributes` carries, plus who is on each channel and the turns. */
         TranscriptWithSegmentsAttributes: components["schemas"]["TranscriptAttributes"] & {
+            /**
+             * @description Who is on each channel of a two-channel recording, one entry per channel that
+             *     carries a person, in channel order. Which side is on which channel is NOT fixed, so
+             *     read it here. A one-sided recording (the other end never answered) lists one entry.
+             *     An EMPTY array means a one-channel (mono) recording: both voices are mixed on
+             *     channel 0, so no single person is on a channel. Never null.
+             */
+            channels: components["schemas"]["TranscriptChannel"][];
             /**
              * @description The turns of the conversation, in the order they were spoken. An EMPTY array is a
              *     real answer: nobody spoke, or the provider heard nothing it could separate into
              *     turns.
              */
-            segments?: components["schemas"]["TranscriptSegment"][];
+            segments: components["schemas"]["TranscriptSegment"][];
         };
         /**
          * @description A transcript as the single-transcript endpoint serves it: everything the list carries, plus
-         *     the turns. `segments` is the one member the list leaves out, because deriving the turns means
-         *     reading the stored document and the list would pay that per capture.
+         *     who is on each channel and the turns. `channels` and `segments` are the members the list
+         *     leaves out, because deriving the turns means reading the stored document and the list would
+         *     pay that per capture.
          */
         TranscriptWithSegmentsResource: {
             /** @enum {string} */
@@ -7686,9 +7888,31 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Accepted. The fax exists and is readable at `GET /v1/faxes/{fax}`. */
+            /**
+             * @description Accepted. The fax exists and is readable at `GET /v1/faxes/{fax}`.
+             *
+             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
+             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
+             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
+             *     change, announced first.
+             */
             202: {
                 headers: {
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
+                     *     moment that body became deprecated.
+                     */
+                    Deprecation?: string;
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
+                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
+                     */
+                    Sunset?: string;
+                    /**
+                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
+                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
+                     */
+                    Link?: string;
                     /**
                      * @description Present, with the value `true`, only when this response replays an earlier send that
                      *     carried the same `Idempotency-Key`. Absent on a fresh accept.
@@ -7697,6 +7921,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/vnd.api+json": components["schemas"]["FaxDocumentResponse"];
                     /**
                      * @example {
                      *       "data": {
@@ -8005,12 +8230,60 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A download URL and the facts about what is behind it. */
+            /**
+             * @description A `fax-documents` resource: a download URL (`contentUrl`) and the facts about what is
+             *     behind it. Its `id` is the stored document's.
+             *
+             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
+             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
+             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
+             *     change, announced first.
+             */
             200: {
                 headers: {
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
+                     *     moment that body became deprecated.
+                     */
+                    Deprecation?: string;
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
+                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
+                     */
+                    Sunset?: string;
+                    /**
+                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
+                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
+                     */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "fax-documents",
+                     *         "id": "0198c4a1-3c4d-7e5f-8a61-2b3c4d5e6f70",
+                     *         "attributes": {
+                     *           "kind": "pdf",
+                     *           "contentType": "application/pdf",
+                     *           "byteSize": 40960,
+                     *           "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                     *           "contentUrl": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/media/content?format=pdf&expires=1787057037&signature=...",
+                     *           "expiresAt": "2026-08-16T11:07:31+00:00"
+                     *         },
+                     *         "relationships": {
+                     *           "fax": {
+                     *             "data": {
+                     *               "type": "faxes",
+                     *               "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f"
+                     *             }
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["FaxMediaDocumentResponse"];
                     /**
                      * @example {
                      *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/media/content?format=pdf&expires=1787057037&signature=...",
@@ -8061,12 +8334,35 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description A download URL for the preview image. */
+            /**
+             * @description A `fax-documents` resource for the preview image (`kind: thumb`).
+             *
+             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
+             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
+             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
+             *     change, announced first.
+             */
             200: {
                 headers: {
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
+                     *     moment that body became deprecated.
+                     */
+                    Deprecation?: string;
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
+                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
+                     */
+                    Sunset?: string;
+                    /**
+                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
+                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
+                     */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/vnd.api+json": components["schemas"]["FaxMediaDocumentResponse"];
                     /**
                      * @example {
                      *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/thumbnail/content?expires=1787057037&signature=...",
@@ -8212,12 +8508,35 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Cancelled. */
+            /**
+             * @description Cancelled. The `faxes` resource, as it now stands.
+             *
+             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
+             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
+             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
+             *     change, announced first.
+             */
             200: {
                 headers: {
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
+                     *     moment that body became deprecated.
+                     */
+                    Deprecation?: string;
+                    /**
+                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
+                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
+                     */
+                    Sunset?: string;
+                    /**
+                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
+                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
+                     */
+                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/vnd.api+json": components["schemas"]["FaxDocumentResponse"];
                     /**
                      * @example {
                      *       "data": {
@@ -10337,6 +10656,232 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    searchAvailableNumbers: {
+        parameters: {
+            query?: {
+                /** @description Three-digit area code — or, with `filter[tollFree]=true`, the toll-free prefix. */
+                "filter[npa]"?: string;
+                /** @description Three-digit exchange. Needs `filter[npa]`. */
+                "filter[nxx]"?: string;
+                /** @description Two-letter state. */
+                "filter[state]"?: string;
+                /** @description Rate center name, within `filter[state]`. */
+                "filter[rateCenter]"?: string;
+                /** @description `true` for toll-free numbers. `true` or `false`, nothing else. */
+                "filter[tollFree]"?: "true" | "false";
+                /** @description `true` for a run of consecutive numbers. `true` or `false`, nothing else. */
+                "filter[contiguous]"?: "true" | "false";
+                /** @description How many numbers to offer. The default is 25 and the ceiling is 100. */
+                "page[size]"?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The numbers on offer. An empty `data` is a normal answer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "available-numbers",
+                     *           "id": "+13025046250",
+                     *           "attributes": {
+                     *             "e164": "+13025046250",
+                     *             "country": "US",
+                     *             "state": "DE",
+                     *             "rateCenter": "WILMINGTON",
+                     *             "capabilities": [
+                     *               "voice",
+                     *               "sms"
+                     *             ],
+                     *             "offerToken": "eyJpdiI6Ii4uLiJ9"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["AvailableNumberCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description A filter value or combination is refused; `source` names the parameter. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    orderNumbers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "offerTokens": [
+                 *         "eyJpdiI6Ii4uLiJ9"
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["NumberOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description The numbers bought, as `phone-numbers` resources. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PhoneNumberCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description A number on the order is no longer available. Nothing was bought. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description The body is refused, or an offer token is not one we issued to you. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listRates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Your rates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "rates",
+                     *           "id": "0198c4a1-77aa-7b10-8d21-3c4d5e6f7081",
+                     *           "attributes": {
+                     *             "slug": "did-local",
+                     *             "name": "Local DID",
+                     *             "kind": "mrc",
+                     *             "unit": "number",
+                     *             "pricingNote": null,
+                     *             "service": {
+                     *               "id": "0198c4a1-77aa-7b10-8d21-3c4d5e6f7000",
+                     *               "slug": "dids",
+                     *               "name": "DIDs"
+                     *             },
+                     *             "category": {
+                     *               "slug": "pbx-telco",
+                     *               "name": "PBX & Telco"
+                     *             },
+                     *             "tiers": [
+                     *               {
+                     *                 "id": "0198c4a1-77aa-7b10-8d21-3c4d5e6f7082",
+                     *                 "minQty": 1,
+                     *                 "maxQty": null,
+                     *                 "amount": "0.500000"
+                     *               }
+                     *             ]
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["RateCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listRegions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The placement options, per country. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "regions",
+                     *           "id": "US",
+                     *           "attributes": {
+                     *             "options": [
+                     *               {
+                     *                 "value": "partner_default",
+                     *                 "label": "Partner default (US East)"
+                     *               },
+                     *               {
+                     *                 "value": "use1",
+                     *                 "label": "US East"
+                     *               },
+                     *               {
+                     *                 "value": "usw1",
+                     *                 "label": "US West"
+                     *               }
+                     *             ]
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["RegionCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     lookUpNumber: {
         parameters: {
             query?: never;
@@ -10367,45 +10912,48 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "number": "+16502530000",
-                     *         "lookedUpAt": "2026-08-19T18:04:11+00:00",
-                     *         "charged": true,
-                     *         "dialedNumber": {
-                     *           "rateCenter": "MT VIEW",
-                     *           "state": "CA"
-                     *         },
-                     *         "components": {
-                     *           "lrn": {
-                     *             "status": "answered",
-                     *             "data": {
-                     *               "lrn": "14159686199",
-                     *               "spid": "8824",
-                     *               "ocn": "8826",
-                     *               "lata": "722",
-                     *               "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
-                     *               "lineType": "WIRELESS",
-                     *               "rateCenter": "MILLVALLEY",
-                     *               "state": "CA",
-                     *               "jurisdiction": "INDETERMINATE",
-                     *               "local": "INDETERMINATE",
-                     *               "portedAt": "2014-12-23T15:47:47+00:00"
-                     *             }
+                     *         "type": "number-lookups",
+                     *         "id": "+16502530000",
+                     *         "attributes": {
+                     *           "lookedUpAt": "2026-08-19T18:04:11+00:00",
+                     *           "charged": true,
+                     *           "dialedNumber": {
+                     *             "rateCenter": "MT VIEW",
+                     *             "state": "CA"
                      *           },
-                     *           "callerName": {
-                     *             "status": "answered",
-                     *             "data": {
-                     *               "name": "GOOGLEPLEX"
+                     *           "components": {
+                     *             "lrn": {
+                     *               "status": "answered",
+                     *               "data": {
+                     *                 "lrn": "14159686199",
+                     *                 "spid": "8824",
+                     *                 "ocn": "8826",
+                     *                 "lata": "722",
+                     *                 "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
+                     *                 "lineType": "WIRELESS",
+                     *                 "rateCenter": "MILLVALLEY",
+                     *                 "state": "CA",
+                     *                 "jurisdiction": "INDETERMINATE",
+                     *                 "local": "INDETERMINATE",
+                     *                 "portedAt": "2014-12-23T15:47:47+00:00"
+                     *               }
+                     *             },
+                     *             "callerName": {
+                     *               "status": "answered",
+                     *               "data": {
+                     *                 "name": "GOOGLEPLEX"
+                     *               }
+                     *             },
+                     *             "messaging": {
+                     *               "status": "no_data",
+                     *               "data": null
                      *             }
-                     *           },
-                     *           "messaging": {
-                     *             "status": "no_data",
-                     *             "data": null
                      *           }
                      *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["NumberLookupResult"];
+                    "application/vnd.api+json": components["schemas"]["NumberLookupDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12363,7 +12911,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The order is with our desk. */
+            /** @description The order, as it now stands: with our desk (`awaiting_review`). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12372,16 +12920,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "status": "awaiting_review",
-                     *         "numbers": [
-                     *           "+13025046250",
-                     *           "+13025046251"
-                     *         ]
+                     *         "attributes": {
+                     *           "status": "awaiting_review"
+                     *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderSubmitted"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12457,7 +13004,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Stored, with the digest of the bytes as we now hold them. */
+            /** @description The order, as it now stands. `documents.{kind}.sha256` is the digest of the bytes as we now hold them. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12466,13 +13013,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "kind": "bill",
-                     *         "sha256": "623210167553939c87ed8c5f2bfe0b3e0684e12c3a3dd2513613c4e67263b5a1"
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderDocumentStored"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12521,7 +13070,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The letter, by its digest. */
+            /** @description The order, as it now stands. `unsignedLoa.sha256` is the digest of the letter now waiting to be signed. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12530,12 +13079,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "sha256": "2ab85836811bd0e27a120ef5cdb64c43687fff18b1f24cbcecb6e2519bf64175"
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderLoaGenerated"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12591,7 +13143,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Your customer's link. */
+            /** @description Your customer's link. The order, as it now stands, and the link in `meta.url`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12600,12 +13152,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "url": "https://portal.acme-telecom.example/port-request/3f9c1d0a7b52e864a1d3f70b9c2e8d465a70f1b3c9d2e846a70b1c3d5e79f204"
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkIssued"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12639,7 +13197,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Whether a live link was closed. */
+            /** @description The order, as it now stands, and in `meta.revoked` whether a live link was closed. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12648,12 +13206,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "revoked": true
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkRevoked"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkRevokedDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12674,7 +13238,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The new link. The previous one is already dead. */
+            /** @description The new link. The previous one is already dead. The order, as it now stands, and the link in `meta.url`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12683,12 +13247,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "url": "https://portal.acme-telecom.example/port-request/c1e4a70b93d25f86a4d1b30f7c9e2d86f5a01b7c3d9e28a640b1c7d3e5f9a2046"
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkIssued"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12733,7 +13303,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Sent. */
+            /** @description Sent. The order, as it now stands, and in `meta.sentTo` the address the mail went to. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12742,12 +13312,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "sentTo": "grace@second-chances.example"
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkSent"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkSentDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -13478,7 +14054,7 @@ export interface operations {
                  *     - the `id` that `POST /v1/pbx/subscribers/{subscriber}/calls` answered with (a
                  *       click-to-dial call);
                  *     - a leg's SIP Call-ID — `origCallId` or `termCallId` on a record;
-                 *     - the `callId` of a `pbx.recording.created` or `pbx.transcript.created` webhook,
+                 *     - the `callId` of a `call_recording.available` or `call_transcript.available` webhook,
                  *       which is the SIP Call-ID of the recorded leg. This is the way to find a webhook's call
                  *       record; its deprecated `callRecordId` can be null. It also finds the call record of a
                  *       recording the second phone-system core made, when the call moved between our two
@@ -13635,7 +14211,6 @@ export interface operations {
                      *           "type": "recordings",
                      *           "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *           "attributes": {
-                     *             "cccId": "00b1",
                      *             "duration": 97,
                      *             "byteSize": 1563244,
                      *             "sha256": "abababababababababababababababababababababababababababababababab",
@@ -13806,28 +14381,22 @@ export interface operations {
                      *           "type": "transcripts",
                      *           "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *           "attributes": {
-                     *             "cccId": "00b1",
                      *             "status": "ready",
                      *             "language": "en-US",
                      *             "duration": 97,
-                     *             "byteSize": 18422,
-                     *             "sha256": "abababababababababababababababababababababababababababababababab",
-                     *             "contentUrl": "https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
-                     *             "expiresAt": "2026-09-17T11:07:31+00:00"
+                     *             "transcriptStatus": "available",
+                     *             "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90"
                      *           }
                      *         },
                      *         {
                      *           "type": "transcripts",
                      *           "id": "7a09dd6e-6359-5211-aa78-9717f3aa4188",
                      *           "attributes": {
-                     *             "cccId": "00b2",
                      *             "status": "pending",
                      *             "language": null,
                      *             "duration": null,
-                     *             "byteSize": null,
-                     *             "sha256": null,
-                     *             "contentUrl": null,
-                     *             "expiresAt": null
+                     *             "transcriptStatus": "processing",
+                     *             "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90"
                      *           }
                      *         }
                      *       ]
@@ -13884,23 +14453,34 @@ export interface operations {
                      *         "type": "transcripts",
                      *         "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *         "attributes": {
-                     *           "cccId": "00b1",
                      *           "status": "ready",
                      *           "language": "en-US",
                      *           "duration": 97,
-                     *           "byteSize": 18422,
-                     *           "sha256": "abababababababababababababababababababababababababababababababab",
-                     *           "contentUrl": "https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
-                     *           "expiresAt": "2026-09-17T11:07:31+00:00",
+                     *           "transcriptStatus": "available",
+                     *           "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90",
+                     *           "channels": [
+                     *             {
+                     *               "channel": 0,
+                     *               "party": "105",
+                     *               "role": "callee"
+                     *             },
+                     *             {
+                     *               "channel": 1,
+                     *               "party": "+15125550100",
+                     *               "role": "caller"
+                     *             }
+                     *           ],
                      *           "segments": [
                      *             {
                      *               "speaker": "Speaker 1",
+                     *               "channel": 0,
                      *               "start": 0.08,
                      *               "end": 2.4,
                      *               "text": "Acme Dental, how can I help?"
                      *             },
                      *             {
                      *               "speaker": "Speaker 2",
+                     *               "channel": 1,
                      *               "start": 2.6,
                      *               "end": 5.1,
                      *               "text": "I need to move my appointment."
@@ -13960,7 +14540,10 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["TranscriptCollectionItemDocument"];
                 };
             };
-            /** @description Accepted, or already in progress. `status` is `pending` and every other member is null. */
+            /**
+             * @description Accepted, or already in progress. `transcriptStatus` is `requested` or `processing`, and
+             *     `language` and `duration` are null.
+             */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -13972,14 +14555,11 @@ export interface operations {
                      *         "type": "transcripts",
                      *         "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *         "attributes": {
-                     *           "cccId": "00b1",
                      *           "status": "pending",
                      *           "language": null,
                      *           "duration": null,
-                     *           "byteSize": null,
-                     *           "sha256": null,
-                     *           "contentUrl": null,
-                     *           "expiresAt": null
+                     *           "transcriptStatus": "requested",
+                     *           "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90"
                      *         }
                      *       }
                      *     }
@@ -14057,65 +14637,6 @@ export interface operations {
              *     (`code: transcription_unavailable`).
              */
             503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
-                };
-            };
-        };
-    };
-    downloadTranscript: {
-        parameters: {
-            query: {
-                /** @description Part of the signature, minted for you. Do not edit it. */
-                expires: number;
-                /** @description Part of the signature, minted for you. Do not edit it. */
-                signature: string;
-            };
-            header?: never;
-            path: {
-                /**
-                 * @description The recording's id, from an item of
-                 *     `GET /v1/pbx/call-records/{callRecord}/transcripts`. A transcript is keyed by its recording
-                 *     — one transcript per capture — so this is the same id the recordings list publishes, and the
-                 *     same id in every region.
-                 */
-                recording: components["parameters"]["TranscriptRecordingId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The provider's response document, gzipped. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/gzip": string;
-                };
-            };
-            /**
-             * @description The signature did not verify, or the link has expired (`Invalid signature.`). Ask the
-             *     transcripts list for a fresh one — a link cannot be repaired or extended.
-             */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
-                };
-            };
-            /**
-             * @description There is no such document to serve (`code: not_found`). Every miss answers the same way
-             *     on purpose — a transcript we have never held, one whose retention window has closed and
-             *     one whose stored document is gone are deliberately indistinguishable, because this route
-             *     takes no credential.
-             */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14661,13 +15182,12 @@ export interface operations {
                 /**
                  * @example {
                  *       "eventId": "6be0d8be-ef92-5045-97ff-43c277e2f1b6",
-                 *       "type": "pbx.recording.created",
+                 *       "type": "call_recording.available",
                  *       "occurredAt": "2026-09-12T10:17:02+00:00",
                  *       "data": {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
                  *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "callId": "20260912101500000002-00112233445566778899aabbccddeeff",
-                 *         "cccId": "00b1",
                  *         "durationSeconds": 97,
                  *         "byteSize": 1552000,
                  *         "sha256": "abababababababababababababababababababababababababababababababab",
@@ -14702,14 +15222,13 @@ export interface operations {
                 /**
                  * @example {
                  *       "eventId": "1d3a6c02-5f21-5a44-b0c7-9e2f4471aa80",
-                 *       "type": "pbx.transcript.created",
+                 *       "type": "call_transcript.available",
                  *       "occurredAt": "2026-09-12T10:21:37+00:00",
                  *       "data": {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
                  *         "recordingId": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
                  *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "callId": "20260912101500000002-00112233445566778899aabbccddeeff",
-                 *         "cccId": "00b1",
                  *         "language": "en-US",
                  *         "durationSeconds": 97
                  *       }
@@ -14740,7 +15259,7 @@ export interface operations {
                 /**
                  * @example {
                  *       "eventId": "cb31ddae-1e36-5d6f-a7f1-af191e5cbcaf",
-                 *       "type": "pbx.cdr.created",
+                 *       "type": "call_record.completed",
                  *       "occurredAt": "2026-09-12T14:01:04+00:00",
                  *       "data": {
                  *         "id": "a2b0f2c4-6c1e-5d7a-9f3e-0b1c2d3e4f50",

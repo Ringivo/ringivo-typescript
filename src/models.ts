@@ -52,10 +52,10 @@ export interface FaxDocument {
  * property name, so the trailing underscore the Python client carries is not
  * needed here. Every other name is the API's own attribute name.
  *
- * Two builders fill this in, and they do not fill in the same amount. A fax
- * read with `faxes.get()` or `faxes.list()` is complete. A fax returned by
- * `faxes.send()` or `faxes.cancel()` is the flat acknowledgement those
- * endpoints answer — the members it does not carry are `null`, and
+ * `faxes.get()`, `list()`, `send()` and `cancel()` all return a complete fax:
+ * the last two ask for JSON:API and read the same `faxes` resource. Against an
+ * older server that still answers the flat acknowledgement, `send()` and
+ * `cancel()` fall back to it — the members it does not carry are `null`, and
  * `faxes.get()` is where the rest lives.
  */
 export interface Fax {
@@ -108,8 +108,15 @@ export interface FaxPage {
  * Every call mints a fresh one and writes an audit entry naming who asked,
  * so do not cache it past `expiresAt` or pass it on: anyone holding this URL
  * reads that document with no further authorization.
+ *
+ * `id`, `kind` (`pdf`, `tiff` or `thumb`) and `contentType` come from the
+ * `fax-documents` resource a JSON:API answer carries; they are `null` on the
+ * older flat answer, which does not have them.
  */
 export interface MediaLink {
+  readonly id: string | null;
+  readonly kind: string | null;
+  readonly contentType: string | null;
   readonly url: string;
   readonly expiresAt: Date | null;
   readonly byteSize: number | null;
@@ -149,7 +156,6 @@ function bridged(source: RawJson, key: string, legacy: string): RawJson {
 function mediaBridged(attributes: RawJson): RawJson {
   let bridgedAttributes = attributes;
   for (const [key, legacy] of [
-    ["cccId", "ccc-id"],
     ["byteSize", "byte-size"],
     ["contentUrl", "content-url"],
     ["expiresAt", "expires-at"],
@@ -250,7 +256,10 @@ function instant(value: unknown): Date | null {
 }
 
 /** Build from a JSON:API resource object — `faxes.get()`/`list()`. */
-export function faxFromResource(resource: RawJson): Fax {
+export function faxFromResource(
+  resource: RawJson,
+  options: { idempotentReplay?: boolean } = {},
+): Fax {
   const attributes = nested(resource, "attributes") ?? {};
   const documents = attributes.documents;
 
@@ -276,16 +285,16 @@ export function faxFromResource(resource: RawJson): Fax {
     ),
     createdAt: instant(attributes.createdAt),
     completedAt: instant(attributes.completedAt),
-    idempotentReplay: null,
+    idempotentReplay: options.idempotentReplay ?? null,
     raw: resource,
   });
 }
 
 /**
- * Build from the flat `data` object `send` and `cancel` answer.
- *
- * Their bodies are snake_cased plain JSON, not JSON:API documents — which is
- * why this is a second builder rather than a flag on the first one.
+ * Build from the flat `data` object an older server's `send` and `cancel`
+ * answer — snake_cased plain JSON, not a JSON:API resource, which is why this
+ * is a second builder rather than a flag on the first one. The SDK falls back
+ * to it only when the answer's `data` has no `attributes`.
  */
 export function faxFromAcknowledgement(
   payload: RawJson,
@@ -328,8 +337,30 @@ export function faxDocumentFromJson(source: RawJson): FaxDocument {
   });
 }
 
+/**
+ * Build from a media-link answer: the JSON:API `{"data": {"type":
+ * "fax-documents", ...}}` document (`contentUrl` is the link), or the older
+ * flat `{url, expiresAt, byteSize, sha256}` body.
+ */
 export function mediaLinkFromJson(payload: RawJson): MediaLink {
+  const resource = nested(payload, "data");
+  const attributes = resource === null ? null : nested(resource, "attributes");
+  if (resource !== null && attributes !== null) {
+    return Object.freeze({
+      id: text(resource, "id"),
+      kind: text(attributes, "kind"),
+      contentType: text(attributes, "contentType"),
+      url: text(attributes, "contentUrl") ?? "",
+      expiresAt: instant(attributes["expiresAt"]),
+      byteSize: integer(attributes, "byteSize"),
+      sha256: text(attributes, "sha256"),
+      raw: payload,
+    });
+  }
   return Object.freeze({
+    id: null,
+    kind: null,
+    contentType: null,
     url: text(payload, "url") ?? "",
     expiresAt: instant(bridged(payload, "expiresAt", "expires_at").expiresAt),
     byteSize: integer(bridged(payload, "byteSize", "byte_size"), "byteSize"),
@@ -539,7 +570,7 @@ export function nextCursorOfDocument(document: RawJson): string | null {
 
 export function faxPageFromDocument(document: RawJson): FaxPage {
   const data = document.data;
-  const faxes = (Array.isArray(data) ? data : []).filter(isRecord).map(faxFromResource);
+  const faxes = (Array.isArray(data) ? data : []).filter(isRecord).map((resource) => faxFromResource(resource));
 
   return Object.freeze({
     faxes: Object.freeze(faxes),
@@ -997,7 +1028,6 @@ export interface CallRecordPage {
  */
 export interface Recording {
   readonly id: string;
-  readonly cccId: string | null;
   readonly duration: number | null;
   readonly byteSize: number | null;
   readonly sha256: string | null;
@@ -1039,7 +1069,7 @@ export interface Recording {
  * `status` is the member to branch on. `ready` means the words are held and
  * every field is filled. `not_requested` means nobody has asked for this
  * capture's transcript — ask with `requestTranscript()`. `pending` means it was
- * asked for and is on its way. Every field but `id`, `cccId` and `status` is
+ * asked for and is on its way. Every field but `id` and `status` is
  * null unless `status` is `ready`. A transcription that permanently gave up is
  * not a status on the list: `transcript()` answers it as a 404 `ApiError` with
  * `code === "transcript_failed"`.
@@ -1052,28 +1082,27 @@ export interface Recording {
  * is keyed one-to-one by the capture it is of, so it is the same id
  * `recordings()` published for the same capture.
  *
- * `contentUrl` is a signed, time-limited link to the stored transcript
- * document (not the audio) — the same rule as `Recording.contentUrl`: do
- * not cache it past `expiresAt`.
- *
- * There is no `provider` or `model`: 0.16.0 removed both, with the API.
- * Which speech-to-text service made a transcript is not part of it.
+ * There is no `provider` or `model`, and no `cccId`, `byteSize`, `sha256`,
+ * `contentUrl` or `expiresAt`: 0.16.0 removed them, with the API and with the
+ * transcript download. The words are served only as `segments`.
  *
  * `segments` is the turns of the conversation, and only `transcript()` serves
  * them: it is null on every other answer, which means "not served here",
  * while an empty array means nobody spoke.
+ *
+ * `channels` says who is on each channel of the recording, and only
+ * `transcript()` serves it: it is null on the list and on the
+ * `requestTranscript()` answer, which means "not served here", while an empty
+ * array is a one-channel (mono) recording.
  */
 export interface Transcript {
   readonly id: string;
-  readonly cccId: string | null;
+  /** @deprecated Read `transcriptStatus`. */
   readonly status: string | null;
   readonly language: string | null;
   readonly duration: number | null;
-  readonly byteSize: number | null;
-  readonly sha256: string | null;
-  readonly contentUrl: string | null;
-  readonly expiresAt: Date | null;
   readonly segments: readonly TranscriptSegment[] | null;
+  readonly channels: readonly TranscriptChannel[] | null;
   /**
    * The same vocabulary as `CallRecord.transcriptStatus`. `status` answers
    * "may I ask for it?" and this answers "where is it?", so they differ in
@@ -1090,14 +1119,34 @@ export interface Transcript {
 }
 
 /**
+ * Who is on one channel of a two-channel recording, from
+ * `pbx.callRecords.transcript()`.
+ *
+ * `party` is the extension (`105`) or the phone number in E.164
+ * (`+15125550100`). `role` says whether that person placed (`caller`) or
+ * received (`callee`) the call; it is absent when the call record does not
+ * say. **Which side is on which channel is NOT fixed** — read `role`, never
+ * assume channel 0 is the caller.
+ */
+export interface TranscriptChannel {
+  readonly channel: number | null;
+  readonly party: string | null;
+  readonly role?: "caller" | "callee";
+  readonly raw: RawJson;
+}
+
+/**
  * One turn of a conversation, from `pbx.callRecords.transcript()`.
  *
  * `speaker` is a label, not an identity: `Speaker 1`, `Speaker 2`, and so on.
  * It is stable within one transcript and means nothing across two. `start`
- * and `end` are seconds from the start of the recording.
+ * and `end` are seconds from the start of the recording. `channel` is the
+ * recording channel the turn was heard on (0 or 1; always 0 on a mono
+ * recording) and matches a `TranscriptChannel.channel`.
  */
 export interface TranscriptSegment {
   readonly speaker: string | null;
+  readonly channel: number | null;
   readonly start: number | null;
   readonly end: number | null;
   readonly text: string | null;
@@ -1294,7 +1343,7 @@ export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
 /**
  * Build from one `recordings` resource object.
  *
- * The attribute keys are camelCase (`cccId`, `byteSize`, `contentUrl`,
+ * The attribute keys are camelCase (`byteSize`, `contentUrl`,
  * `expiresAt`). They were KEBAB-CASE until the API renamed them, and the API
  * still sends both during its transition window, so an old kebab-case-only
  * response is bridged (`mediaBridged`).
@@ -1304,7 +1353,6 @@ export function recordingFromResource(resource: RawJson): Recording {
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
-    cccId: text(attributes, "cccId"),
     duration: integer(attributes, "duration"),
     byteSize: integer(attributes, "byteSize"),
     sha256: text(attributes, "sha256"),
@@ -1337,15 +1385,11 @@ export function transcriptFromResource(resource: RawJson): Transcript {
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
-    cccId: text(attributes, "cccId"),
     status: text(attributes, "status"),
     language: text(attributes, "language"),
     duration: integer(attributes, "duration"),
-    byteSize: integer(attributes, "byteSize"),
-    sha256: text(attributes, "sha256"),
-    contentUrl: text(attributes, "contentUrl"),
-    expiresAt: instant(attributes["expiresAt"]),
     segments: segmentsFrom(attributes),
+    channels: channelsFrom(attributes),
     transcriptStatus: text(attributes, "transcriptStatus"),
     callRecordId: text(attributes, "callRecordId"),
     raw: resource,
@@ -1367,12 +1411,35 @@ function segmentsFrom(attributes: RawJson): readonly TranscriptSegment[] | null 
     value.filter(isRecord).map((segment) =>
       Object.freeze({
         speaker: text(segment, "speaker"),
+        channel: integer(segment, "channel"),
         start: finiteNumber(segment, "start"),
         end: finiteNumber(segment, "end"),
         text: text(segment, "text"),
         raw: segment,
       }),
     ),
+  );
+}
+
+/**
+ * The `channels` member as a frozen array, or null when it was not served.
+ * An empty array is a real answer: a one-channel (mono) recording.
+ */
+function channelsFrom(attributes: RawJson): readonly TranscriptChannel[] | null {
+  const value = attributes["channels"];
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  return Object.freeze(
+    value.filter(isRecord).map((entry) => {
+      const role = text(entry, "role");
+      return Object.freeze({
+        channel: integer(entry, "channel"),
+        party: text(entry, "party"),
+        ...(role === "caller" || role === "callee" ? { role } : {}),
+        raw: entry,
+      });
+    }),
   );
 }
 

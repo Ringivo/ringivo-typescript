@@ -42,7 +42,7 @@
  * `displayName`, `includeHidden` — the API's own spelling since its 2026-09
  * rename, which 0.11.0 of this package follows. The recordings and
  * transcripts documents still spell their attributes in kebab-case
- * (`ccc-id`, `content-url`); src/models.ts reads each as the API writes it.
+ * (`byte-size`, `content-url`); src/models.ts reads each as the API writes it.
  */
 import type { components } from "./_generated/schema.js";
 import type { Ringivo } from "./client.js";

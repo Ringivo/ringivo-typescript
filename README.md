@@ -192,8 +192,9 @@ const fax = await client.faxes.send({
 console.log(fax.id, fax.status); // 0198c4a1-… queued
 ```
 
-`send()` returns as soon as the fax is **accepted**. The render and the call
-happen afterwards, so `status` is `queued` here — read the fax again to see
+`send()` returns as soon as the fax is **accepted**, as a complete `Fax`
+(0.16.0 asks for JSON:API; `cancel()`, `mediaLink()` and `thumbnailLink()` do
+too). The render and the call happen afterwards, so `status` is `queued` here — read the fax again to see
 how it ended:
 
 ```ts
@@ -258,7 +259,8 @@ await writeFile("received.pdf", pdf);
 
 `media()` mints a short-lived download link and follows it for you. Use
 `mediaLink()` instead if you want the URL and its expiry — but do not cache
-it or pass it on: anyone holding it reads that document.
+it or pass it on: anyone holding it reads that document. It also carries
+the document's `id`, `kind` and `contentType` (`null` against an older API).
 
 `thumbnailLink()` mints the same kind of link for the first-page preview, a
 PNG — the one a list screen shows beside each fax.
@@ -716,10 +718,10 @@ neither is paginated: this is the captures of one call, bounded by its two
 legs, never a walk over a growing table, so there is no `after`/`before`
 cursor and nothing beyond the array you get back.
 
-`recording.contentUrl` and `transcript.contentUrl` are signed, time-limited
-links minted fresh on every call. Do not cache one past its `expiresAt` or
-hand it to anyone else — whoever holds the URL can fetch that document with
-no further authorization.
+`recording.contentUrl` is a signed, time-limited link minted fresh on every
+call. Do not cache it past its `expiresAt` or hand it to anyone else —
+whoever holds the URL can fetch the audio with no further authorization. A
+transcript has no link: its words are its `segments`.
 
 **Save a recording with the extension its `contentType` names.** New
 recordings are `audio/webm` (two-channel Opus: the first channel is the call's
@@ -740,6 +742,16 @@ is `failed`.
 stopped sending them on 2026-10-01: which speech-to-text service made a
 transcript is not part of it. Remove every read of them. Nothing replaces
 them.
+
+**0.16.0 also changed the transcript and the recording.** A `Transcript` has
+a `channels` list — who is on each channel of a two-channel recording — and
+each `TranscriptSegment` has a `channel` (0 or 1; 0 on a mono recording).
+`cccId`, `byteSize`, `sha256`, `contentUrl` and `expiresAt` are removed from
+`Transcript`, and the transcript download is gone: read `segments` instead.
+`cccId` is removed from `Recording`. `Transcript.status` is deprecated: read
+`transcriptStatus`. Faxes: `send()`, `cancel()`, `mediaLink()` and
+`thumbnailLink()` now ask for JSON:API, and `MediaLink` gains `id`, `kind` and
+`contentType`.
 
 `transcripts()` answers one item per **recording**, not one per transcript
 that exists: a capture with no words yet still appears here, as a
@@ -780,7 +792,19 @@ about too often, 3 times a day by default across all of its captures). Both
 429s carry `retryAfter` in seconds.
 
 `transcript()` reads one capture with its `segments`, the turns of the
-conversation. Until the words are ready it is a 404 whose `code` says why:
+conversation, and its `channels`:
+
+```ts
+for (const { channel, party, role } of transcript.channels ?? []) {
+  console.log(channel, party, role); // 0 "105" "callee", 1 "+15125550100" "caller"
+}
+```
+
+`party` is an extension or an E.164 number. `role` is `caller` or `callee`,
+and is absent when the call record does not say. **Which side is on which
+channel is not fixed**, so read `role`; do not assume channel 0 is the
+caller. `channels` is `null` where it is not served (the list and the
+`requestTranscript()` answer) and `[]` for a one-channel recording. Until the words are ready it is a 404 whose `code` says why:
 `transcript_not_requested`, `transcript_pending` or `transcript_failed`.
 
 #### Waiting for a recording: webhooks, or polling the status
@@ -1100,7 +1124,7 @@ decision and not a library's.
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
-`Transcript`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
+`Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
 `WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
 built from in `.raw` — so a member the API adds after this release reaches
 you without a new SDK. A member the API did not send reads `null`.

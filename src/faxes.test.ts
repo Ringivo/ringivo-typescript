@@ -20,6 +20,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Calls, mockServer } from "../tests/msw.js";
 import { ApiError, Ringivo, VERSION } from "./index.js";
 import type { FaxUpload } from "./index.js";
+import { mediaLinkFromJson } from "./models.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -127,8 +128,8 @@ describe("send", () => {
     const { request, body } = sends.last;
 
     expect(request.headers.get("content-type")).toMatch(/^multipart\/form-data; boundary=/);
-    // The four endpoints that are not JSON:API say so, and this is one.
-    expect(request.headers.get("accept")).toBe("application/json");
+    // The answer is the JSON:API `faxes` document, and only this Accept gets it.
+    expect(request.headers.get("accept")).toBe("application/vnd.api+json");
     expect(body).toContain('name="faxAccount"');
     expect(body).toContain(ACCOUNT_ID);
     expect(body).toContain('name="to"');
@@ -210,6 +211,43 @@ describe("send", () => {
     replayHeader = false;
     const fresh = await faxes.send({ faxAccount: ACCOUNT_ID, to: "+1302", file: one });
     expect(fresh.idempotentReplay).toBe(false);
+  });
+
+  it("parses the JSON:API faxes resource into a complete fax", async () => {
+    recordSends(() =>
+      HttpResponse.json(
+        { data: faxResource() },
+        { status: 202, headers: { "Idempotent-Replay": "true" } },
+      ),
+    );
+
+    const fax = await client().faxes.send({
+      faxAccount: ACCOUNT_ID,
+      to: "+13025556789",
+      file: new Uint8Array([97]),
+    });
+
+    expect(fax.id).toBe(FAX_ID);
+    expect(fax.status).toBe("received");
+    expect(fax.pagesTotal).toBe(3);
+    expect(fax.documents).toHaveLength(1);
+    expect(fax.tags).toEqual({ clinic: "north" });
+    expect(fax.idempotentReplay).toBe(true);
+  });
+
+  it("falls back to the flat acknowledgement an older server answers", async () => {
+    recordSends();
+
+    const fax = await client().faxes.send({
+      faxAccount: ACCOUNT_ID,
+      to: "+13025556789",
+      file: new Uint8Array([97]),
+    });
+
+    expect(fax.id).toBe(FAX_ID);
+    expect(fax.status).toBe("queued");
+    expect(fax.pagesTotal).toBeNull();
+    expect(fax.idempotentReplay).toBe(false);
   });
 
   it("posts flat JSON for urls, and never a JSON:API document", async () => {
@@ -726,10 +764,23 @@ describe("cancel", () => {
 
     const fax = await client().faxes.cancel(FAX_ID);
 
-    expect(calls.last.request.headers.get("accept")).toBe("application/json");
+    expect(calls.last.request.headers.get("accept")).toBe("application/vnd.api+json");
     expect(fax.id).toBe(FAX_ID);
     expect(fax.status).toBe("cancelled");
     // A cancel is not a send, so it says nothing about a replay.
+    expect(fax.idempotentReplay).toBeNull();
+  });
+
+  it("parses the JSON:API faxes resource into a complete fax", async () => {
+    server.use(
+      http.post(`${FAX_URL}/cancel`, () => HttpResponse.json({ data: faxResource() })),
+    );
+
+    const fax = await client().faxes.cancel(FAX_ID);
+
+    expect(fax.status).toBe("received");
+    expect(fax.pagesTotal).toBe(3);
+    expect(fax.documents).toHaveLength(1);
     expect(fax.idempotentReplay).toBeNull();
   });
 
@@ -821,10 +872,61 @@ describe("media", () => {
     const media = await client().faxes.mediaLink(FAX_ID, { format: "tiff" });
 
     expect(calls.last.url.searchParams.get("format")).toBe("tiff");
-    expect(calls.last.request.headers.get("accept")).toBe("application/json");
+    expect(calls.last.request.headers.get("accept")).toBe("application/vnd.api+json");
     expect(media.url.endsWith("signature=abc")).toBe(true);
     expect(media.byteSize).toBe(128);
     expect(media.expiresAt?.toISOString()).toBe("2026-08-16T11:07:31.000Z");
+  });
+
+  it("parses the JSON:API fax-documents resource, contentUrl becoming url", async () => {
+    const DOC_ID = "0198c4a1-4d5e-7f60-b2c3-d4e5f6a7b8c9";
+    const calls = new Calls();
+    server.use(
+      http.get(`${FAX_URL}/media`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({
+          data: {
+            type: "fax-documents",
+            id: DOC_ID,
+            attributes: {
+              kind: "pdf",
+              contentType: "application/pdf",
+              byteSize: 40960,
+              sha256: "e".repeat(64),
+              contentUrl: "https://objects.example.net/fax/0198c4a1/document.pdf?signature=abc",
+              expiresAt: "2026-08-16T11:07:31+00:00",
+            },
+          },
+        });
+      }),
+    );
+
+    const media = await client().faxes.mediaLink(FAX_ID);
+
+    expect(calls.last.request.headers.get("accept")).toBe("application/vnd.api+json");
+    expect(media.id).toBe(DOC_ID);
+    expect(media.kind).toBe("pdf");
+    expect(media.contentType).toBe("application/pdf");
+    expect(media.url).toBe("https://objects.example.net/fax/0198c4a1/document.pdf?signature=abc");
+    expect(media.byteSize).toBe(40960);
+    expect(media.sha256).toBe("e".repeat(64));
+    expect(media.expiresAt?.toISOString()).toBe("2026-08-16T11:07:31.000Z");
+  });
+
+  it("still parses the old flat shape, with id, kind and contentType null", () => {
+    const media = mediaLinkFromJson({
+      url: "https://objects.example.net/x?signature=abc",
+      expiresAt: "2026-08-16T11:07:31+00:00",
+      byteSize: 128,
+      sha256: "d".repeat(64),
+    });
+
+    expect(media.url).toBe("https://objects.example.net/x?signature=abc");
+    expect(media.byteSize).toBe(128);
+    expect(media.sha256).toBe("d".repeat(64));
+    expect(media.id).toBeNull();
+    expect(media.kind).toBeNull();
+    expect(media.contentType).toBeNull();
   });
 
   it("mints the first-page preview link with thumbnailLink()", async () => {
@@ -843,7 +945,7 @@ describe("media", () => {
 
     const link = await client().faxes.thumbnailLink(FAX_ID);
 
-    expect(calls.last.request.headers.get("accept")).toBe("application/json");
+    expect(calls.last.request.headers.get("accept")).toBe("application/vnd.api+json");
     // No `format`: the preview is one PNG, not a choice of document kinds.
     expect(calls.last.url.searchParams.has("format")).toBe(false);
     expect(link.url.endsWith("signature=abc")).toBe(true);
