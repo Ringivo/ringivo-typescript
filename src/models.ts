@@ -1053,9 +1053,11 @@ export interface Recording {
  * `recordings()` published for the same capture.
  *
  * `contentUrl` is a signed, time-limited link to the stored transcript
- * document (the speech-to-text provider's own response, not the audio) —
- * the same rule as `Recording.contentUrl`: do not cache it past
- * `expiresAt`.
+ * document (not the audio) — the same rule as `Recording.contentUrl`: do
+ * not cache it past `expiresAt`.
+ *
+ * There is no `provider` or `model`: 0.16.0 removed both, with the API.
+ * Which speech-to-text service made a transcript is not part of it.
  *
  * `segments` is the turns of the conversation, and only `transcript()` serves
  * them: it is null on every other answer, which means "not served here",
@@ -1069,8 +1071,6 @@ export interface Transcript {
   readonly duration: number | null;
   readonly byteSize: number | null;
   readonly sha256: string | null;
-  readonly provider: string | null;
-  readonly model: string | null;
   readonly contentUrl: string | null;
   readonly expiresAt: Date | null;
   readonly segments: readonly TranscriptSegment[] | null;
@@ -1343,8 +1343,6 @@ export function transcriptFromResource(resource: RawJson): Transcript {
     duration: integer(attributes, "duration"),
     byteSize: integer(attributes, "byteSize"),
     sha256: text(attributes, "sha256"),
-    provider: text(attributes, "provider"),
-    model: text(attributes, "model"),
     contentUrl: text(attributes, "contentUrl"),
     expiresAt: instant(attributes["expiresAt"]),
     segments: segmentsFrom(attributes),
