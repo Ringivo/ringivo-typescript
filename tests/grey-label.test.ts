@@ -26,13 +26,17 @@ import { describe, expect, it } from "vitest";
 import { Ringivo } from "../src/index.js";
 
 // The names this package must never carry, kept rot13-encoded so this public
-// repository does not itself spell them anywhere.
+// repository does not itself spell them anywhere. The second group is the
+// speech-to-text service and its model family: the API stopped naming them
+// on 2026-10-01, and nothing here may name them either. The model family is
+// matched at a word start only, so an ordinary word that contains it does
+// not fail the test.
 const rot13 = (s: string): string =>
   s.replace(/[a-z]/g, (c) =>
     String.fromCharCode(((c.charCodeAt(0) - 97 + 13) % 26) + 97),
   );
 const FORBIDDEN = new RegExp(
-  `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|ringivo\\.com`,
+  `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|${rot13("qrrctenz")}|\\b${rot13("abin")}|ringivo\\.com`,
   "gi",
 );
 
@@ -87,6 +91,14 @@ describe("the published tarball", () => {
       Object.fromEntries(offenders),
       `${offenders.size} of ${files.length} built files name a forbidden brand or host`,
     ).toEqual({});
+  });
+
+  it("refuses the speech-to-text names (the control for the scan above)", () => {
+    // A pattern that matched nothing would make that scan pass in silence.
+    const once = new RegExp(FORBIDDEN.source, "i");
+    expect(once.test(`made by ${rot13("qrrctenz").toUpperCase()}`)).toBe(true);
+    expect(once.test(`model: ${rot13("abin")}-3`)).toBe(true);
+    expect(once.test("an innovation in transcripts")).toBe(false);
   });
 
   it("compiles in no base URL of its own", () => {

@@ -164,8 +164,6 @@ function transcriptResource(
       duration: 64,
       "byte-size": 2048,
       sha256: "b".repeat(64),
-      provider: "deepgram",
-      model: "nova-3",
       "content-url": `${BASE_URL}/v1/pbx/transcripts-content/signed-token`,
       "expires-at": "2026-09-12T15:00:00Z",
       // Members added after the kebab-case rename: camelCase only.
@@ -843,13 +841,32 @@ describe("callRecords.transcripts", () => {
     expect(transcript?.duration).toBe(64);
     expect(transcript?.byteSize).toBe(2048);
     expect(transcript?.sha256).toBe("b".repeat(64));
-    expect(transcript?.provider).toBe("deepgram");
-    expect(transcript?.model).toBe("nova-3");
     expect(transcript?.contentUrl).toBe(`${BASE_URL}/v1/pbx/transcripts-content/signed-token`);
     expect(transcript?.expiresAt?.toISOString()).toBe("2026-09-12T15:00:00.000Z");
     expect(transcript?.transcriptStatus).toBe("available");
     expect(transcript?.callRecordId).toBe(CALL_RECORD_ID);
     expect(Object.isFrozen(transcript)).toBe(true);
+  });
+
+  it("names no speech-to-text service, even when an older API sends one", async () => {
+    // The API removed `provider` and `model` on 2026-10-01 (0.16.0 here).
+    // An API from before that still sends them: they stay in `raw` and
+    // reach no member, so no code path can hand them to a caller.
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json({
+          data: [transcriptResource({ provider: "some-service", model: "some-model" })],
+        }),
+      ),
+    );
+
+    const [transcript] = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    expect(transcript).toBeDefined();
+    expect(Object.keys(transcript ?? {})).not.toContain("provider");
+    expect(Object.keys(transcript ?? {})).not.toContain("model");
+    const attributes = (transcript?.raw as { attributes: Record<string, unknown> }).attributes;
+    expect(attributes["provider"]).toBe("some-service");
   });
 
   it("reads a failed transcript that may be asked for again", async () => {
@@ -882,8 +899,6 @@ describe("callRecords.transcripts", () => {
               duration: null,
               "byte-size": null,
               sha256: null,
-              provider: null,
-              model: null,
               "content-url": null,
               "expires-at": null,
             }),
@@ -899,8 +914,6 @@ describe("callRecords.transcripts", () => {
     expect(transcript?.duration).toBeNull();
     expect(transcript?.byteSize).toBeNull();
     expect(transcript?.sha256).toBeNull();
-    expect(transcript?.provider).toBeNull();
-    expect(transcript?.model).toBeNull();
     expect(transcript?.contentUrl).toBeNull();
     expect(transcript?.expiresAt).toBeNull();
   });
@@ -1051,8 +1064,6 @@ describe("callRecords.requestTranscript", () => {
     duration: null,
     "byte-size": null,
     sha256: null,
-    provider: null,
-    model: null,
     "content-url": null,
     "expires-at": null,
   };
