@@ -13123,10 +13123,10 @@ export interface operations {
                  * @example displayName
                  */
                 sort?: "user" | "-user" | "displayName" | "-displayName";
-                /** @description Only the subscribers of this customer's PBX domain. */
+                /** @description Only the subscribers of this customer's PBX domain. The id is matched in any case. */
                 "filter[customer]"?: string;
                 /**
-                 * @description Exact match on the extension. `101` does not match `1010`.
+                 * @description Whole-value match on the extension, ignoring case as the switch does (`sales` matches `Sales`). `101` does not match `1010`.
                  * @example 101
                  */
                 "filter[user]"?: string;
@@ -13145,8 +13145,9 @@ export interface operations {
                 "filter[kind]"?: string;
                 /**
                  * @description `true` for subscribers with at least one device registration, `false` for those with
-                 *     none — the same devices the `devices` relationship lists. Any other value is refused
-                 *     with a **400**, never read as `false`.
+                 *     none. A registration naming the subscriber in another case (`sales` for `Sales`) counts,
+                 *     as on the phone system. Any other value is refused with a **400**, never read as
+                 *     `false`.
                  * @example true
                  */
                 "filter[hasDevices]"?: boolean;
@@ -13307,11 +13308,13 @@ export interface operations {
                 "page[before]"?: components["parameters"]["PageBefore"];
                 /** @description `aor` (the default), reversible with a leading `-`. */
                 sort?: "aor" | "-aor";
-                /** @description Only the registrations on this customer's PBX domain. */
+                /** @description Only the registrations on this customer's PBX domain. The id is matched in any case. */
                 "filter[customer]"?: string;
                 /**
                  * @description Only the registrations belonging to this PBX **subscriber id** — not an extension. An id
-                 *     you cannot reach answers an empty page rather than a refusal.
+                 *     you cannot reach answers an empty page rather than a refusal. The id is matched in any
+                 *     case, and a registration naming the subscriber in another case (`sales` for `Sales`)
+                 *     belongs to it, as on the phone system.
                  */
                 "filter[subscriber]"?: string;
                 /** @description `true` for registrations that have not expired, `false` for the rest. */
@@ -13435,7 +13438,7 @@ export interface operations {
                 "page[before]"?: components["parameters"]["PageBefore"];
                 /** @description `-startedAt` (the default, newest first) or `startedAt`. */
                 sort?: "-startedAt" | "startedAt";
-                /** @description Only the calls on this customer's PBX domain. */
+                /** @description Only the calls on this customer's PBX domain. The id is matched in any case. */
                 "filter[customer]"?: string;
                 /**
                  * @description Calls that started at or after this moment, RFC 3339.
@@ -13470,10 +13473,16 @@ export interface operations {
                  * @example direction,startedAt,vendorId,terminatedTo
                  */
                 "fields[call-records]"?: string;
-                /** @description Calls with this PBX **subscriber id** on either leg — placed by them or taken by them. */
+                /**
+                 * @description Calls with this PBX **subscriber id** on either leg — placed by them or taken by them.
+                 *     The id is matched in any case, and a leg naming the subscriber in another case (`SALES`
+                 *     for `Sales`) is theirs, as on the phone system.
+                 */
                 "filter[subscriber]"?: string;
                 /**
-                 * @description The records that carry ONE call id. Three kinds of id match:
+                 * @description The records that carry ONE call id. **Exact and case-sensitive** (RFC 3261 compares a
+                 *     Call-ID byte by byte): send the id exactly as you received it; the same id in another
+                 *     case finds nothing. Three kinds of id match:
                  *
                  *     - the `id` that `POST /v1/pbx/subscribers/{subscriber}/calls` answered with (a
                  *       click-to-dial call);

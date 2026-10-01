@@ -97,6 +97,20 @@ info:
     **422** whose `source.pointer` names the member, like any other invalid value. Before this rule,
     some filters read an unknown word as `false` and a body took `1` and `"0"`; neither does now.
 
+    ## Case sensitivity
+
+    On `/v1/pbx/`, every id and every filter value is matched **in any case**, with one exception:
+    `filter[callId]`.
+
+    - **Ids** (in a path, and in `filter[customer]` and `filter[subscriber]`) are UUIDs. Send them in
+      any case. We always return them in lower case.
+    - **`filter[user]`, `filter[subscriber]`, `filter[hasDevices]` and `filter[search]`** match the
+      way the phone system matches: `sales` finds the subscriber `Sales`, and a device registered as
+      `sales` belongs to `Sales`. Values are returned as the phone system wrote them.
+    - **`filter[callId]` is exact and case-sensitive.** A SIP Call-ID is compared byte by byte
+      (RFC 3261 §8.1.1.4), so send it exactly as you received it. `Sip-1@host` does not find
+      `sip-1@host`. This also holds for a click-to-dial id: send the `id` you got back, unchanged.
+
     ## Changes
 
     ### Recordings may be `audio/webm` (2026-09-28)
@@ -6091,12 +6105,12 @@ paths:
         - name: filter[customer]
           in: query
           required: false
-          description: Only the subscribers of this customer's PBX domain.
+          description: Only the subscribers of this customer's PBX domain. The id is matched in any case.
           schema: { type: string, format: uuid }
         - name: filter[user]
           in: query
           required: false
-          description: Exact match on the extension. `101` does not match `1010`.
+          description: Whole-value match on the extension, ignoring case as the switch does (`sales` matches `Sales`). `101` does not match `1010`.
           schema: { type: string }
           example: '101'
         - name: filter[search]
@@ -6121,8 +6135,9 @@ paths:
           required: false
           description: |
             `true` for subscribers with at least one device registration, `false` for those with
-            none — the same devices the `devices` relationship lists. Any other value is refused
-            with a **400**, never read as `false`.
+            none. A registration naming the subscriber in another case (`sales` for `Sales`) counts,
+            as on the phone system. Any other value is refused with a **400**, never read as
+            `false`.
           schema: { type: boolean }
           example: true
       responses:
@@ -6280,14 +6295,16 @@ paths:
         - name: filter[customer]
           in: query
           required: false
-          description: Only the registrations on this customer's PBX domain.
+          description: Only the registrations on this customer's PBX domain. The id is matched in any case.
           schema: { type: string, format: uuid }
         - name: filter[subscriber]
           in: query
           required: false
           description: |
             Only the registrations belonging to this PBX **subscriber id** — not an extension. An id
-            you cannot reach answers an empty page rather than a refusal.
+            you cannot reach answers an empty page rather than a refusal. The id is matched in any
+            case, and a registration naming the subscriber in another case (`sales` for `Sales`)
+            belongs to it, as on the phone system.
           schema: { type: string, format: uuid }
         - name: filter[registered]
           in: query
@@ -6389,7 +6406,7 @@ paths:
         - name: filter[customer]
           in: query
           required: false
-          description: Only the calls on this customer's PBX domain.
+          description: Only the calls on this customer's PBX domain. The id is matched in any case.
           schema: { type: string, format: uuid }
         - name: filter[startedAfter]
           in: query
@@ -6436,12 +6453,16 @@ paths:
           required: false
           description: |
             Calls with this PBX **subscriber id** on either leg — placed by them or taken by them.
+            The id is matched in any case, and a leg naming the subscriber in another case (`SALES`
+            for `Sales`) is theirs, as on the phone system.
           schema: { type: string, format: uuid }
         - name: filter[callId]
           in: query
           required: false
           description: |
-            The records that carry ONE call id. Three kinds of id match:
+            The records that carry ONE call id. **Exact and case-sensitive** (RFC 3261 compares a
+            Call-ID byte by byte): send the id exactly as you received it; the same id in another
+            case finds nothing. Three kinds of id match:
 
             - the `id` that `POST /v1/pbx/subscribers/{subscriber}/calls` answered with (a
               click-to-dial call);
