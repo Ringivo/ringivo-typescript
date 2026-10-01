@@ -763,7 +763,7 @@ try {
   } else throw error;
 }
 
-// later, or when the call_transcript.available webhook arrives:
+// later, or when the pbx.transcript.created webhook arrives:
 const transcript = await client.pbx.callRecords.transcript(call.id, recording.id);
 for (const turn of transcript.segments ?? []) {
   console.log(turn.speaker, turn.start, turn.text);
@@ -788,14 +788,14 @@ conversation. Until the words are ready it is a 404 whose `code` says why:
 A recording lands about a minute after the call ends, and a transcript later
 still. There are two ways to learn that it is ready.
 
-**Webhooks (preferred).** Subscribe an endpoint to `call_recording.available`
-and `call_transcript.available` (see [Webhook endpoints](#webhook-endpoints)).
+**Webhooks (preferred).** Subscribe an endpoint to `pbx.recording.created`
+and `pbx.transcript.created` (see [Webhook endpoints](#webhook-endpoints)).
 The event body names what arrived but carries no link to it. Read its
 `callRecordId` and ask for the media:
 
 ```ts
 const event = JSON.parse(rawBody); // after verifyWebhook()
-if (event.type === "call_recording.available") {
+if (event.type === "pbx.recording.created") {
   const { callRecordId, callId } = event.data;
   const recordings =
     callRecordId !== null
@@ -829,7 +829,7 @@ if (record.recordingStatus === "available") {
 ```
 
 `failed` is not final: if a slow conversion completes later, the recording
-lands, the status becomes `available` and `call_recording.available` is sent
+lands, the status becomes `available` and `pbx.recording.created` is sent
 as usual. Poll `transcriptStatus` the same way after `requestTranscript()`: it
 moves from `requested` to `processing` to `available` or `failed`.
 
@@ -945,8 +945,8 @@ for (const record of records.callRecords) {
 
 `callId` takes the `id` that `subscribers.call()` returned. The record appears once
 the call has ended. It also takes a leg's SIP Call-ID (`origCallId` or
-`termCallId` on a record) and the `callId` of a `call_recording.available` or
-`call_transcript.available` webhook.
+`termCallId` on a record) and the `callId` of a `pbx.recording.created` or
+`pbx.transcript.created` webhook.
 
 **The date range still applies.** The call id is matched only inside the
 months your range covers, and with no `startedAfter` or `startedBefore` that is
