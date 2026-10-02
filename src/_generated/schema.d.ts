@@ -1142,6 +1142,114 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/available-numbers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search the numbers you can buy
+         * @description Numbers the carriers can sell you now, each with the `offerToken` you spend to buy it with
+         *     `POST /v1/number-orders`. An offer is the carriers' answer to this one search, not a stored
+         *     record, so there is no `GET` by id: search again for fresh offers.
+         *
+         *     **Search one way at a time.** By area code (`filter[npa]`, and `filter[nxx]` for one
+         *     exchange), by place (`filter[state]`, and `filter[rateCenter]` within it), or toll-free
+         *     (`filter[tollFree]=true`, with `filter[npa]` as the toll-free prefix). Mixing the area-code
+         *     and place searches is refused with a 422 that names the parameter.
+         *
+         *     **A query key this search does not have is refused, never ignored.** A dropped filter would
+         *     widen the search and offer numbers you did not ask for. The bare keys this endpoint took
+         *     before 2026-10-01 (`npa`, `toll_free`, `rate_center`, `quantity`, …) are refused the same way.
+         */
+        get: operations["searchAvailableNumbers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/number-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Buy numbers you found with the availability search
+         * @description Buy up to 25 numbers by the `offerToken`s `GET /v1/available-numbers` handed you.
+         *
+         *     It answers **202**: the numbers are yours and in your inventory at once, each `pending`, and
+         *     the carrier activates them in the background. Read a number back at
+         *     `GET /v1/phone-numbers/{phoneNumber}` to see it become `active`. Do not send the order again
+         *     to hurry it — a second order is a second purchase.
+         */
+        post: operations["orderNumbers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/rates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read your rate sheet
+         * @description Every rate you are charged, one `rates` resource per rate. Each tier's `amount` is YOUR price:
+         *     a price agreed for your account where there is one, the standard price otherwise. The list is
+         *     ordered by category, then by service name.
+         *
+         *     **Not paged.** It is one rate sheet, not a walk over a growing table.
+         */
+        get: operations["listRates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/regions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read where you may place a customer
+         * @description The values `POST /v1/customers` accepts for `dataResidencyCountry` and `regionPreference`:
+         *     one `regions` resource per country a customer's data may be kept in, whose `id` is the
+         *     country code and whose `options` are the primary regions you may choose there.
+         *
+         *     **It is about your account.** The leading `partner_default` option appears only when your
+         *     own default region is in that country, labelled with the region it resolves to today. A
+         *     country where no region can take a customer yet is not listed.
+         *
+         *     **Not paged.** The list is a handful of countries.
+         */
+        get: operations["listRegions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/number-lookups": {
         parameters: {
             query?: never;
@@ -1172,9 +1280,10 @@ export interface paths {
          *     proxies, prefetchers and retry logic are entitled to repeat one — and each repeat would be
          *     another charge.
          *
-         *     **Nothing is stored.** We return the answer and keep no copy of it, so there is no
-         *     `GET /v1/number-lookups/{id}` to come back to and no id to come back with. Keep what you need
-         *     from the response.
+         *     **Nothing is stored.** We return the answer and keep no copy of it. The answer is a
+         *     `number-lookups` resource whose `id` is the number looked up, in E.164 — but there is no
+         *     `GET /v1/number-lookups/{id}` to come back to and no `self` link, because there is nothing to
+         *     fetch again. Keep what you need from the response.
          *
          *     ## The two geographies are two different facts
          *
@@ -4882,9 +4991,7 @@ export interface components {
             callerName: components["schemas"]["NumberLookupCallerNameComponent"];
             messaging: components["schemas"]["NumberLookupMessagingComponent"];
         };
-        NumberLookup: {
-            /** @description The number that was looked up, normalized to E.164. */
-            number: string;
+        NumberLookupAttributes: {
             /**
              * Format: date-time
              * @description When the components ran — so you can tell "we asked and learned nothing" from "we never
@@ -4899,8 +5006,126 @@ export interface components {
             dialedNumber: components["schemas"]["DialedNumberGeography"];
             components: components["schemas"]["NumberLookupComponents"];
         };
-        NumberLookupResult: {
-            data: components["schemas"]["NumberLookup"];
+        /**
+         * @description One lookup. Its `id` is the number looked up, normalized to E.164 — the thing the answer is
+         *     about. Nothing is stored, so it has no `self` link and cannot be read again by id.
+         */
+        NumberLookupResource: {
+            /** @enum {string} */
+            type: "number-lookups";
+            /**
+             * @description The number that was looked up, normalized to E.164.
+             * @example +16502530000
+             */
+            id: string;
+            attributes: components["schemas"]["NumberLookupAttributes"];
+        };
+        NumberLookupDocument: {
+            data: components["schemas"]["NumberLookupResource"];
+        };
+        /**
+         * @description One number on offer. Its `id` is the number in E.164. An offer is the answer to one search,
+         *     not a stored record: there is no `self` link and no `GET` by id.
+         */
+        AvailableNumberResource: {
+            /** @enum {string} */
+            type: "available-numbers";
+            /** @description The number in E.164. */
+            id: string;
+            attributes: {
+                /** @description The number in E.164. */
+                e164?: string;
+                /** @description ISO country code. */
+                country?: string;
+                /** @description Its state, from our own number-plan data; null when we hold none. */
+                state?: string | null;
+                /** @description Its rate center, from the same data; null for toll-free. */
+                rateCenter?: string | null;
+                /** @description What the number can do. */
+                capabilities?: ("sms" | "mms" | "voice" | "fax" | "emergency")[];
+                /**
+                 * @description Opaque. Spend it with `POST /v1/number-orders` to buy this number. It is issued to
+                 *     your account alone and is refused for any other.
+                 */
+                offerToken?: string;
+            };
+        };
+        AvailableNumberCollectionDocument: {
+            data: components["schemas"]["AvailableNumberResource"][];
+        };
+        NumberOrderRequest: {
+            /** @description The `offerToken`s of the numbers to buy, from `GET /v1/available-numbers`. */
+            offerTokens: string[];
+        };
+        RateResource: {
+            /** @enum {string} */
+            type: "rates";
+            /** Format: uuid */
+            id: string;
+            attributes: {
+                slug?: string;
+                name?: string;
+                /**
+                 * @description `nrc` a one-time charge; `mrc` a monthly one.
+                 * @enum {string}
+                 */
+                kind?: "nrc" | "mrc";
+                /** @description What one is: `number`, `minute`, `message`, … */
+                unit?: string;
+                /** @description How the price is worked out, where a number alone does not say it. */
+                pricingNote?: string | null;
+                /** @description The service this rate belongs to. */
+                service?: {
+                    /** Format: uuid */
+                    id?: string;
+                    slug?: string;
+                    name?: string;
+                };
+                /** @description The section of the rate sheet the service is in. */
+                category?: {
+                    slug?: string;
+                    name?: string;
+                };
+                /** @description The price per quantity band, lowest band first. */
+                tiers?: {
+                    /** Format: uuid */
+                    id?: string;
+                    minQty?: number;
+                    /** @description Null for an open-ended top band. */
+                    maxQty?: number | null;
+                    /**
+                     * @description YOUR price, in dollars, as a decimal string — a price agreed for your account
+                     *     where there is one, the standard price otherwise. Null when the price is not
+                     *     fixed yet ("ask us").
+                     */
+                    amount?: string | null;
+                }[];
+            };
+        };
+        RateCollectionDocument: {
+            data: components["schemas"]["RateResource"][];
+        };
+        /**
+         * @description The primary regions a customer may be placed in, for one country its data may be kept in. The
+         *     `id` is the country code — the value of `dataResidencyCountry`.
+         */
+        RegionResource: {
+            /** @enum {string} */
+            type: "regions";
+            /** @description ISO country code. */
+            id: string;
+            attributes: {
+                /** @description The values `regionPreference` takes in this country, in the order to offer them. */
+                options?: {
+                    /** @description The `regionPreference` value. */
+                    value?: string;
+                    /** @description A name to show a person. */
+                    label?: string;
+                }[];
+            };
+        };
+        RegionCollectionDocument: {
+            data: components["schemas"]["RegionResource"][];
         };
         /**
          * @description Where a queued write against somebody else's system stands. `pending` — we have recorded what
@@ -5803,62 +6028,28 @@ export interface components {
              */
             signer?: string;
         };
-        /**
-         * @description A flat acknowledgement, not a JSON:API document. Read the whole order back at
-         *     `GET /v1/port-orders/{portOrder}`.
-         */
-        PortOrderSubmitted: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                status?: components["schemas"]["PortOrderStatus"];
-                /** @description The set the order went in with, as it now stands. */
-                numbers?: string[];
-            };
-        };
-        PortOrderDocumentStored: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                kind?: components["schemas"]["PortDocumentKind"];
-                /**
-                 * @description The digest of the bytes as stored — the handle-free way to check we hold the file
-                 *     you sent.
-                 */
-                sha256?: string | null;
-            };
-        };
-        PortOrderLoaGenerated: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                /** @description The digest of the letter now waiting to be signed. */
-                sha256?: string | null;
-            };
-        };
-        PortOrderRequestLinkIssued: {
-            data: {
-                /** Format: uuid */
-                id?: string;
+        PortOrderRequestLinkDocument: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta: {
                 /**
                  * Format: uri
-                 * @description Your customer's link, on your own branded portal host. **Ask again whenever you need
-                 *     it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same URL for
-                 *     as long as the link is live, so you need not store it. It was the only copy until
-                 *     2026-09-01, when the token stopped being stored hashed-only.
+                 * @description Your customer's link, on your own branded portal host. **Ask again whenever you
+                 *     need it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same
+                 *     URL for as long as the link is live, so you need not store it.
                  */
-                url?: string;
+                url: string;
             };
         };
-        PortOrderRequestLinkRevoked: {
-            data: {
-                /** Format: uuid */
-                id?: string;
+        PortOrderRequestLinkRevokedDocument: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta: {
                 /**
                  * @description Whether anything was live to revoke. `false` is an ordinary answer — most orders
                  *     never have a link at all — and not an error.
                  */
-                revoked?: boolean;
+                revoked: boolean;
             };
         };
         PortOrderRequestLinkSendRequest: {
@@ -5872,15 +6063,15 @@ export interface components {
             /** @description Your own sentence to your customer, carried in the mail. */
             note?: string | null;
         };
-        PortOrderRequestLinkSent: {
-            data: {
-                /** Format: uuid */
-                id?: string;
+        PortOrderRequestLinkSentDocument: {
+            data: components["schemas"]["PortOrderResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta: {
                 /**
                  * Format: email
                  * @description The address the mail went to, echoed back.
                  */
-                sentTo?: string;
+                sentTo: string;
             };
         };
         /**
@@ -10308,6 +10499,232 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    searchAvailableNumbers: {
+        parameters: {
+            query?: {
+                /** @description Three-digit area code — or, with `filter[tollFree]=true`, the toll-free prefix. */
+                "filter[npa]"?: string;
+                /** @description Three-digit exchange. Needs `filter[npa]`. */
+                "filter[nxx]"?: string;
+                /** @description Two-letter state. */
+                "filter[state]"?: string;
+                /** @description Rate center name, within `filter[state]`. */
+                "filter[rateCenter]"?: string;
+                /** @description `true` for toll-free numbers. `true` or `false`, nothing else. */
+                "filter[tollFree]"?: "true" | "false";
+                /** @description `true` for a run of consecutive numbers. `true` or `false`, nothing else. */
+                "filter[contiguous]"?: "true" | "false";
+                /** @description How many numbers to offer. The default is 25 and the ceiling is 100. */
+                "page[size]"?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The numbers on offer. An empty `data` is a normal answer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "available-numbers",
+                     *           "id": "+13025046250",
+                     *           "attributes": {
+                     *             "e164": "+13025046250",
+                     *             "country": "US",
+                     *             "state": "DE",
+                     *             "rateCenter": "WILMINGTON",
+                     *             "capabilities": [
+                     *               "voice",
+                     *               "sms"
+                     *             ],
+                     *             "offerToken": "eyJpdiI6Ii4uLiJ9"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["AvailableNumberCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description A filter value or combination is refused; `source` names the parameter. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    orderNumbers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "offerTokens": [
+                 *         "eyJpdiI6Ii4uLiJ9"
+                 *       ]
+                 *     }
+                 */
+                "application/json": components["schemas"]["NumberOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description The numbers bought, as `phone-numbers` resources. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PhoneNumberCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description A number on the order is no longer available. Nothing was bought. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description The body is refused, or an offer token is not one we issued to you. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listRates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Your rates. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "rates",
+                     *           "id": "0198c4a1-77aa-7b10-8d21-3c4d5e6f7081",
+                     *           "attributes": {
+                     *             "slug": "did-local",
+                     *             "name": "Local DID",
+                     *             "kind": "mrc",
+                     *             "unit": "number",
+                     *             "pricingNote": null,
+                     *             "service": {
+                     *               "id": "0198c4a1-77aa-7b10-8d21-3c4d5e6f7000",
+                     *               "slug": "dids",
+                     *               "name": "DIDs"
+                     *             },
+                     *             "category": {
+                     *               "slug": "pbx-telco",
+                     *               "name": "PBX & Telco"
+                     *             },
+                     *             "tiers": [
+                     *               {
+                     *                 "id": "0198c4a1-77aa-7b10-8d21-3c4d5e6f7082",
+                     *                 "minQty": 1,
+                     *                 "maxQty": null,
+                     *                 "amount": "0.500000"
+                     *               }
+                     *             ]
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["RateCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listRegions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The placement options, per country. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "regions",
+                     *           "id": "US",
+                     *           "attributes": {
+                     *             "options": [
+                     *               {
+                     *                 "value": "partner_default",
+                     *                 "label": "Partner default (US East)"
+                     *               },
+                     *               {
+                     *                 "value": "use1",
+                     *                 "label": "US East"
+                     *               },
+                     *               {
+                     *                 "value": "usw1",
+                     *                 "label": "US West"
+                     *               }
+                     *             ]
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["RegionCollectionDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     lookUpNumber: {
         parameters: {
             query?: never;
@@ -10338,45 +10755,48 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
-                     *         "number": "+16502530000",
-                     *         "lookedUpAt": "2026-08-19T18:04:11+00:00",
-                     *         "charged": true,
-                     *         "dialedNumber": {
-                     *           "rateCenter": "MT VIEW",
-                     *           "state": "CA"
-                     *         },
-                     *         "components": {
-                     *           "lrn": {
-                     *             "status": "answered",
-                     *             "data": {
-                     *               "lrn": "14159686199",
-                     *               "spid": "8824",
-                     *               "ocn": "8826",
-                     *               "lata": "722",
-                     *               "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
-                     *               "lineType": "WIRELESS",
-                     *               "rateCenter": "MILLVALLEY",
-                     *               "state": "CA",
-                     *               "jurisdiction": "INDETERMINATE",
-                     *               "local": "INDETERMINATE",
-                     *               "portedAt": "2014-12-23T15:47:47+00:00"
-                     *             }
+                     *         "type": "number-lookups",
+                     *         "id": "+16502530000",
+                     *         "attributes": {
+                     *           "lookedUpAt": "2026-08-19T18:04:11+00:00",
+                     *           "charged": true,
+                     *           "dialedNumber": {
+                     *             "rateCenter": "MT VIEW",
+                     *             "state": "CA"
                      *           },
-                     *           "callerName": {
-                     *             "status": "answered",
-                     *             "data": {
-                     *               "name": "GOOGLEPLEX"
+                     *           "components": {
+                     *             "lrn": {
+                     *               "status": "answered",
+                     *               "data": {
+                     *                 "lrn": "14159686199",
+                     *                 "spid": "8824",
+                     *                 "ocn": "8826",
+                     *                 "lata": "722",
+                     *                 "lec": "LEVEL 3 COMMUNICATIONS, LLC - CA",
+                     *                 "lineType": "WIRELESS",
+                     *                 "rateCenter": "MILLVALLEY",
+                     *                 "state": "CA",
+                     *                 "jurisdiction": "INDETERMINATE",
+                     *                 "local": "INDETERMINATE",
+                     *                 "portedAt": "2014-12-23T15:47:47+00:00"
+                     *               }
+                     *             },
+                     *             "callerName": {
+                     *               "status": "answered",
+                     *               "data": {
+                     *                 "name": "GOOGLEPLEX"
+                     *               }
+                     *             },
+                     *             "messaging": {
+                     *               "status": "no_data",
+                     *               "data": null
                      *             }
-                     *           },
-                     *           "messaging": {
-                     *             "status": "no_data",
-                     *             "data": null
                      *           }
                      *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["NumberLookupResult"];
+                    "application/vnd.api+json": components["schemas"]["NumberLookupDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12334,7 +12754,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The order is with our desk. */
+            /** @description The order, as it now stands: with our desk (`awaiting_review`). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12343,16 +12763,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "status": "awaiting_review",
-                     *         "numbers": [
-                     *           "+13025046250",
-                     *           "+13025046251"
-                     *         ]
+                     *         "attributes": {
+                     *           "status": "awaiting_review"
+                     *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderSubmitted"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12428,7 +12847,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Stored, with the digest of the bytes as we now hold them. */
+            /** @description The order, as it now stands. `documents.{kind}.sha256` is the digest of the bytes as we now hold them. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12437,13 +12856,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "kind": "bill",
-                     *         "sha256": "623210167553939c87ed8c5f2bfe0b3e0684e12c3a3dd2513613c4e67263b5a1"
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderDocumentStored"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12492,7 +12913,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The letter, by its digest. */
+            /** @description The order, as it now stands. `unsignedLoa.sha256` is the digest of the letter now waiting to be signed. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12501,12 +12922,15 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
-                     *         "sha256": "2ab85836811bd0e27a120ef5cdb64c43687fff18b1f24cbcecb6e2519bf64175"
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderLoaGenerated"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderDocumentResponse"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12562,7 +12986,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Your customer's link. */
+            /** @description Your customer's link. The order, as it now stands, and the link in `meta.url`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12571,12 +12995,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "url": "https://portal.acme-telecom.example/port-request/3f9c1d0a7b52e864a1d3f70b9c2e8d465a70f1b3c9d2e846a70b1c3d5e79f204"
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkIssued"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12610,7 +13040,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Whether a live link was closed. */
+            /** @description The order, as it now stands, and in `meta.revoked` whether a live link was closed. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12619,12 +13049,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "revoked": true
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkRevoked"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkRevokedDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12645,7 +13081,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The new link. The previous one is already dead. */
+            /** @description The new link. The previous one is already dead. The order, as it now stands, and the link in `meta.url`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12654,12 +13090,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "url": "https://portal.acme-telecom.example/port-request/c1e4a70b93d25f86a4d1b30f7c9e2d86f5a01b7c3d9e28a640b1c7d3e5f9a2046"
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkIssued"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -12704,7 +13146,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Sent. */
+            /** @description Sent. The order, as it now stands, and in `meta.sentTo` the address the mail went to. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -12713,12 +13155,18 @@ export interface operations {
                     /**
                      * @example {
                      *       "data": {
+                     *         "type": "port-orders",
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "status": "draft"
+                     *         }
+                     *       },
+                     *       "meta": {
                      *         "sentTo": "grace@second-chances.example"
                      *       }
                      *     }
                      */
-                    "application/json": components["schemas"]["PortOrderRequestLinkSent"];
+                    "application/vnd.api+json": components["schemas"]["PortOrderRequestLinkSentDocument"];
                 };
             };
             401: components["responses"]["Unauthenticated"];

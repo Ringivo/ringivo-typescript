@@ -195,8 +195,9 @@ tags:
       the calls. A number goes into service in that order — give it to a customer, then point it at
       one of that customer's own destinations — and comes out of service in the reverse one.
 
-      The inventory itself is documented as it is written up: the list, one number, the availability
-      search, buying and releasing are not described here yet.
+      **Buying is two calls.** `GET /v1/available-numbers` offers numbers, each with an
+      `offerToken`; `POST /v1/number-orders` spends the tokens. The rest of the inventory — the
+      list, one number and releasing — is documented as it is written up.
   - name: Webhook endpoints
     description: |
       Where you want to be called back, and with what signing secret.
@@ -283,6 +284,10 @@ tags:
       **The carrier is absent from this resource, by decision.** Which wholesale carrier we file a
       port through is our supplier relationship, so nothing here names one: not the order, not its
       carrier-side reference, and not the carrier's own words about a number.
+  - name: Rates
+    description: |
+      What you are charged: your rate sheet, one `rates` resource per rate, each tier priced for your
+      account.
   - name: Tenants
     description: |
       Your own reseller account — one row, always yours. There is no list and no id to choose: the
@@ -3362,6 +3367,231 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/available-numbers:
+    get:
+      tags: [Phone numbers]
+      operationId: searchAvailableNumbers
+      summary: Search the numbers you can buy
+      description: |
+        Numbers the carriers can sell you now, each with the `offerToken` you spend to buy it with
+        `POST /v1/number-orders`. An offer is the carriers' answer to this one search, not a stored
+        record, so there is no `GET` by id: search again for fresh offers.
+
+        **Search one way at a time.** By area code (`filter[npa]`, and `filter[nxx]` for one
+        exchange), by place (`filter[state]`, and `filter[rateCenter]` within it), or toll-free
+        (`filter[tollFree]=true`, with `filter[npa]` as the toll-free prefix). Mixing the area-code
+        and place searches is refused with a 422 that names the parameter.
+
+        **A query key this search does not have is refused, never ignored.** A dropped filter would
+        widen the search and offer numbers you did not ask for. The bare keys this endpoint took
+        before 2026-10-01 (`npa`, `toll_free`, `rate_center`, `quantity`, …) are refused the same way.
+      security:
+        - personalAccessToken: []
+      parameters:
+        - name: filter[npa]
+          in: query
+          required: false
+          description: Three-digit area code — or, with `filter[tollFree]=true`, the toll-free prefix.
+          schema: { type: string, pattern: '^[0-9]{3}$' }
+        - name: filter[nxx]
+          in: query
+          required: false
+          description: Three-digit exchange. Needs `filter[npa]`.
+          schema: { type: string, pattern: '^[0-9]{3}$' }
+        - name: filter[state]
+          in: query
+          required: false
+          description: Two-letter state.
+          schema: { type: string, minLength: 2, maxLength: 2 }
+        - name: filter[rateCenter]
+          in: query
+          required: false
+          description: Rate center name, within `filter[state]`.
+          schema: { type: string, maxLength: 64 }
+        - name: filter[tollFree]
+          in: query
+          required: false
+          description: '`true` for toll-free numbers. `true` or `false`, nothing else.'
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: filter[contiguous]
+          in: query
+          required: false
+          description: '`true` for a run of consecutive numbers. `true` or `false`, nothing else.'
+          schema: { type: string, enum: ['true', 'false'] }
+        - name: page[size]
+          in: query
+          required: false
+          description: How many numbers to offer. The default is 25 and the ceiling is 100.
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The numbers on offer. An empty `data` is a normal answer.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/AvailableNumberCollectionDocument'
+              example:
+                data:
+                  - type: available-numbers
+                    id: '+13025046250'
+                    attributes:
+                      e164: '+13025046250'
+                      country: US
+                      state: DE
+                      rateCenter: WILMINGTON
+                      capabilities: [voice, sms]
+                      offerToken: eyJpdiI6Ii4uLiJ9
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: A filter value or combination is refused; `source` names the parameter.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/number-orders:
+    post:
+      tags: [Phone numbers]
+      operationId: orderNumbers
+      summary: Buy numbers you found with the availability search
+      description: |
+        Buy up to 25 numbers by the `offerToken`s `GET /v1/available-numbers` handed you.
+
+        It answers **202**: the numbers are yours and in your inventory at once, each `pending`, and
+        the carrier activates them in the background. Read a number back at
+        `GET /v1/phone-numbers/{phoneNumber}` to see it become `active`. Do not send the order again
+        to hurry it — a second order is a second purchase.
+      security:
+        - personalAccessToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NumberOrderRequest'
+            example:
+              offerTokens: [eyJpdiI6Ii4uLiJ9]
+      responses:
+        '202':
+          description: The numbers bought, as `phone-numbers` resources.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberCollectionDocument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: A number on the order is no longer available. Nothing was bought.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          description: The body is refused, or an offer token is not one we issued to you.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/rates:
+    get:
+      tags: [Rates]
+      operationId: listRates
+      summary: Read your rate sheet
+      description: |
+        Every rate you are charged, one `rates` resource per rate. Each tier's `amount` is YOUR price:
+        a price agreed for your account where there is one, the standard price otherwise. The list is
+        ordered by category, then by service name.
+
+        **Not paged.** It is one rate sheet, not a walk over a growing table.
+      security:
+        - personalAccessToken: []
+      responses:
+        '200':
+          description: Your rates.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/RateCollectionDocument'
+              example:
+                data:
+                  - type: rates
+                    id: 0198c4a1-77aa-7b10-8d21-3c4d5e6f7081
+                    attributes:
+                      slug: did-local
+                      name: Local DID
+                      kind: mrc
+                      unit: number
+                      pricingNote: null
+                      service:
+                        id: 0198c4a1-77aa-7b10-8d21-3c4d5e6f7000
+                        slug: dids
+                        name: DIDs
+                      category:
+                        slug: pbx-telco
+                        name: PBX & Telco
+                      tiers:
+                        - id: 0198c4a1-77aa-7b10-8d21-3c4d5e6f7082
+                          minQty: 1
+                          maxQty: null
+                          amount: '0.500000'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/regions:
+    get:
+      tags: [Customers]
+      operationId: listRegions
+      summary: Read where you may place a customer
+      description: |
+        The values `POST /v1/customers` accepts for `dataResidencyCountry` and `regionPreference`:
+        one `regions` resource per country a customer's data may be kept in, whose `id` is the
+        country code and whose `options` are the primary regions you may choose there.
+
+        **It is about your account.** The leading `partner_default` option appears only when your
+        own default region is in that country, labelled with the region it resolves to today. A
+        country where no region can take a customer yet is not listed.
+
+        **Not paged.** The list is a handful of countries.
+      responses:
+        '200':
+          description: The placement options, per country.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/RegionCollectionDocument'
+              example:
+                data:
+                  - type: regions
+                    id: US
+                    attributes:
+                      options:
+                        - value: partner_default
+                          label: Partner default (US East)
+                        - value: use1
+                          label: US East
+                        - value: usw1
+                          label: US West
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
   /v1/number-lookups:
     post:
       tags: [Number lookups]
@@ -3387,9 +3617,10 @@ paths:
         proxies, prefetchers and retry logic are entitled to repeat one — and each repeat would be
         another charge.
 
-        **Nothing is stored.** We return the answer and keep no copy of it, so there is no
-        `GET /v1/number-lookups/{id}` to come back to and no id to come back with. Keep what you need
-        from the response.
+        **Nothing is stored.** We return the answer and keep no copy of it. The answer is a
+        `number-lookups` resource whose `id` is the number looked up, in E.164 — but there is no
+        `GET /v1/number-lookups/{id}` to come back to and no `self` link, because there is nothing to
+        fetch again. Keep what you need from the response.
 
         ## The two geographies are two different facts
 
@@ -3436,39 +3667,41 @@ paths:
             The lookup. **200 and not 201** — nothing was created, and there is nothing to fetch
             again.
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/NumberLookupResult'
+                $ref: '#/components/schemas/NumberLookupDocument'
               example:
                 data:
-                  number: '+16502530000'
-                  lookedUpAt: '2026-08-19T18:04:11+00:00'
-                  charged: true
-                  dialedNumber:
-                    rateCenter: MT VIEW
-                    state: CA
-                  components:
-                    lrn:
-                      status: answered
-                      data:
-                        lrn: '14159686199'
-                        spid: '8824'
-                        ocn: '8826'
-                        lata: '722'
-                        lec: LEVEL 3 COMMUNICATIONS, LLC - CA
-                        lineType: WIRELESS
-                        rateCenter: MILLVALLEY
-                        state: CA
-                        jurisdiction: INDETERMINATE
-                        local: INDETERMINATE
-                        portedAt: '2014-12-23T15:47:47+00:00'
-                    callerName:
-                      status: answered
-                      data:
-                        name: GOOGLEPLEX
-                    messaging:
-                      status: no_data
-                      data: null
+                  type: number-lookups
+                  id: '+16502530000'
+                  attributes:
+                    lookedUpAt: '2026-08-19T18:04:11+00:00'
+                    charged: true
+                    dialedNumber:
+                      rateCenter: MT VIEW
+                      state: CA
+                    components:
+                      lrn:
+                        status: answered
+                        data:
+                          lrn: '14159686199'
+                          spid: '8824'
+                          ocn: '8826'
+                          lata: '722'
+                          lec: LEVEL 3 COMMUNICATIONS, LLC - CA
+                          lineType: WIRELESS
+                          rateCenter: MILLVALLEY
+                          state: CA
+                          jurisdiction: INDETERMINATE
+                          local: INDETERMINATE
+                          portedAt: '2014-12-23T15:47:47+00:00'
+                      callerName:
+                        status: answered
+                        data:
+                          name: GOOGLEPLEX
+                      messaging:
+                        status: no_data
+                        data: null
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -5359,16 +5592,17 @@ paths:
         - personalAccessToken: []
       responses:
         '200':
-          description: The order is with our desk.
+          description: 'The order, as it now stands: with our desk (`awaiting_review`).'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderSubmitted'
+                $ref: '#/components/schemas/PortOrderDocumentResponse'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
-                  status: awaiting_review
-                  numbers: ['+13025046250', '+13025046251']
+                  attributes:
+                    status: awaiting_review
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -5468,16 +5702,17 @@ paths:
               $ref: '#/components/schemas/PortOrderDocumentUploadRequest'
       responses:
         '200':
-          description: Stored, with the digest of the bytes as we now hold them.
+          description: 'The order, as it now stands. `documents.{kind}.sha256` is the digest of the bytes as we now hold them.'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderDocumentStored'
+                $ref: '#/components/schemas/PortOrderDocumentResponse'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
-                  kind: bill
-                  sha256: 623210167553939c87ed8c5f2bfe0b3e0684e12c3a3dd2513613c4e67263b5a1
+                  attributes:
+                    status: draft
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -5559,15 +5794,17 @@ paths:
         - personalAccessToken: []
       responses:
         '200':
-          description: The letter, by its digest.
+          description: 'The order, as it now stands. `unsignedLoa.sha256` is the digest of the letter now waiting to be signed.'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderLoaGenerated'
+                $ref: '#/components/schemas/PortOrderDocumentResponse'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
-                  sha256: 2ab85836811bd0e27a120ef5cdb64c43687fff18b1f24cbcecb6e2519bf64175
+                  attributes:
+                    status: draft
         '401':
           $ref: '#/components/responses/Unauthenticated'
         '403':
@@ -5635,14 +5872,18 @@ paths:
         - personalAccessToken: []
       responses:
         '200':
-          description: Your customer's link.
+          description: 'Your customer''s link. The order, as it now stands, and the link in `meta.url`.'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderRequestLinkIssued'
+                $ref: '#/components/schemas/PortOrderRequestLinkDocument'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
+                  attributes:
+                    status: draft
+                meta:
                   url: https://portal.acme-telecom.example/port-request/3f9c1d0a7b52e864a1d3f70b9c2e8d465a70f1b3c9d2e846a70b1c3d5e79f204
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -5675,14 +5916,18 @@ paths:
         - personalAccessToken: []
       responses:
         '200':
-          description: Whether a live link was closed.
+          description: 'The order, as it now stands, and in `meta.revoked` whether a live link was closed.'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderRequestLinkRevoked'
+                $ref: '#/components/schemas/PortOrderRequestLinkRevokedDocument'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
+                  attributes:
+                    status: draft
+                meta:
                   revoked: true
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -5718,14 +5963,18 @@ paths:
         - personalAccessToken: []
       responses:
         '200':
-          description: The new link. The previous one is already dead.
+          description: 'The new link. The previous one is already dead. The order, as it now stands, and the link in `meta.url`.'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderRequestLinkIssued'
+                $ref: '#/components/schemas/PortOrderRequestLinkDocument'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
+                  attributes:
+                    status: draft
+                meta:
                   url: https://portal.acme-telecom.example/port-request/c1e4a70b93d25f86a4d1b30f7c9e2d86f5a01b7c3d9e28a640b1c7d3e5f9a2046
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -5783,14 +6032,18 @@ paths:
               note: Last step — sign this and we will book the cutover.
       responses:
         '200':
-          description: Sent.
+          description: 'Sent. The order, as it now stands, and in `meta.sentTo` the address the mail went to.'
           content:
-            application/json:
+            application/vnd.api+json:
               schema:
-                $ref: '#/components/schemas/PortOrderRequestLinkSent'
+                $ref: '#/components/schemas/PortOrderRequestLinkSentDocument'
               example:
                 data:
+                  type: port-orders
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
+                  attributes:
+                    status: draft
+                meta:
                   sentTo: grace@second-chances.example
         '401':
           $ref: '#/components/responses/Unauthenticated'
@@ -10256,13 +10509,10 @@ components:
           $ref: '#/components/schemas/NumberLookupCallerNameComponent'
         messaging:
           $ref: '#/components/schemas/NumberLookupMessagingComponent'
-    NumberLookup:
+    NumberLookupAttributes:
       type: object
-      required: [number, lookedUpAt, charged, dialedNumber, components]
+      required: [lookedUpAt, charged, dialedNumber, components]
       properties:
-        number:
-          type: string
-          description: The number that was looked up, normalized to E.164.
         lookedUpAt:
           type: string
           format: date-time
@@ -10278,12 +10528,152 @@ components:
           $ref: '#/components/schemas/DialedNumberGeography'
         components:
           $ref: '#/components/schemas/NumberLookupComponents'
-    NumberLookupResult:
+    NumberLookupResource:
+      type: object
+      required: [type, id, attributes]
+      description: |
+        One lookup. Its `id` is the number looked up, normalized to E.164 — the thing the answer is
+        about. Nothing is stored, so it has no `self` link and cannot be read again by id.
+      properties:
+        type: { type: string, enum: [number-lookups] }
+        id:
+          type: string
+          description: The number that was looked up, normalized to E.164.
+          example: '+16502530000'
+        attributes:
+          $ref: '#/components/schemas/NumberLookupAttributes'
+    NumberLookupDocument:
       type: object
       required: [data]
       properties:
         data:
-          $ref: '#/components/schemas/NumberLookup'
+          $ref: '#/components/schemas/NumberLookupResource'
+    # -- the DID marketplace (INB-12: JSON:API documents since 2026-10-01) -------------------------
+    AvailableNumberResource:
+      type: object
+      required: [type, id, attributes]
+      description: |
+        One number on offer. Its `id` is the number in E.164. An offer is the answer to one search,
+        not a stored record: there is no `self` link and no `GET` by id.
+      properties:
+        type: { type: string, enum: [available-numbers] }
+        id: { type: string, description: The number in E.164. }
+        attributes:
+          type: object
+          properties:
+            e164: { type: string, description: The number in E.164. }
+            country: { type: string, description: ISO country code. }
+            state: { type: [string, 'null'], description: 'Its state, from our own number-plan data; null when we hold none.' }
+            rateCenter: { type: [string, 'null'], description: 'Its rate center, from the same data; null for toll-free.' }
+            capabilities:
+              type: array
+              description: What the number can do.
+              items: { type: string, enum: [sms, mms, voice, fax, emergency] }
+            offerToken:
+              type: string
+              description: |
+                Opaque. Spend it with `POST /v1/number-orders` to buy this number. It is issued to
+                your account alone and is refused for any other.
+    AvailableNumberCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/AvailableNumberResource'
+    NumberOrderRequest:
+      type: object
+      required: [offerTokens]
+      properties:
+        offerTokens:
+          type: array
+          minItems: 1
+          maxItems: 25
+          description: The `offerToken`s of the numbers to buy, from `GET /v1/available-numbers`.
+          items: { type: string }
+    # -- rates (ADR-0067) and regions --------------------------------------------------------------
+    RateResource:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type: { type: string, enum: [rates] }
+        id: { type: string, format: uuid }
+        attributes:
+          type: object
+          properties:
+            slug: { type: string }
+            name: { type: string }
+            kind:
+              type: string
+              enum: [nrc, mrc]
+              description: '`nrc` a one-time charge; `mrc` a monthly one.'
+            unit: { type: string, description: 'What one is: `number`, `minute`, `message`, …' }
+            pricingNote: { type: [string, 'null'], description: 'How the price is worked out, where a number alone does not say it.' }
+            service:
+              type: object
+              description: The service this rate belongs to.
+              properties:
+                id: { type: string, format: uuid }
+                slug: { type: string }
+                name: { type: string }
+            category:
+              type: object
+              description: The section of the rate sheet the service is in.
+              properties:
+                slug: { type: string }
+                name: { type: string }
+            tiers:
+              type: array
+              description: The price per quantity band, lowest band first.
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  minQty: { type: integer }
+                  maxQty: { type: [integer, 'null'], description: Null for an open-ended top band. }
+                  amount:
+                    type: [string, 'null']
+                    description: |
+                      YOUR price, in dollars, as a decimal string — a price agreed for your account
+                      where there is one, the standard price otherwise. Null when the price is not
+                      fixed yet ("ask us").
+    RateCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RateResource'
+    RegionResource:
+      type: object
+      required: [type, id, attributes]
+      description: |
+        The primary regions a customer may be placed in, for one country its data may be kept in. The
+        `id` is the country code — the value of `dataResidencyCountry`.
+      properties:
+        type: { type: string, enum: [regions] }
+        id: { type: string, description: ISO country code. }
+        attributes:
+          type: object
+          properties:
+            options:
+              type: array
+              description: The values `regionPreference` takes in this country, in the order to offer them.
+              items:
+                type: object
+                properties:
+                  value: { type: string, description: 'The `regionPreference` value.' }
+                  label: { type: string, description: A name to show a person. }
+    RegionCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/RegionResource'
     # -- ztp-devices -------------------------------------------------------------------------------
     ProvisioningState:
       type: string
@@ -11370,73 +11760,46 @@ components:
             **`loa` only, and required there.** The name in the signature block — who actually
             signed. It is the name each carrier is told.
           example: Bea Whitfield
-    PortOrderSubmitted:
+    # THE ACTIONS ON A PORT ORDER ANSWER THE ORDER (INB-12, 2026-10-01): each is the `port-orders`
+    # document `GET /v1/port-orders/{portOrder}` serves, and what an act produced that is not an
+    # attribute of the order rides in top-level `meta`. They answered flat `{"data": {"id", …}}`
+    # acknowledgements until then.
+    #
+    # SPELLED OUT, NOT `allOf: [PortOrderDocumentResponse, {meta: …}]`: that narrows the inherited
+    # `meta` property, which a generator models as a subclass re-declaring a mutable member — the
+    # Python SDK's pyright refuses it (`reportIncompatibleVariableOverride`), the same trap
+    # `TranscriptWithSegmentsResource` records.
+    PortOrderRequestLinkDocument:
       type: object
-      description: |
-        A flat acknowledgement, not a JSON:API document. Read the whole order back at
-        `GET /v1/port-orders/{portOrder}`.
-      required: [data]
+      required: [data, meta]
       properties:
         data:
+          $ref: '#/components/schemas/PortOrderResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
           type: object
+          required: [url]
           properties:
-            id: { type: string, format: uuid }
-            status:
-              $ref: '#/components/schemas/PortOrderStatus'
-            numbers:
-              type: array
-              description: The set the order went in with, as it now stands.
-              items: { type: string }
-    PortOrderDocumentStored:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          properties:
-            id: { type: string, format: uuid }
-            kind:
-              $ref: '#/components/schemas/PortDocumentKind'
-            sha256:
-              type: [string, 'null']
-              description: |
-                The digest of the bytes as stored — the handle-free way to check we hold the file
-                you sent.
-    PortOrderLoaGenerated:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          properties:
-            id: { type: string, format: uuid }
-            sha256:
-              type: [string, 'null']
-              description: The digest of the letter now waiting to be signed.
-    PortOrderRequestLinkIssued:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          properties:
-            id: { type: string, format: uuid }
             url:
               type: string
               format: uri
               description: |
-                Your customer's link, on your own branded portal host. **Ask again whenever you need
-                it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same URL for
-                as long as the link is live, so you need not store it. It was the only copy until
-                2026-09-01, when the token stopped being stored hashed-only.
-    PortOrderRequestLinkRevoked:
+                Your customer's link, on your own branded portal host. **Ask again whenever you
+                need it** — `POST /v1/port-orders/{portOrder}/request-link` answers with the same
+                URL for as long as the link is live, so you need not store it.
+    PortOrderRequestLinkRevokedDocument:
       type: object
-      required: [data]
+      required: [data, meta]
       properties:
         data:
+          $ref: '#/components/schemas/PortOrderResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
           type: object
+          required: [revoked]
           properties:
-            id: { type: string, format: uuid }
             revoked:
               type: boolean
               description: |
@@ -11457,14 +11820,18 @@ components:
           type: [string, 'null']
           maxLength: 500
           description: Your own sentence to your customer, carried in the mail.
-    PortOrderRequestLinkSent:
+    PortOrderRequestLinkSentDocument:
       type: object
-      required: [data]
+      required: [data, meta]
       properties:
         data:
+          $ref: '#/components/schemas/PortOrderResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
           type: object
+          required: [sentTo]
           properties:
-            id: { type: string, format: uuid }
             sentTo:
               type: string
               format: email
