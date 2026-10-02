@@ -8,7 +8,7 @@
  *
  * - **The wire is camelCase on this surface** (since 0.11.0):
  *   `filter[startedAfter]`, `displayName`. The recordings and transcripts
- *   documents are the exception and stay kebab-case (`ccc-id`), so each is
+ *   documents are the exception and stay kebab-case (`byte-size`), so each is
  *   asserted in the spelling the API actually writes.
  * - **`false` is a value, not an absence.** `registered: false` and
  *   `includeHidden: false` are the halves of those filters somebody actually
@@ -133,7 +133,6 @@ function recordingResource(
     type: "recordings",
     id: resourceId,
     attributes: {
-      "ccc-id": "00b1",
       duration: 64,
       "byte-size": 512000,
       sha256: "a".repeat(64),
@@ -158,15 +157,9 @@ function transcriptResource(
     type: "transcripts",
     id: resourceId,
     attributes: {
-      "ccc-id": "00b1",
       status: "ready",
       language: "en-US",
       duration: 64,
-      "byte-size": 2048,
-      sha256: "b".repeat(64),
-      "content-url": `${BASE_URL}/v1/pbx/transcripts-content/signed-token`,
-      "expires-at": "2026-09-12T15:00:00Z",
-      // Members added after the kebab-case rename: camelCase only.
       transcriptStatus: "available",
       callRecordId: CALL_RECORD_ID,
       ...attributeOverrides,
@@ -719,7 +712,7 @@ describe("callRecords.recordings", () => {
     expect(recordings).toHaveLength(1);
     const [recording] = recordings;
     expect(recording?.id).toBe(RECORDING_ID);
-    expect(recording?.cccId).toBe("00b1");
+    expect(Object.keys(recording ?? {})).not.toContain("cccId");
     expect(recording?.duration).toBe(64);
     expect(recording?.byteSize).toBe(512000);
     expect(recording?.sha256).toBe("a".repeat(64));
@@ -835,14 +828,9 @@ describe("callRecords.transcripts", () => {
     expect(transcripts).toHaveLength(1);
     const [transcript] = transcripts;
     expect(transcript?.id).toBe(RECORDING_ID);
-    expect(transcript?.cccId).toBe("00b1");
     expect(transcript?.status).toBe("ready");
     expect(transcript?.language).toBe("en-US");
     expect(transcript?.duration).toBe(64);
-    expect(transcript?.byteSize).toBe(2048);
-    expect(transcript?.sha256).toBe("b".repeat(64));
-    expect(transcript?.contentUrl).toBe(`${BASE_URL}/v1/pbx/transcripts-content/signed-token`);
-    expect(transcript?.expiresAt?.toISOString()).toBe("2026-09-12T15:00:00.000Z");
     expect(transcript?.transcriptStatus).toBe("available");
     expect(transcript?.callRecordId).toBe(CALL_RECORD_ID);
     expect(Object.isFrozen(transcript)).toBe(true);
@@ -897,10 +885,6 @@ describe("callRecords.transcripts", () => {
               status: "pending",
               language: null,
               duration: null,
-              "byte-size": null,
-              sha256: null,
-              "content-url": null,
-              "expires-at": null,
             }),
           ],
         }),
@@ -912,10 +896,35 @@ describe("callRecords.transcripts", () => {
     expect(transcript?.status).toBe("pending");
     expect(transcript?.language).toBeNull();
     expect(transcript?.duration).toBeNull();
-    expect(transcript?.byteSize).toBeNull();
-    expect(transcript?.sha256).toBeNull();
-    expect(transcript?.contentUrl).toBeNull();
-    expect(transcript?.expiresAt).toBeNull();
+    expect(transcript?.channels).toBeNull();
+  });
+
+  it("has no download members, even when an older API still sends them", async () => {
+    // The API removed `cccId`, `byteSize`, `sha256`, `contentUrl` and
+    // `expiresAt` from a transcript on 2026-10-01 (0.16.0 here). They stay in
+    // `raw` and reach no member.
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPTS_URL, () =>
+        HttpResponse.json({
+          data: [
+            transcriptResource({
+              cccId: "00b1",
+              byteSize: 2048,
+              sha256: "b".repeat(64),
+              contentUrl: `${BASE_URL}/v1/pbx/transcripts-content/signed-token`,
+              expiresAt: "2026-09-12T15:00:00Z",
+            }),
+          ],
+        }),
+      ),
+    );
+
+    const [transcript] = await client().pbx.callRecords.transcripts(CALL_RECORD_ID);
+
+    const keys = Object.keys(transcript ?? {});
+    for (const removed of ["cccId", "byteSize", "sha256", "contentUrl", "expiresAt"]) {
+      expect(keys).not.toContain(removed);
+    }
   });
 
   it("returns an empty array rather than an error when there are no captures", async () => {
@@ -990,6 +999,74 @@ describe("callRecords.transcript", () => {
     expect(transcript.segments?.[0]?.raw).toEqual(SEGMENTS[0]);
     expect(Object.isFrozen(transcript.segments)).toBe(true);
     expect(Object.isFrozen(transcript.segments?.[0])).toBe(true);
+  });
+
+  it("reads each segment's channel and the channels with their roles", async () => {
+    const channels = [
+      { channel: 0, party: "105", role: "callee" },
+      { channel: 1, party: "+15125550100", role: "caller" },
+    ];
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPT_URL, () =>
+        HttpResponse.json({
+          data: transcriptResource({
+            segments: [
+              { speaker: "Speaker 1", channel: 1, start: 0, end: 1, text: "Hello" },
+              { speaker: "Speaker 2", start: 1, end: 2, text: "No channel" },
+            ],
+            channels,
+          }),
+        }),
+      ),
+    );
+
+    const transcript = await client().pbx.callRecords.transcript(CALL_RECORD_ID, RECORDING_ID);
+
+    expect(transcript.segments?.map((segment) => segment.channel)).toEqual([1, null]);
+    expect(transcript.channels?.map(({ channel, party, role }) => [channel, party, role])).toEqual([
+      [0, "105", "callee"],
+      [1, "+15125550100", "caller"],
+    ]);
+    expect(transcript.channels?.[0]?.raw).toEqual(channels[0]);
+    expect(Object.isFrozen(transcript.channels)).toBe(true);
+    expect(Object.isFrozen(transcript.channels?.[0])).toBe(true);
+  });
+
+  it("leaves role off a channel the call record could not place", async () => {
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPT_URL, () =>
+        HttpResponse.json({
+          data: transcriptResource({
+            channels: [{ channel: 0, party: "105" }, { channel: 1, party: "106", role: "other" }],
+          }),
+        }),
+      ),
+    );
+
+    const transcript = await client().pbx.callRecords.transcript(CALL_RECORD_ID, RECORDING_ID);
+
+    expect(transcript.channels).toHaveLength(2);
+    expect(Object.keys(transcript.channels?.[0] ?? {})).not.toContain("role");
+    expect(transcript.channels?.[0]?.party).toBe("105");
+    expect(transcript.channels?.[1]?.role).toBeUndefined();
+  });
+
+  it("reads a mono recording's channels as an empty array", async () => {
+    server.use(
+      http.get(CALL_RECORD_TRANSCRIPT_URL, () =>
+        HttpResponse.json({
+          data: transcriptResource({
+            channels: [],
+            segments: [{ speaker: "Speaker 1", channel: 0, start: 0, end: 1, text: "Hi" }],
+          }),
+        }),
+      ),
+    );
+
+    const transcript = await client().pbx.callRecords.transcript(CALL_RECORD_ID, RECORDING_ID);
+
+    expect(transcript.channels).toEqual([]);
+    expect(transcript.segments?.[0]?.channel).toBe(0);
   });
 
   it("reads an empty turn list as an empty array — nobody spoke", async () => {
@@ -1097,7 +1174,7 @@ describe("callRecords.requestTranscript", () => {
     expect(calls.last.request.headers.get("accept")).toBe(JSONAPI);
     expect(transcript.id).toBe(RECORDING_ID);
     expect(transcript.status).toBe("pending");
-    expect(transcript.contentUrl).toBeNull();
+    expect(transcript.channels).toBeNull();
   });
 
   it("hands back the ready transcript when the capture is already transcribed", async () => {
@@ -1113,7 +1190,6 @@ describe("callRecords.requestTranscript", () => {
     );
 
     expect(transcript.status).toBe("ready");
-    expect(transcript.contentUrl).toBe(`${BASE_URL}/v1/pbx/transcripts-content/signed-token`);
   });
 
   it("throws RecordingAudioMissingError for a capture with no audio", async () => {

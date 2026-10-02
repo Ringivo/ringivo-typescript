@@ -104,6 +104,7 @@ export type {
   PbxSubscriberPage,
   Recording,
   Transcript,
+  TranscriptChannel,
   TranscriptSegment,
   WebhookDelivery,
   WebhookDeliveryPage,

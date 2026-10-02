@@ -36,7 +36,7 @@
  */
 import type { paths } from "./_generated/schema.js";
 import { USER_AGENT } from "./auth.js";
-import { JSON_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
+import { JSON_MEDIA_TYPE, JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
 import { throwForResponse } from "./errors.js";
 import {
   type Fax,
@@ -157,9 +157,9 @@ export class Faxes {
   /**
    * Send one outbound fax.
    *
-   * @returns The accepted fax. `202` means accepted, not sent: the render
-   *   and the call happen afterwards, so this carries the acknowledgement
-   *   members only. Watch it finish with `get()`. `idempotentReplay` is
+   * @returns The accepted fax, complete (the `faxes` resource, asked for as
+   *   JSON:API). `202` means accepted, not sent: the render and the call
+   *   happen afterwards. Watch it finish with `get()`. `idempotentReplay` is
    *   `true` when the server said this response replays an earlier send.
    */
   async send(options: SendFaxOptions): Promise<Fax> {
@@ -196,7 +196,7 @@ export class Faxes {
     }
 
     const headers = new Headers({
-      Accept: JSON_MEDIA_TYPE,
+      Accept: JSONAPI_MEDIA_TYPE,
       "Idempotency-Key": options.idempotencyKey ?? globalThis.crypto.randomUUID(),
     });
 
@@ -226,7 +226,7 @@ export class Faxes {
 
     // `Idempotent-Replay: true` is the ONLY thing that tells a replay from a
     // fresh accept — the body is the same fax either way.
-    return faxFromAcknowledgement(dataObject(await response.json()), {
+    return faxFromAnswer(dataObject(await response.json()), {
       idempotentReplay: response.headers.get("Idempotent-Replay") === "true",
     });
   }
@@ -309,10 +309,10 @@ export class Faxes {
   async cancel(faxId: string): Promise<Fax> {
     const { data } = await transportOf(this.client)["/v1/faxes/{fax}/cancel"].POST({
       params: { path: { fax: faxIdParam(faxId) } },
-      headers: { Accept: JSON_MEDIA_TYPE },
+      headers: { Accept: JSONAPI_MEDIA_TYPE },
     });
 
-    return faxFromAcknowledgement(dataObject(data));
+    return faxFromAnswer(dataObject(data));
   }
 
   /**
@@ -330,7 +330,7 @@ export class Faxes {
         path: { fax: faxIdParam(faxId) },
         query: { format: options.format ?? "pdf" },
       },
-      headers: { Accept: JSON_MEDIA_TYPE },
+      headers: { Accept: JSONAPI_MEDIA_TYPE },
     });
 
     return mediaLinkFromJson(isRecord(data) ? data : {});
@@ -350,7 +350,7 @@ export class Faxes {
   async thumbnailLink(faxId: string): Promise<MediaLink> {
     const { data } = await transportOf(this.client)["/v1/faxes/{fax}/thumbnail"].GET({
       params: { path: { fax: faxIdParam(faxId) } },
-      headers: { Accept: JSON_MEDIA_TYPE },
+      headers: { Accept: JSONAPI_MEDIA_TYPE },
     });
 
     return mediaLinkFromJson(isRecord(data) ? data : {});
@@ -416,6 +416,17 @@ function faxIdParam(value: string): string {
     throw new Error("a fax id is required");
   }
   return value;
+}
+
+/**
+ * A `faxes` resource when the answer has `attributes`; otherwise an older
+ * server's flat acknowledgement, so the SDK works on either side of the API
+ * deploy.
+ */
+function faxFromAnswer(data: RawJson, options: { idempotentReplay?: boolean } = {}): Fax {
+  return isRecord(data.attributes)
+    ? faxFromResource(data, options)
+    : faxFromAcknowledgement(data, options);
 }
 
 function dataObject(payload: unknown): RawJson {
