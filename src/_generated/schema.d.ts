@@ -2745,7 +2745,7 @@ export interface paths {
          * @description Transcribe one capture of a recorded call, on demand. The request has no body: the path names
          *     the capture. Poll `GET` on this same URL (or read the list) until `transcriptStatus` is
          *     `available`, or
-         *     subscribe to `call_transcript.available`, which is sent when the words are ours.
+         *     subscribe to `pbx.transcript.created`, which is sent when the words are ours.
          *
          *     **It is safe to repeat.** A capture already transcribed answers `200` with the transcript; one
          *     already asked for answers `202` again and starts no second transcription.
@@ -3029,7 +3029,7 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
-    "call_recording.available": {
+    "pbx.recording.created": {
         parameters: {
             query?: never;
             header?: never;
@@ -3101,7 +3101,7 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
-    "call_transcript.available": {
+    "pbx.transcript.created": {
         parameters: {
             query?: never;
             header?: never;
@@ -3113,7 +3113,7 @@ export interface webhooks {
         /**
          * A written transcript of a call is ready to read
          * @description Fired when we have transcribed the recording of a call. It is a separate moment from
-         *     `call_recording.available` and always later: the audio has to exist before it can be
+         *     `pbx.recording.created` and always later: the audio has to exist before it can be
          *     transcribed, and the transcription itself takes a little while. Subscribing to one does not
          *     subscribe you to the other.
          *
@@ -3130,13 +3130,13 @@ export interface webhooks {
          *     never as "not yet".
          *
          *     **Find the call record by `callId`, not by `callRecordId`**, the same way as for
-         *     `call_recording.available`:
+         *     `pbx.recording.created`:
          *     `GET /v1/pbx/call-records?filter[callId]={callId}&filter[customer]={customerId}`, with a date
          *     range around the call. Expect a list, and ask again while it is empty. `callRecordId` is
          *     deprecated and still sent.
          *
          *     **`durationSeconds` is the audio's length as the transcription measured it**, which can
-         *     differ by a second or so from the same figure on `call_recording.available` — they are two
+         *     differ by a second or so from the same figure on `pbx.recording.created` — they are two
          *     measurements of one file, not one number reported twice.
          *
          *     **You are told once.** A transcript is written once per recording and never updated, so
@@ -3159,7 +3159,7 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
-    "call_record.completed": {
+    "pbx.cdr.created": {
         parameters: {
             query?: never;
             header?: never;
@@ -3177,14 +3177,14 @@ export interface webhooks {
          *     **Match a click-to-dial without a second request.** `data.callId` is the id
          *     `POST /v1/pbx/subscribers/{subscriber}/calls` answered, and it is null for a call that was not
          *     placed that way. `data.origCallId` and `data.termCallId` are the SIP call-ids of the two legs;
-         *     one of them is the `callId` a `call_recording.available` for this call carries.
+         *     one of them is the `callId` a `pbx.recording.created` for this call carries.
          *     `filter[callId]` on `GET /v1/pbx/call-records` matches all three.
          *
          *     **What `data` leaves out, and where to find it.** The rest of the EXTENDED tier is not sent,
          *     as a request that names no `fields[call-records]` does not get it. Nor are `hasRecording`,
          *     `recordingStatus` and `transcriptStatus`: when this event is sent they are not settled — the
          *     recording lands about a minute after the call ends, so `none` and `processing` can still
-         *     change. Subscribe to `call_recording.available` and `call_transcript.available` to hear when
+         *     change. Subscribe to `pbx.recording.created` and `pbx.transcript.created` to hear when
          *     they change. The `fromSubscriber` and `toSubscriber` relationships are not sent either: match
          *     a subscriber by `domain` with `fromExtension` or `answeringExtension`. `data.id` is the call
          *     record's id, and `GET` on it answers all of these.
@@ -3601,7 +3601,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "call_recording.available" | "call_transcript.available" | "call_record.completed" | "webhook.heartbeat";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "pbx.recording.created" | "pbx.transcript.created" | "pbx.cdr.created" | "webhook.heartbeat";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -4740,7 +4740,7 @@ export interface components {
             recordingId?: string;
             /**
              * Format: uuid
-             * @description The customer whose call this is — the same one `call_recording.available` carried. Null
+             * @description The customer whose call this is — the same one `pbx.recording.created` carried. Null
              *     when the recorded domain resolves to none of your customers; only your tenant-scoped
              *     endpoints hear about that one.
              */
@@ -4756,7 +4756,7 @@ export interface components {
              * @deprecated
              * @description DEPRECATED — find the call record with `filter[callId]` (see the event's description).
              *     Still sent. The ONE call record the recording — and so this transcript — belongs to: the
-             *     same value `call_recording.available` carried for it. Null when it could not be named
+             *     same value `pbx.recording.created` carried for it. Null when it could not be named
              *     when this event was built.
              */
             callRecordId?: string | null;
@@ -7019,7 +7019,7 @@ export interface components {
              *     - `failed` — the phone system captured audio and it had not reached us 15 minutes after
              *       the call ended. Treat it as lost and tell support if you need it — but it is not
              *       final: if a slow conversion completes later, the recording lands and this becomes
-             *       `available`, and `call_recording.available` is sent as usual.
+             *       `available`, and `pbx.recording.created` is sent as usual.
              *     - `none` — nothing was recorded: the call was not set to record, the capture closed
              *       with no audio, or no audio ever reached the phone system (a cancelled call, or a
              *       forward whose audio never crossed it). Also `none` for a call from before
@@ -14058,7 +14058,7 @@ export interface operations {
                  *     - the `id` that `POST /v1/pbx/subscribers/{subscriber}/calls` answered with (a
                  *       click-to-dial call);
                  *     - a leg's SIP Call-ID — `origCallId` or `termCallId` on a record;
-                 *     - the `callId` of a `call_recording.available` or `call_transcript.available` webhook,
+                 *     - the `callId` of a `pbx.recording.created` or `pbx.transcript.created` webhook,
                  *       which is the SIP Call-ID of the recorded leg. This is the way to find a webhook's call
                  *       record; its deprecated `callRecordId` can be null. It also finds the call record of a
                  *       recording the second phone-system core made, when the call moved between our two
@@ -15186,7 +15186,7 @@ export interface operations {
                 /**
                  * @example {
                  *       "eventId": "6be0d8be-ef92-5045-97ff-43c277e2f1b6",
-                 *       "type": "call_recording.available",
+                 *       "type": "pbx.recording.created",
                  *       "occurredAt": "2026-09-12T10:17:02+00:00",
                  *       "data": {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
@@ -15226,7 +15226,7 @@ export interface operations {
                 /**
                  * @example {
                  *       "eventId": "1d3a6c02-5f21-5a44-b0c7-9e2f4471aa80",
-                 *       "type": "call_transcript.available",
+                 *       "type": "pbx.transcript.created",
                  *       "occurredAt": "2026-09-12T10:21:37+00:00",
                  *       "data": {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
@@ -15263,7 +15263,7 @@ export interface operations {
                 /**
                  * @example {
                  *       "eventId": "cb31ddae-1e36-5d6f-a7f1-af191e5cbcaf",
-                 *       "type": "call_record.completed",
+                 *       "type": "pbx.cdr.created",
                  *       "occurredAt": "2026-09-12T14:01:04+00:00",
                  *       "data": {
                  *         "id": "a2b0f2c4-6c1e-5d7a-9f3e-0b1c2d3e4f50",

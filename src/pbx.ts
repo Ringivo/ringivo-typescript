@@ -113,8 +113,8 @@ export interface ListCallRecordsOptions {
   /**
    * The records that carry ONE call id: the `id` that
    * `pbx.subscribers.call()` returned, a leg's SIP Call-ID (`origCallId` or
-   * `termCallId` on a record), or the `callId` of a `call_recording.available`
-   * or `call_transcript.available` webhook. A click-to-dial call's record
+   * `termCallId` on a record), or the `callId` of a `pbx.recording.created`
+   * or `pbx.transcript.created` webhook. A click-to-dial call's record
    * appears once the call has ended.
    *
    * **The date range still applies.** The call id is matched only inside the
@@ -429,7 +429,7 @@ export class CallRecords {
    *
    * Returns at once. A **202** answers a `Transcript` with `status: "pending"`:
    * poll `transcript()` or `transcripts()` until it is `ready`, or subscribe to
-   * the `call_transcript.available` webhook. A capture that is already
+   * the `pbx.transcript.created` webhook. A capture that is already
    * transcribed answers **200** with the `ready` transcript, and starts
    * nothing new.
    *
