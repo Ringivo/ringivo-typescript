@@ -3004,6 +3004,10 @@ export interface webhooks {
          *     because for this event the id is derived from the recording and the `sha256` rather than
          *     minted per send. Dedupe on it, as the envelope says.
          *
+         *     **One region sends it.** A recording event is sent by the region nearest the phone system
+         *     that uploaded the recording, and by no other. So, unlike `pbx.cdr.created`, it is not sent
+         *     again when the region that sends call records changes.
+         *
          *     **Scope: `tenant` and `customer`, never `fax_account`.** A recording belongs to a customer,
          *     which belongs to you. `data.customerId` is null for a recording on a domain we cannot
          *     resolve to one of your customers, and only your tenant-scoped endpoints are called for it.
