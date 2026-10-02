@@ -2562,27 +2562,23 @@ export interface paths {
          *     keys a recording by `(call id, capture id)` — so this answers a **collection**, with one item
          *     per capture rather than one item per transcript.
          *
-         *     **`status` is the member to branch on.** `ready` means we hold the words and the item carries
-         *     them. Every other status leaves the rest of the item null: `not_requested` means nobody has
-         *     asked for this capture's transcript — ask with
-         *     `POST /v1/pbx/call-records/{callRecord}/transcripts/{recording}`; `pending` means it was asked
-         *     for and is on its way, normally within a few minutes. A request that ended without words
-         *     leaves the capture `not_requested` again, so it can be asked for again. Whether a capture's
-         *     transcription permanently gave up is answered by the single-transcript endpoint (404
-         *     `code: transcript_failed`), not by this list.
+         *     **`transcriptStatus` is the member to branch on.** `available` means we hold the words.
+         *     `none` means nobody has asked for this capture's transcript — ask with
+         *     `POST /v1/pbx/call-records/{callRecord}/transcripts/{recording}`; `requested` and
+         *     `processing` mean it was asked for and is on its way, normally within a few minutes;
+         *     `failed` means the last request ended without words, and it can be asked for again. Until
+         *     the words are ours, `language` and `duration` are null. `status` is deprecated: read
+         *     `transcriptStatus` instead.
          *
          *     **The words themselves are not here.** Ask
          *     `GET /v1/pbx/call-records/{callRecord}/transcripts/{recording}` for one transcript with its
-         *     `segments`, or follow `contentUrl` for the raw provider JSON. Deriving turns costs a read of
-         *     the stored document per capture, which is why the list does not do it for captures you did
-         *     not ask about.
+         *     `segments` and its `channels`. Deriving turns costs a read of the stored document per
+         *     capture, which is why the list does not do it for captures you did not ask about. There is
+         *     no download of the stored document: the words are served only in this API's own shape.
          *
-         *     **`byteSize` and `sha256` describe the DOCUMENT behind `contentUrl`**, not the audio. They
-         *     are not comparable with the same members on the recordings list, which describe the audio.
-         *
-         *     **Every call mints fresh links and writes one audit entry per transcript**, naming who asked.
-         *     Do not cache a URL past its `expiresAt` or share it: anyone holding one reads that call with
-         *     no further authorization.
+         *     **Every read is recorded.** Each transcript with words that a response hands you writes one
+         *     entry to your audit trail, naming who asked — on this list and on the single-transcript
+         *     read alike.
          *
          *     **Only your own recordings are listed.** A recording belongs to the customer whose user had
          *     call recording on. On a call between two customers, each customer sees the transcript of its
@@ -2610,7 +2606,16 @@ export interface paths {
         /**
          * Read one transcript, with its speaker turns
          * @description One capture's transcript, with `segments` — the turns of the conversation, each carrying a
-         *     speaker label, its bounds in seconds and what was said.
+         *     speaker label, the channel it was said on, its bounds in seconds and what was said — and
+         *     `channels`, which says who is on each channel.
+         *
+         *     **`channels` names the person on each side of a two-channel recording.** Each entry is a
+         *     channel that carries a person: `party` is the extension, or the phone number in E.164, and
+         *     `role` says whether that person placed the call (`caller`) or received it (`callee`). Which
+         *     side is on which channel is NOT fixed — it depends on which leg the phone system recorded
+         *     first — so read it here rather than assuming. A one-sided recording (the other end never
+         *     answered) lists one entry. A one-channel (mono) recording, which holds both voices mixed,
+         *     lists none: `channels` is `[]` and every segment is `channel: 0`.
          *
          *     **It is nested under the call record on purpose.** A transcript is reachable only through a
          *     call you may already read, which is what makes another account's transcript answer 404 rather
@@ -2628,7 +2633,8 @@ export interface paths {
         /**
          * Ask for one capture's transcript
          * @description Transcribe one capture of a recorded call, on demand. The request has no body: the path names
-         *     the capture. Poll `GET` on this same URL (or read the list) until `status` is `ready`, or
+         *     the capture. Poll `GET` on this same URL (or read the list) until `transcriptStatus` is
+         *     `available`, or
          *     subscribe to `pbx.transcript.created`, which is sent when the words are ours.
          *
          *     **It is safe to repeat.** A capture already transcribed answers `200` with the transcript; one
@@ -2648,39 +2654,6 @@ export interface paths {
          *     the transcript also appears in the phone system's own portal, like any other transcript.
          */
         post: operations["requestCallRecordTranscript"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/pbx/transcripts/{recording}/content": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Download a transcript's source document (the URL the transcripts list names)
-         * @description **You do not build this URL — you follow it.** Each `ready` item of
-         *     `GET /v1/pbx/call-records/{callRecord}/transcripts` carries a `contentUrl`, and this is
-         *     where it points. Treat it as opaque: the signature covers the whole address, so editing the
-         *     path, the host or any query parameter invalidates it.
-         *
-         *     Send **no `Authorization` header**. The signature is the authorization here, which is why
-         *     this operation publishes no security scheme — the entitlement was checked when the link was
-         *     minted, by the request that held your token. The link stops working at the `expiresAt` the
-         *     list reported.
-         *
-         *     **What you get is the speech-to-text provider's own response, gzipped and unmodified.** It is
-         *     the lossless copy we keep, so it carries more than `segments` does — word timings and
-         *     confidences among them — and its shape is the provider's rather than ours. If you want a
-         *     stable shape, read `segments` on the transcript instead.
-         */
-        get: operations["downloadTranscript"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2986,7 +2959,7 @@ export interface webhooks {
          *     keeps the value it had. Fetch the audio again if you keep a copy.
          *
          *     **One call can produce more than one recording.** Each is a separate capture with its own
-         *     `cccId` and its own event; `callId` is what ties them to the same call.
+         *     `id` and its own event; `callId` is what ties them to the same call.
          *
          *     **Find the call record by `callId`, not by `callRecordId`.** Ask
          *     `GET /v1/pbx/call-records?filter[callId]={callId}&filter[customer]={customerId}`, with
@@ -4556,11 +4529,6 @@ export interface components {
              */
             callRecordId?: string | null;
             /**
-             * @description Which capture of that call this recording is.
-             * @example 00b1
-             */
-            cccId?: string;
-            /**
              * @description How long the recorded audio runs. A supersede changes this. NULL when the switch did not
              *     report a duration for the capture — the recording is still ours to serve, and
              *     `byteSize` still describes the bytes.
@@ -4639,11 +4607,6 @@ export interface components {
              *     when this event was built.
              */
             callRecordId?: string | null;
-            /**
-             * @description Which capture of that call was transcribed.
-             * @example 00b1
-             */
-            cccId?: string;
             /**
              * @description The language of the transcript, as the transcription reported it, or as we asked for it
              *     when it reported none.
@@ -6929,13 +6892,9 @@ export interface components {
         /**
          * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
          *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
+         *     `cccId` was removed on 2026-10-01: the recording's `id` names the capture.
          */
         RecordingAttributes: {
-            /**
-             * @description Which capture of the call this is — the phone system's own capture id.
-             * @example 00b1
-             */
-            cccId?: string;
             /**
              * @description How long the audio runs, in seconds. NULL when the phone system did not report a
              *     duration for the capture — the recording is still ours to serve, and `byteSize` still
@@ -7022,6 +6981,13 @@ export interface components {
              */
             speaker: string;
             /**
+             * @description Which channel of the recording this turn was said on, counted from 0. On a two-channel
+             *     recording each side is its own channel, and `channels` on the transcript says who is on
+             *     which. On a one-channel (mono) recording both voices are mixed, so every turn is 0.
+             * @example 0
+             */
+            channel: number;
+            /**
              * Format: double
              * @description When this turn begins, in seconds from the start of the recording.
              */
@@ -7035,70 +7001,62 @@ export interface components {
             text: string;
         };
         /**
+         * @description Who is on one channel of a two-channel recording. The person comes from the recording
+         *     itself; whether they placed or received the call comes from the call record, read once when
+         *     the transcript was made.
+         */
+        TranscriptChannel: {
+            /**
+             * @description The channel, counted from 0 — the same number a segment's `channel` carries.
+             * @example 0
+             */
+            channel: number;
+            /**
+             * @description Who is on this channel: the extension (`105`), or the phone number in E.164
+             *     (`+15125550100`).
+             * @example 105
+             */
+            party: string;
+            /**
+             * @description `caller` placed the call; `callee` received it. Left out — never null — when the call
+             *     record does not say which side this person was on.
+             * @enum {string}
+             */
+            role?: "caller" | "callee";
+        };
+        /**
          * @description camelCase only. The old kebab-case names (`ccc-id`, `byte-size`, `content-url`,
          *     `expires-at`) were removed on 2026-09-29, when the rename's transition window closed.
          *     `provider` and `model` were removed on 2026-10-01: which speech-to-text service made a
-         *     transcript is not part of the API.
+         *     transcript is not part of the API. `cccId`, `byteSize`, `sha256`, `contentUrl` and
+         *     `expiresAt` were removed on 2026-10-01 with the transcript download: the words are served
+         *     only as `segments`, in this API's own shape.
          */
         TranscriptAttributes: {
             /**
-             * @description Which capture of the call this transcript is of — the phone system's own capture id.
-             * @example 00b1
-             */
-            cccId?: string;
-            /**
-             * @description `ready` when we hold the words. Every other status leaves every member below null:
-             *     `not_requested` when nobody has asked for this capture's transcript (ask with
-             *     `POST /v1/pbx/call-records/{callRecord}/transcripts/{recording}`), `pending` when it was
-             *     asked for and is on its way. An on-demand request that ended without words (the phone
-             *     system refused it, could not be reached, or never sent the audio on) leaves the capture
-             *     `not_requested`, and it can be asked for again. `failed` is reserved for a transcription
-             *     that permanently gave up; no read answers it in this member today — a capture in that
-             *     state reads `not_requested` here, and the single-transcript endpoint checks for it and
-             *     answers 404 `code: transcript_failed`.
+             * @deprecated
+             * @description DEPRECATED — read `transcriptStatus`, which says the same and more. Still sent; it will
+             *     be removed in a later version, announced ahead. `ready` when we hold the words,
+             *     `pending` when it was asked for and is on its way, `not_requested` when nobody has asked
+             *     (or the last request ended without words). `failed` is never sent here.
              * @enum {string}
              */
             status?: "ready" | "pending" | "failed" | "not_requested";
             /**
-             * @description The language the audio was transcribed as. Null unless `status` is `ready`.
+             * @description The language the audio was transcribed as. Null until `transcriptStatus` is `available`.
              * @example en-US
              */
             language?: string | null;
             /**
-             * @description How long the AUDIO runs, in seconds — not how long the text is. Null unless `status` is `ready`,
-             *     and null when the phone system never reported a duration for the capture.
+             * @description How long the AUDIO runs, in seconds — not how long the text is. Null until
+             *     `transcriptStatus` is `available`, and null when the phone system never reported a
+             *     duration for the capture.
              */
             duration?: number | null;
             /**
-             * @description The size of the document behind `contentUrl`, which is the speech-to-text provider's
-             *     gzipped response — NOT the audio. Not comparable with `byteSize` on the recordings list.
-             *     Null unless `status` is `ready`.
-             */
-            byteSize?: number | null;
-            /**
-             * @description The SHA-256 of that same document, so you can check a download against what we stored.
-             *     Null unless `status` is `ready`.
-             */
-            sha256?: string | null;
-            /**
-             * Format: uri
-             * @description A time-limited download URL on your own API host for the provider's own response
-             *     document. Fetch it with a plain `GET` and no `Authorization` header — the signature it
-             *     carries is the authorization. Opaque: the signature covers the whole address, so any edit
-             *     invalidates it. Short-lived — do not cache it past `expiresAt` or share it. Null while
-             *     `status` is `pending`.
-             */
-            contentUrl?: string | null;
-            /**
-             * Format: date-time
-             * @description When `contentUrl` stops working. Ask for the list again to mint a fresh one.
-             */
-            expiresAt?: string | null;
-            /**
              * @description Where this transcript stands — the same vocabulary as `transcriptStatus` on the call
-             *     record. `status` above answers "may I ask for it?"; this answers "where is it?", so the
-             *     two differ in one case: after a request that ended without words, `status` is
-             *     `not_requested` (you may ask again) and `transcriptStatus` is `failed`.
+             *     record. The member to branch on. After a request that ended without words it is
+             *     `failed`, and the capture can be asked for again.
              * @enum {string}
              */
             transcriptStatus?: "none" | "requested" | "processing" | "available" | "failed";
@@ -7120,19 +7078,28 @@ export interface components {
             id: string;
             attributes?: components["schemas"]["TranscriptAttributes"];
         };
-        /** @description Everything `TranscriptAttributes` carries, plus the turns. */
+        /** @description Everything `TranscriptAttributes` carries, plus who is on each channel and the turns. */
         TranscriptWithSegmentsAttributes: components["schemas"]["TranscriptAttributes"] & {
+            /**
+             * @description Who is on each channel of a two-channel recording, one entry per channel that
+             *     carries a person, in channel order. Which side is on which channel is NOT fixed, so
+             *     read it here. A one-sided recording (the other end never answered) lists one entry.
+             *     An EMPTY array means a one-channel (mono) recording: both voices are mixed on
+             *     channel 0, so no single person is on a channel. Never null.
+             */
+            channels: components["schemas"]["TranscriptChannel"][];
             /**
              * @description The turns of the conversation, in the order they were spoken. An EMPTY array is a
              *     real answer: nobody spoke, or the provider heard nothing it could separate into
              *     turns.
              */
-            segments?: components["schemas"]["TranscriptSegment"][];
+            segments: components["schemas"]["TranscriptSegment"][];
         };
         /**
          * @description A transcript as the single-transcript endpoint serves it: everything the list carries, plus
-         *     the turns. `segments` is the one member the list leaves out, because deriving the turns means
-         *     reading the stored document and the list would pay that per capture.
+         *     who is on each channel and the turns. `channels` and `segments` are the members the list
+         *     leaves out, because deriving the turns means reading the stored document and the list would
+         *     pay that per capture.
          */
         TranscriptWithSegmentsResource: {
             /** @enum {string} */
@@ -13639,7 +13606,6 @@ export interface operations {
                      *           "type": "recordings",
                      *           "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *           "attributes": {
-                     *             "cccId": "00b1",
                      *             "duration": 97,
                      *             "byteSize": 1563244,
                      *             "sha256": "abababababababababababababababababababababababababababababababab",
@@ -13810,28 +13776,22 @@ export interface operations {
                      *           "type": "transcripts",
                      *           "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *           "attributes": {
-                     *             "cccId": "00b1",
                      *             "status": "ready",
                      *             "language": "en-US",
                      *             "duration": 97,
-                     *             "byteSize": 18422,
-                     *             "sha256": "abababababababababababababababababababababababababababababababab",
-                     *             "contentUrl": "https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
-                     *             "expiresAt": "2026-09-17T11:07:31+00:00"
+                     *             "transcriptStatus": "available",
+                     *             "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90"
                      *           }
                      *         },
                      *         {
                      *           "type": "transcripts",
                      *           "id": "7a09dd6e-6359-5211-aa78-9717f3aa4188",
                      *           "attributes": {
-                     *             "cccId": "00b2",
                      *             "status": "pending",
                      *             "language": null,
                      *             "duration": null,
-                     *             "byteSize": null,
-                     *             "sha256": null,
-                     *             "contentUrl": null,
-                     *             "expiresAt": null
+                     *             "transcriptStatus": "processing",
+                     *             "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90"
                      *           }
                      *         }
                      *       ]
@@ -13888,23 +13848,34 @@ export interface operations {
                      *         "type": "transcripts",
                      *         "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *         "attributes": {
-                     *           "cccId": "00b1",
                      *           "status": "ready",
                      *           "language": "en-US",
                      *           "duration": 97,
-                     *           "byteSize": 18422,
-                     *           "sha256": "abababababababababababababababababababababababababababababababab",
-                     *           "contentUrl": "https://api.yourprovider.example/v1/pbx/transcripts/6f98cc5d-5248-5100-9967-8606e2993077/content?expires=1789557037&signature=...",
-                     *           "expiresAt": "2026-09-17T11:07:31+00:00",
+                     *           "transcriptStatus": "available",
+                     *           "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90",
+                     *           "channels": [
+                     *             {
+                     *               "channel": 0,
+                     *               "party": "105",
+                     *               "role": "callee"
+                     *             },
+                     *             {
+                     *               "channel": 1,
+                     *               "party": "+15125550100",
+                     *               "role": "caller"
+                     *             }
+                     *           ],
                      *           "segments": [
                      *             {
                      *               "speaker": "Speaker 1",
+                     *               "channel": 0,
                      *               "start": 0.08,
                      *               "end": 2.4,
                      *               "text": "Acme Dental, how can I help?"
                      *             },
                      *             {
                      *               "speaker": "Speaker 2",
+                     *               "channel": 1,
                      *               "start": 2.6,
                      *               "end": 5.1,
                      *               "text": "I need to move my appointment."
@@ -13964,7 +13935,10 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["TranscriptCollectionItemDocument"];
                 };
             };
-            /** @description Accepted, or already in progress. `status` is `pending` and every other member is null. */
+            /**
+             * @description Accepted, or already in progress. `transcriptStatus` is `requested` or `processing`, and
+             *     `language` and `duration` are null.
+             */
             202: {
                 headers: {
                     [name: string]: unknown;
@@ -13976,14 +13950,11 @@ export interface operations {
                      *         "type": "transcripts",
                      *         "id": "6f98cc5d-5248-5100-9967-8606e2993077",
                      *         "attributes": {
-                     *           "cccId": "00b1",
                      *           "status": "pending",
                      *           "language": null,
                      *           "duration": null,
-                     *           "byteSize": null,
-                     *           "sha256": null,
-                     *           "contentUrl": null,
-                     *           "expiresAt": null
+                     *           "transcriptStatus": "requested",
+                     *           "callRecordId": "0b0e5a4e-6f5c-5a1e-9d3c-2f4a8b1c7d90"
                      *         }
                      *       }
                      *     }
@@ -14061,65 +14032,6 @@ export interface operations {
              *     (`code: transcription_unavailable`).
              */
             503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
-                };
-            };
-        };
-    };
-    downloadTranscript: {
-        parameters: {
-            query: {
-                /** @description Part of the signature, minted for you. Do not edit it. */
-                expires: number;
-                /** @description Part of the signature, minted for you. Do not edit it. */
-                signature: string;
-            };
-            header?: never;
-            path: {
-                /**
-                 * @description The recording's id, from an item of
-                 *     `GET /v1/pbx/call-records/{callRecord}/transcripts`. A transcript is keyed by its recording
-                 *     — one transcript per capture — so this is the same id the recordings list publishes, and the
-                 *     same id in every region.
-                 */
-                recording: components["parameters"]["TranscriptRecordingId"];
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description The provider's response document, gzipped. */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/gzip": string;
-                };
-            };
-            /**
-             * @description The signature did not verify, or the link has expired (`Invalid signature.`). Ask the
-             *     transcripts list for a fresh one — a link cannot be repaired or extended.
-             */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
-                };
-            };
-            /**
-             * @description There is no such document to serve (`code: not_found`). Every miss answers the same way
-             *     on purpose — a transcript we have never held, one whose retention window has closed and
-             *     one whose stored document is gone are deliberately indistinguishable, because this route
-             *     takes no credential.
-             */
-            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14671,7 +14583,6 @@ export interface operations {
                  *         "id": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
                  *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "callId": "20260912101500000002-00112233445566778899aabbccddeeff",
-                 *         "cccId": "00b1",
                  *         "durationSeconds": 97,
                  *         "byteSize": 1552000,
                  *         "sha256": "abababababababababababababababababababababababababababababababab",
@@ -14713,7 +14624,6 @@ export interface operations {
                  *         "recordingId": "63e7c087-b332-5ff3-9d26-d7dcddfa5cc1",
                  *         "customerId": "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
                  *         "callId": "20260912101500000002-00112233445566778899aabbccddeeff",
-                 *         "cccId": "00b1",
                  *         "language": "en-US",
                  *         "durationSeconds": 97
                  *       }
