@@ -3031,7 +3031,7 @@ export interface webhooks {
         /**
          * A text or picture message from one of your numbers was sent
          * @description Fired when the messaging provider accepts a message we sent from one of your numbers. For a
-         *     staff reply typed in a phone-system app (`source: pbx`), this is how the reply reaches your
+         *     staff reply typed in a phone-system app (`source: phone_system`), this is how the reply reaches your
          *     own system: `sentBy` names the staff member, and `sentAt` is the instant to order your
          *     thread by.
          *
@@ -5109,7 +5109,7 @@ export interface components {
              * @enum {string}
              */
             status: "sent" | "delivered" | "undelivered" | "failed";
-            /** @description Who typed the message. Set for a staff reply (`source` is `pbx`); null otherwise. */
+            /** @description Who typed the message. Set for a staff reply (`source` is `phone_system`); null otherwise. */
             sentBy: components["schemas"]["OutboundMessageSender"] | null;
             /**
              * Format: date-time
@@ -5252,7 +5252,7 @@ export interface components {
              * @description A user of your phone system, replying from its app.
              * @enum {string}
              */
-            kind: "pbx_user";
+            kind: "phone_system_user";
             /**
              * @description The staff member's display name. Null when we do not have the staff member's name yet,
              *     for example just after the user was created on your phone system.
@@ -5278,13 +5278,13 @@ export interface components {
             bytes?: number;
         };
         /**
-         * @description Who asked us to send the message — the surface, never the vendor. `pbx` is a staff reply
-         *     from a phone-system app; `api` is your own software; `system` is our one confirmation reply
-         *     to an opt-out; `recorded` is a text you sent through your own provider account and then
-         *     recorded with `POST /v1/outbound-messages` (no `message.sent` is raised for it).
+         * @description Who asked us to send the message — the surface, never the vendor. `phone_system` is a staff
+         *     reply from a phone-system app; `api` is your own software; `system` is our one confirmation
+         *     reply to an opt-out; `recorded` is a text you sent through your own provider account and
+         *     then recorded with `POST /v1/outbound-messages` (no `message.sent` is raised for it).
          * @enum {string}
          */
-        OutboundMessageSource: "api" | "pbx" | "recorded" | "system";
+        OutboundMessageSource: "api" | "phone_system" | "recorded" | "system";
         /**
          * @description A text message (`sms`) or a picture message (`mms`).
          * @enum {string}
@@ -15708,7 +15708,7 @@ export interface operations {
                  *         "id": "0192f0c1-8e4a-7b3d-a2c5-6d7e8f901234",
                  *         "tenantId": "0191aa10-2b3c-7d4e-8f90-a1b2c3d4e5f6",
                  *         "customerId": "0191ab22-3c4d-7e5f-9a01-b2c3d4e5f607",
-                 *         "source": "pbx",
+                 *         "source": "phone_system",
                  *         "kind": "sms",
                  *         "from": "+14075550142",
                  *         "to": "+13215550187",
@@ -15716,7 +15716,7 @@ export interface operations {
                  *         "media": [],
                  *         "status": "sent",
                  *         "sentBy": {
-                 *           "kind": "pbx_user",
+                 *           "kind": "phone_system_user",
                  *           "name": "Dana Smith"
                  *         },
                  *         "sentAt": "2026-10-19T15:06:01+00:00",
@@ -15758,7 +15758,7 @@ export interface operations {
                  *         "id": "0192f0c1-8e4a-7b3d-a2c5-6d7e8f901234",
                  *         "tenantId": "0191aa10-2b3c-7d4e-8f90-a1b2c3d4e5f6",
                  *         "customerId": "0191ab22-3c4d-7e5f-9a01-b2c3d4e5f607",
-                 *         "source": "pbx",
+                 *         "source": "phone_system",
                  *         "kind": "sms",
                  *         "from": "+14075550142",
                  *         "to": "+13215550187",
@@ -15766,7 +15766,7 @@ export interface operations {
                  *         "media": [],
                  *         "status": "delivered",
                  *         "sentBy": {
-                 *           "kind": "pbx_user",
+                 *           "kind": "phone_system_user",
                  *           "name": "Dana Smith"
                  *         },
                  *         "sentAt": "2026-10-19T15:06:01+00:00",
@@ -15808,7 +15808,7 @@ export interface operations {
                  *         "id": "0192f0c1-8e4a-7b3d-a2c5-6d7e8f901234",
                  *         "tenantId": "0191aa10-2b3c-7d4e-8f90-a1b2c3d4e5f6",
                  *         "customerId": "0191ab22-3c4d-7e5f-9a01-b2c3d4e5f607",
-                 *         "source": "pbx",
+                 *         "source": "phone_system",
                  *         "kind": "sms",
                  *         "from": "+14075550142",
                  *         "to": "+13215550187",
@@ -15816,7 +15816,7 @@ export interface operations {
                  *         "media": [],
                  *         "status": "undelivered",
                  *         "sentBy": {
-                 *           "kind": "pbx_user",
+                 *           "kind": "phone_system_user",
                  *           "name": "Dana Smith"
                  *         },
                  *         "sentAt": "2026-10-19T15:06:01+00:00",
