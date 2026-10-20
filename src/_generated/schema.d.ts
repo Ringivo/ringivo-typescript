@@ -2957,6 +2957,114 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "message.sent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A text or picture message from one of your numbers was sent
+         * @description Fired when the messaging provider accepts a message we sent from one of your numbers. For a
+         *     staff reply typed in a phone-system app (`source: pbx`), this is how the reply reaches your
+         *     own system: `sentBy` names the staff member, and `sentAt` is the instant to order your
+         *     thread by.
+         *
+         *     **Not a promise of delivery.** A message the provider accepted can still be dropped by the
+         *     recipient's carrier — for example, a text from a number with no 10DLC campaign to a US
+         *     mobile. `message.delivered` or `message.failed` follows when the carrier reports.
+         *
+         *     **A message you recorded never raises this event.** You sent it and told us, so we do not
+         *     announce it back. Its delivery reports still raise `message.delivered` or `message.failed`.
+         *
+         *     **`providerMessageId` and `providerPartIds` are set only for a message on your own
+         *     messaging-provider account.** They are your provider's ids for the message and each of its
+         *     parts — the same ids its delivery reports name. On any other account both are null.
+         *
+         *     **Scope: `tenant` and `customer`**, as for `message.received`. `data.customerId` is null
+         *     while the number sits unassigned in your own pool, and only your tenant-scoped endpoints are
+         *     called for that one.
+         *
+         *     `occurredAt` is the instant the provider accepted the message — the same value as
+         *     `data.sentAt` — and never the moment we reached you.
+         */
+        post: operations["onMessageSent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "message.delivered": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A message from one of your numbers reached the recipient's carrier
+         * @description Fired when the recipient's carrier reports that it took a message we sent from one of your
+         *     numbers. A long text that went out in parts is delivered only when every part has been
+         *     reported delivered.
+         *
+         *     It fires for a message you recorded too: its delivery reports join it like any other.
+         *
+         *     The body is the `message.sent` body with `status: delivered`. Status only moves forward, so a
+         *     late or repeated report never raises a second event.
+         *
+         *     `occurredAt` is the instant we recorded the delivery, and never the moment we reached you.
+         */
+        post: operations["onMessageDelivered"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "message.failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A message from one of your numbers did not reach the recipient
+         * @description Fired when a message we sent from one of your numbers did not reach its recipient — for any
+         *     reason. Branch on `data.failure.cause`, one field, rather than on several event names:
+         *
+         *     - `provider_refused` — the messaging provider refused it. Nothing was sent.
+         *     - `provider_unreachable` — we could not reach the provider. Nothing was sent.
+         *     - `outcome_unknown` — the provider's answer was lost, so the message may or may not have
+         *       left. We never send it again, because a second try could text the person twice.
+         *     - `opted_out`, `no_send_key`, `media_unavailable` — we stopped it after we accepted it:
+         *       the recipient opted out, the account holds no key to send with, or a picture could not be
+         *       read. Nothing was sent.
+         *     - `undelivered` — the recipient's carrier reported that it did not take the message.
+         *       `status` is then `undelivered`; for every other cause it is `failed`.
+         *
+         *     Treat a cause you do not know as a failure: more can be added.
+         *
+         *     A message that never left raises this event with no `message.sent` before it, and with null
+         *     `sentAt` and `providerMessageId`.
+         *
+         *     `occurredAt` is the instant we recorded the failure, and never the moment we reached you.
+         */
+        post: operations["onMessageFailed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "port_order.bill_extraction_settled": {
         parameters: {
             query?: never;
@@ -3605,7 +3713,7 @@ export interface components {
          *     depends on its `scopeType` — see `events` on the endpoint resource.
          * @enum {string}
          */
-        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "pbx.recording.created" | "pbx.transcript.created" | "pbx.cdr.created" | "webhook.heartbeat";
+        WebhookEventType: "fax.received" | "fax.queued" | "fax.converting" | "fax.sending" | "fax.delivered" | "fax.partial" | "fax.failed" | "fax.cancelled" | "message.received" | "message.sent" | "message.delivered" | "message.failed" | "port_order.bill_extraction_settled" | "port_order.status_changed" | "pbx_change.confirmed" | "pbx_change.stalled" | "pbx.recording.created" | "pbx.transcript.created" | "pbx.cdr.created" | "webhook.heartbeat";
         /**
          * @description Derived, not stored. `pending` is still on the retry ladder; `dead` ran out of rungs and is
          *     what an outage costs you.
@@ -4893,6 +5001,134 @@ export interface components {
         };
         MessageReceivedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["MessageReceivedEventData"];
+        };
+        /**
+         * @description A message we sent from one of your numbers, as `message.sent`, `message.delivered` and
+         *     `message.failed` all carry it. Every member is present on every event; a member that does
+         *     not apply is null rather than absent, so one parser reads all three.
+         *
+         *     A SNAPSHOT: a retry six hours later carries the values the event was built with.
+         *
+         *     **No media bytes and no URL.** Picture parts are described and nothing more.
+         */
+        OutboundMessageEventData: {
+            /**
+             * Format: uuid
+             * @description Our id for this outbound message.
+             */
+            id: string;
+            /** Format: uuid */
+            tenantId: string;
+            /**
+             * Format: uuid
+             * @description The customer who holds the sending number. Null while the number sits unassigned in
+             *     your pool.
+             */
+            customerId: string | null;
+            source: components["schemas"]["OutboundMessageSource"];
+            kind: components["schemas"]["OutboundMessageKind"];
+            /**
+             * @description Your number that sent it, in E.164.
+             * @example +14075550142
+             */
+            from: string;
+            /**
+             * @description The recipient, in E.164.
+             * @example +13215550187
+             */
+            to: string;
+            /** @description The text. Null for a picture message with no caption. */
+            body: string | null;
+            /** @description The described parts of a picture message. An empty list for a text message. */
+            media: components["schemas"]["OutboundMessageMediaPart"][];
+            /**
+             * @description The status this event announces: `sent` on `message.sent`, `delivered` on
+             *     `message.delivered`, and `failed` or `undelivered` on `message.failed`.
+             * @enum {string}
+             */
+            status: "sent" | "delivered" | "undelivered" | "failed";
+            /** @description Who typed the message. Set for a staff reply (`source` is `pbx`); null otherwise. */
+            sentBy: components["schemas"]["OutboundMessageSender"] | null;
+            /**
+             * Format: date-time
+             * @description When the messaging provider accepted the message. Order your thread by this. Null for a
+             *     message the provider never accepted.
+             */
+            sentAt: string | null;
+            /**
+             * @description Your messaging provider's id for the message. Set only for a message on your own
+             *     provider account, and only once the provider accepted it.
+             */
+            providerMessageId: string | null;
+            /**
+             * @description Your messaging provider's id for every part of the message — a long text has one per
+             *     part, and a one-part text names its own id. Null on any account that is not your own;
+             *     an empty list for a message the provider never accepted.
+             */
+            providerPartIds: string[] | null;
+        };
+        /** @description Who typed a staff reply. The name only: no phone-system user id is ever sent. */
+        OutboundMessageSender: {
+            /**
+             * @description A user of your phone system, replying from its app.
+             * @enum {string}
+             */
+            kind: "pbx_user";
+            /**
+             * @description The staff member's display name.
+             * @example Dana Smith
+             */
+            name: string | null;
+        };
+        /**
+         * @description One part of a picture message we sent, DESCRIBED. There is no image and no URL. We do not
+         *     keep the sender's filename or transfer encoding for a part we sent, so both are null.
+         */
+        OutboundMessageMediaPart: {
+            /** @example image/jpeg */
+            contentType?: string;
+            /** @description Always null: for a picture we send we keep the bytes and the content type, not a filename. */
+            filename?: string | null;
+            /** @description Always null: for a picture we send we keep the decoded bytes, so there is no transfer encoding to report. */
+            encoding?: string | null;
+            /**
+             * @description The part's size, in bytes.
+             * @example 40213
+             */
+            bytes?: number;
+        };
+        /**
+         * @description Who asked us to send the message — the surface, never the vendor. `pbx` is a staff reply
+         *     from a phone-system app; `api` is your own software; `system` is our one confirmation reply
+         *     to an opt-out; `passthrough` is a send relayed for your own existing provider integration.
+         * @enum {string}
+         */
+        OutboundMessageSource: "api" | "pbx" | "passthrough" | "system";
+        /**
+         * @description A text message (`sms`) or a picture message (`mms`).
+         * @enum {string}
+         */
+        OutboundMessageKind: "sms" | "mms";
+        MessageFailedEventData: components["schemas"]["OutboundMessageEventData"] & {
+            failure: {
+                /**
+                 * @description Why the message did not reach its recipient. One of `provider_refused`,
+                 *     `provider_unreachable`, `outcome_unknown`, `opted_out`, `no_send_key`,
+                 *     `media_unavailable` or `undelivered` — see the `message.failed` webhook. Treat
+                 *     a value you do not know as a failure: more can be added.
+                 * @example undelivered
+                 */
+                cause: string;
+            };
+        };
+        MessageSentEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["OutboundMessageEventData"];
+        };
+        MessageDeliveredEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["OutboundMessageEventData"];
+        };
+        MessageFailedEvent: components["schemas"]["WebhookEventEnvelope"] & {
+            data: components["schemas"]["MessageFailedEventData"];
         };
         PortOrderStatusChangedEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["PortOrderStatusChangedEventData"];
@@ -15097,6 +15333,159 @@ export interface operations {
                  *     }
                  */
                 "application/json": components["schemas"]["MessageReceivedEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onMessageSent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "eventId": "0192f0c2-1a7b-7c4d-9e8f-0a1b2c3d4e5f",
+                 *       "type": "message.sent",
+                 *       "occurredAt": "2026-10-19T15:06:01+00:00",
+                 *       "data": {
+                 *         "id": "0192f0c1-8e4a-7b3d-a2c5-6d7e8f901234",
+                 *         "tenantId": "0191aa10-2b3c-7d4e-8f90-a1b2c3d4e5f6",
+                 *         "customerId": "0191ab22-3c4d-7e5f-9a01-b2c3d4e5f607",
+                 *         "source": "pbx",
+                 *         "kind": "sms",
+                 *         "from": "+14075550142",
+                 *         "to": "+13215550187",
+                 *         "body": "Yes, a little grass is fine. Call us if he vomits.",
+                 *         "media": [],
+                 *         "status": "sent",
+                 *         "sentBy": {
+                 *           "kind": "pbx_user",
+                 *           "name": "Dana Smith"
+                 *         },
+                 *         "sentAt": "2026-10-19T15:06:01+00:00",
+                 *         "providerMessageId": "01JC8ZB2H6V4S9D3Q7N1M5KTXR",
+                 *         "providerPartIds": [
+                 *           "01JC8ZB2H6V4S9D3Q7N1M5KTXR"
+                 *         ]
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["MessageSentEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onMessageDelivered: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "eventId": "0192f0c3-5d6e-7f80-91a2-b3c4d5e6f708",
+                 *       "type": "message.delivered",
+                 *       "occurredAt": "2026-10-19T15:06:04+00:00",
+                 *       "data": {
+                 *         "id": "0192f0c1-8e4a-7b3d-a2c5-6d7e8f901234",
+                 *         "tenantId": "0191aa10-2b3c-7d4e-8f90-a1b2c3d4e5f6",
+                 *         "customerId": "0191ab22-3c4d-7e5f-9a01-b2c3d4e5f607",
+                 *         "source": "pbx",
+                 *         "kind": "sms",
+                 *         "from": "+14075550142",
+                 *         "to": "+13215550187",
+                 *         "body": "Yes, a little grass is fine. Call us if he vomits.",
+                 *         "media": [],
+                 *         "status": "delivered",
+                 *         "sentBy": {
+                 *           "kind": "pbx_user",
+                 *           "name": "Dana Smith"
+                 *         },
+                 *         "sentAt": "2026-10-19T15:06:01+00:00",
+                 *         "providerMessageId": "01JC8ZB2H6V4S9D3Q7N1M5KTXR",
+                 *         "providerPartIds": [
+                 *           "01JC8ZB2H6V4S9D3Q7N1M5KTXR"
+                 *         ]
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["MessageDeliveredEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onMessageFailed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "eventId": "0192f0c4-6e7f-7091-a2b3-c4d5e6f70819",
+                 *       "type": "message.failed",
+                 *       "occurredAt": "2026-10-19T15:06:09+00:00",
+                 *       "data": {
+                 *         "id": "0192f0c1-8e4a-7b3d-a2c5-6d7e8f901234",
+                 *         "tenantId": "0191aa10-2b3c-7d4e-8f90-a1b2c3d4e5f6",
+                 *         "customerId": "0191ab22-3c4d-7e5f-9a01-b2c3d4e5f607",
+                 *         "source": "pbx",
+                 *         "kind": "sms",
+                 *         "from": "+14075550142",
+                 *         "to": "+13215550187",
+                 *         "body": "Yes, a little grass is fine. Call us if he vomits.",
+                 *         "media": [],
+                 *         "status": "undelivered",
+                 *         "sentBy": {
+                 *           "kind": "pbx_user",
+                 *           "name": "Dana Smith"
+                 *         },
+                 *         "sentAt": "2026-10-19T15:06:01+00:00",
+                 *         "providerMessageId": "01JC8ZB2H6V4S9D3Q7N1M5KTXR",
+                 *         "providerPartIds": [
+                 *           "01JC8ZB2H6V4S9D3Q7N1M5KTXR"
+                 *         ],
+                 *         "failure": {
+                 *           "cause": "undelivered"
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["MessageFailedEvent"];
             };
         };
         responses: {
