@@ -4851,8 +4851,8 @@ export interface components {
              *     Still sent. The ONE call record this recording belongs to — the `{callRecord}` of
              *     `GET /v1/pbx/call-records/{callRecord}/recordings`. It is the record in the recording's
              *     own domain whose call ids include `callId` and that was up when the capture opened. Null
-             *     when the phone system had not written the call record when this event was built, or
-             *     could not be asked; `filter[callId]` then finds it.
+             *     when we did not have the call record yet when this event was built (it normally arrives
+             *     seconds after the call ends), or could not look it up; `filter[callId]` then finds it.
              */
             callRecordId?: string | null;
             /**
@@ -5254,7 +5254,8 @@ export interface components {
              */
             kind: "pbx_user";
             /**
-             * @description The staff member's display name.
+             * @description The staff member's display name. Null when we do not have the staff member's name yet,
+             *     for example just after the user was created on your phone system.
              * @example Dana Smith
              */
             name: string | null;
