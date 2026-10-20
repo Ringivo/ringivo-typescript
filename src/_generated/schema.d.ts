@@ -1568,6 +1568,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/outbound-messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record a text that you already sent
+         * @description Tell us about a text that your own system already sent through your own messaging provider
+         *     account, so it shows in your staff's threads. **We send nothing.** The text already left; we
+         *     keep it and put it in the conversation, with your label in front of it.
+         *
+         *     Only a text sent from one of your numbers on **your own** provider account can be recorded.
+         *     A number that sends through our account is refused with a 422.
+         *
+         *     **The label is required** (`senderLabel`). Staff see every recorded text as
+         *     `"<senderLabel>: <body>"`, because their app does not show who sent an outbound text. We trim
+         *     it. It must be one line — no newline or other control character — and 1 to 40 characters,
+         *     counted as Unicode code points. The label, a colon, a space and the text together must be at
+         *     most 1024 characters, the most a staff thread holds.
+         *
+         *     **Send every part id** in `alreadySent.providerPartIds`. A long text gets one delivery
+         *     report per part, and its status moves only when every part is known. A one-part text names
+         *     its own id.
+         *
+         *     **`markConversationRead`** defaults to `false`: the text leaves the staff threads' read marks
+         *     as they were. Set it to `true` for a reply a person typed in your own inbox.
+         *
+         *     **Pictures** (`media`) are fetched during this call, before anything is stored, and kept.
+         *     We never fetch your link again, so make a new presigned link for each attempt. A link must be
+         *     `https`, must not reach a private address, and must be an image, audio or video part of at
+         *     most 10 MB. **At most 10 pictures** per record, **at most 20 MB of pictures together**, and
+         *     **all of them must arrive within 20 seconds together** — past that time the call answers 503
+         *     and you retry with new links. A link that redirects more than 3 times is refused with 422.
+         *
+         *     **`alreadySent.sentAt`** is when your provider accepted the text. We store it as you give it.
+         *     Up to 60 seconds ahead of our clock is treated as clock skew and accepted; more than 60 seconds
+         *     in the future answers 422.
+         *
+         *     **Retry from a queue.** A repeat of the same provider message id with the same `from`, `to`,
+         *     `body` and picture count answers 200 with the first resource and changes nothing. Retry on
+         *     429, 503, any other 5xx and no answer, with backoff. Never retry a 422 or a 409 unchanged.
+         *     After a 422, 409, 429 or 503, nothing is stored.
+         *
+         *     **Events.** No `message.sent` is raised for a recorded text — you sent it. Its delivery
+         *     reports still raise `message.delivered` and `message.failed`, with `source: recorded`.
+         *
+         *     This call has its own rate limit: 300 records a minute per reseller by default, separate from
+         *     the limit for other API calls. Only a record answered 201 or 200 counts against it; a refused
+         *     one does not. Over it, the answer is 429 with `Retry-After`.
+         *     Sending a text through this endpoint is not available yet: `alreadySent` is required.
+         */
+        post: operations["recordOutboundMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/messaging-enablements/{enablement}/retry": {
         parameters: {
             query?: never;
@@ -5067,6 +5129,123 @@ export interface components {
              */
             providerPartIds: string[] | null;
         };
+        OutboundMessageRecordRequest: {
+            data: {
+                /** @enum {string} */
+                type: "outbound-messages";
+                attributes: {
+                    /**
+                     * @description Your number that sent the text, in E.164, on your own provider account.
+                     * @example +14075550142
+                     */
+                    from: string;
+                    /**
+                     * @description The one recipient, in E.164.
+                     * @example +13215550187
+                     */
+                    to: string;
+                    /** @description The text as you sent it. Required unless `media` names a picture. */
+                    body?: string | null;
+                    /**
+                     * @description Your links to the pictures you sent, in order — fetched once, during this call,
+                     *     and never kept. At most 10, each at most 10 MB and 20 MB together, all fetched
+                     *     within 20 seconds together. Make a new presigned link for each attempt.
+                     */
+                    media?: {
+                        /**
+                         * Format: uri
+                         * @example https://media.example.com/rex.jpg
+                         */
+                        url: string;
+                    }[];
+                    /**
+                     * @description What staff see in front of the text, as `"<senderLabel>: <body>"`. Trimmed; one
+                     *     line, no control character, at least one visible character; 1 to 40 Unicode code
+                     *     points; the prefixed text at most 1024 code points.
+                     * @example Appointment reminder
+                     */
+                    senderLabel: string;
+                    /**
+                     * @description `false` leaves the staff threads' read marks as they were. `true` marks them read
+                     *     — for a reply a person typed in your own inbox.
+                     * @default false
+                     */
+                    markConversationRead: boolean;
+                    /** @description What your provider answered when you sent the text. */
+                    alreadySent: {
+                        /**
+                         * @description Your provider's id for the text — the dedupe key.
+                         * @example 01JC8ZA1F5T3R8C2P6M0L4JSWQ
+                         */
+                        providerMessageId: string;
+                        /** @description Every part id your provider returned. A one-part text names its own id. */
+                        providerPartIds: string[];
+                        /**
+                         * Format: date-time
+                         * @description When your provider accepted the text, stored as given. Up to 60 seconds ahead
+                         *     of our clock is accepted as clock skew; further ahead answers 422.
+                         * @example 2026-10-19T15:02:44Z
+                         */
+                        sentAt: string;
+                    };
+                };
+            };
+        };
+        OutboundMessageAttributes: {
+            source?: components["schemas"]["OutboundMessageSource"];
+            kind?: components["schemas"]["OutboundMessageKind"];
+            /**
+             * @description Where the message has got to. A recorded text starts at `sent`.
+             * @enum {string}
+             */
+            status?: "queued" | "submitting" | "sent" | "delivered" | "undelivered" | "failed";
+            /**
+             * @description Your number that sent it, in E.164.
+             * @example +14075550142
+             */
+            from?: string;
+            /**
+             * @description The recipient, in E.164.
+             * @example +13215550187
+             */
+            to?: string;
+            /** @description The text. Null for a picture message with no caption. */
+            body?: string | null;
+            /** @description The described parts of a picture message — no image and no URL. Empty for a text. */
+            media?: components["schemas"]["OutboundMessageMediaPart"][];
+            /** @description The label you recorded the text with. Null on a message we sent. */
+            senderLabel?: string | null;
+            /** @description Your read choice for a recorded text. Null on a message we sent. */
+            markConversationRead?: boolean | null;
+            /**
+             * Format: date-time
+             * @description When the messaging provider accepted the message.
+             */
+            sentAt?: string | null;
+            /** @description Your provider's id for the message. Set only on your own provider account. */
+            providerMessageId?: string | null;
+            /** @description Every part id. A one-part text names its own id. Null on any account that is not yours. */
+            providerPartIds?: string[] | null;
+            /**
+             * Format: date-time
+             * @description When we stored it.
+             */
+            createdAt?: string;
+            /** Format: date-time */
+            updatedAt?: string;
+        };
+        OutboundMessageResource: {
+            /** @enum {string} */
+            type: "outbound-messages";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["OutboundMessageAttributes"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        OutboundMessageDocumentResponse: {
+            data: components["schemas"]["OutboundMessageResource"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
         /** @description Who typed a staff reply. The name only: no phone-system user id is ever sent. */
         OutboundMessageSender: {
             /**
@@ -5100,10 +5279,12 @@ export interface components {
         /**
          * @description Who asked us to send the message — the surface, never the vendor. `pbx` is a staff reply
          *     from a phone-system app; `api` is your own software; `system` is our one confirmation reply
-         *     to an opt-out; `passthrough` is a send relayed for your own existing provider integration.
+         *     to an opt-out; `passthrough` is a send relayed for your own existing provider integration;
+         *     `recorded` is a text you sent through your own provider account and then recorded with
+         *     `POST /v1/outbound-messages` (no `message.sent` is raised for it).
          * @enum {string}
          */
-        OutboundMessageSource: "api" | "pbx" | "passthrough" | "system";
+        OutboundMessageSource: "api" | "pbx" | "passthrough" | "recorded" | "system";
         /**
          * @description A text message (`sms`) or a picture message (`mms`).
          * @enum {string}
@@ -11951,6 +12132,170 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    recordOutboundMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "outbound-messages",
+                 *         "attributes": {
+                 *           "from": "+14075550142",
+                 *           "to": "+13215550187",
+                 *           "body": "Reminder: Rex is due for his rabies booster on Oct 24.",
+                 *           "media": [],
+                 *           "senderLabel": "Appointment reminder",
+                 *           "markConversationRead": false,
+                 *           "alreadySent": {
+                 *             "providerMessageId": "01JC8ZA1F5T3R8C2P6M0L4JSWQ",
+                 *             "providerPartIds": [
+                 *               "01JC8ZA1F5T3R8C2P6M0L4JSWQ"
+                 *             ],
+                 *             "sentAt": "2026-10-19T15:02:44Z"
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["OutboundMessageRecordRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description A repeat of an earlier record with the same provider message id and the same `from`,
+             *     `to`, `body` and picture count. The first resource, unchanged.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["OutboundMessageDocumentResponse"];
+                };
+            };
+            /** @description The text is recorded. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "outbound-messages",
+                     *         "id": "0192f0c0-5d2e-7a1b-8c3d-4e5f60718293",
+                     *         "attributes": {
+                     *           "source": "recorded",
+                     *           "kind": "sms",
+                     *           "status": "sent",
+                     *           "from": "+14075550142",
+                     *           "to": "+13215550187",
+                     *           "body": "Reminder: Rex is due for his rabies booster on Oct 24.",
+                     *           "media": [],
+                     *           "senderLabel": "Appointment reminder",
+                     *           "markConversationRead": false,
+                     *           "sentAt": "2026-10-19T15:02:44.000000Z",
+                     *           "providerMessageId": "01JC8ZA1F5T3R8C2P6M0L4JSWQ",
+                     *           "providerPartIds": [
+                     *             "01JC8ZA1F5T3R8C2P6M0L4JSWQ"
+                     *           ],
+                     *           "createdAt": "2026-10-19T15:02:45.000000Z",
+                     *           "updatedAt": "2026-10-19T15:02:45.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["OutboundMessageDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description Recording texts is not turned on for this platform yet. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description This provider message id is already recorded with different content, or not by you. The
+             *     answer says nothing about the other record. Do not retry unchanged.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description A request no retry can fix: a label that breaks the rule, a `from` that is not your
+             *     number on your own provider account, more than one `to`, a `sentAt` more than 60 seconds in the future, or a
+             *     picture link that is not https, reaches a private address, is too large (10 MB a picture,
+             *     20 MB together), is not a picture, redirects in a loop, or answers 4xx. A label must also
+             *     have at least one visible character. `source.pointer` names the member.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Record refused",
+                     *           "detail": "The label must be one line, with no newline or other control character.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/senderLabel"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description Over this reseller's rate limit for recording texts (300 a minute by default), which is
+             *     separate from the limit for other API calls. Wait for `Retry-After` seconds, then retry. Nothing is stored.
+             */
+            429: {
+                headers: {
+                    /** @description Seconds to wait. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description A fault that can pass: a picture link timed out, its host answered 5xx, or pictures cannot
+             *     be kept right now. Retry after `Retry-After` seconds with new links. Nothing is stored.
+             */
+            503: {
+                headers: {
+                    /** @description Seconds to wait. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
         };
     };
     retryMessagingEnablement: {
