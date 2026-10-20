@@ -6677,6 +6677,9 @@ paths:
           example: true
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: A page of PBX subscribers.
           content:
             application/vnd.api+json:
@@ -6733,6 +6736,9 @@ paths:
         - $ref: '#/components/parameters/PbxSubscriberId'
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: The PBX subscriber.
           content:
             application/vnd.api+json:
@@ -6848,6 +6854,9 @@ paths:
           schema: { type: boolean }
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: A page of devices.
           content:
             application/vnd.api+json:
@@ -6897,6 +6906,9 @@ paths:
         - $ref: '#/components/parameters/PbxDeviceId'
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: The device.
           content:
             application/vnd.api+json:
@@ -7027,6 +7039,9 @@ paths:
           schema: { type: boolean }
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: A page of call records.
           content:
             application/vnd.api+json:
@@ -7091,6 +7106,9 @@ paths:
         - $ref: '#/components/parameters/CallRecordId'
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: The call record.
           content:
             application/vnd.api+json:
@@ -7142,6 +7160,9 @@ paths:
         - $ref: '#/components/parameters/CallRecordId'
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: |
             The call's recordings, in vendor key order `(call_id, ccc_id)` — NOT chronological
             across legs. An EMPTY `data` array is a normal answer: a call that was not recorded has
@@ -7331,6 +7352,9 @@ paths:
         - $ref: '#/components/parameters/CallRecordId'
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: |
             The call's transcripts, in vendor key order `(call_id, ccc_id)` — NOT chronological
             across legs. An EMPTY `data` array is a normal answer: a call that was not recorded has
@@ -7405,6 +7429,9 @@ paths:
         - $ref: '#/components/parameters/TranscriptRecordingId'
       responses:
         '200':
+          headers:
+            X-Pbx-Data-Stale:
+              $ref: '#/components/headers/PbxDataStale'
           description: The transcript, with its turns.
           content:
             application/vnd.api+json:
@@ -8596,6 +8623,23 @@ components:
         redundant name. Every other operation on this API authenticates with the bearer token this
         one mints.
 
+  headers:
+    PbxDataStale:
+      description: |
+        **Present only when the PBX data in this answer is late**, and then the number of seconds it
+        may be behind the phone system: the time since the newest change this region's copy holds.
+        Every `/v1/pbx/` read is served from a copy of the phone system kept in your region. When
+        that copy falls behind — the phone system's changes are delayed on their way — the answer is
+        still served, with the rows as the copy holds them, and this header says how late they may
+        be. An answer that was current carries no header. Show the age, or read again later, as
+        your application needs; nothing else changes about the answer.
+
+        A copy that is not merely late but not yet whole is not served: that read answers **503**
+        with `Retry-After`.
+      schema:
+        type: integer
+        minimum: 0
+      example: 420
   parameters:
     FaxId:
       name: fax
