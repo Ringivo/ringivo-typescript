@@ -11014,13 +11014,11 @@ components:
       description: |
         Who asked us to send the message — the surface, never the vendor. `pbx` is a staff reply
         from a phone-system app; `api` is your own software; `system` is our one confirmation reply
-        to an opt-out; `passthrough` is a send relayed for your own existing provider integration;
-        `recorded` is a text you sent through your own provider account and then recorded with
-        `POST /v1/outbound-messages` (no `message.sent` is raised for it).
+        to an opt-out; `recorded` is a text you sent through your own provider account and then
+        recorded with `POST /v1/outbound-messages` (no `message.sent` is raised for it).
       enum:
         - api
         - pbx
-        - passthrough
         - recorded
         - system
     OutboundMessageKind:
