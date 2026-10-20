@@ -7958,22 +7958,7 @@ export interface components {
         SipTrunkTargetId: string;
     };
     requestBodies: never;
-    headers: {
-        /**
-         * @description **Present only when the PBX data in this answer is late**, and then the number of seconds it
-         *     may be behind the phone system: the time since the newest change this region's copy holds.
-         *     Every `/v1/pbx/` read is served from a copy of the phone system kept in your region. When
-         *     that copy falls behind — the phone system's changes are delayed on their way — the answer is
-         *     still served, with the rows as the copy holds them, and this header says how late they may
-         *     be. An answer that was current carries no header. Show the age, or read again later, as
-         *     your application needs; nothing else changes about the answer.
-         *
-         *     A copy that is not merely late but not yet whole is not served: that read answers **503**
-         *     with `Retry-After`.
-         * @example 420
-         */
-        PbxDataStale: number;
-    };
+    headers: never;
     pathItems: never;
 }
 export type $defs = Record<string, never>;
@@ -14332,7 +14317,6 @@ export interface operations {
             /** @description A page of PBX subscribers. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14409,7 +14393,6 @@ export interface operations {
             /** @description The PBX subscriber. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14502,7 +14485,6 @@ export interface operations {
             /** @description A page of devices. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14574,7 +14556,6 @@ export interface operations {
             /** @description The device. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14693,7 +14674,6 @@ export interface operations {
             /** @description A page of call records. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14778,7 +14758,6 @@ export interface operations {
             /** @description The call record. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14811,7 +14790,6 @@ export interface operations {
              */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14982,7 +14960,6 @@ export interface operations {
              */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15056,7 +15033,6 @@ export interface operations {
             /** @description The transcript, with its turns. */
             200: {
                 headers: {
-                    "X-Pbx-Data-Stale": components["headers"]["PbxDataStale"];
                     [name: string]: unknown;
                 };
                 content: {
