@@ -10894,9 +10894,17 @@ components:
                   minLength: 1
                   maxLength: 40
                   description: |
-                    What staff see in front of the text, as `"<senderLabel>: <body>"`. Trimmed; one
-                    line, no control character, at least one visible character; 1 to 40 Unicode code
-                    points; the prefixed text at most 1024 code points.
+                    What staff see in front of the text, as `"<senderLabel>: <body>"`. We first trim
+                    white space at both ends: ASCII white space (space, tab, line feed, vertical tab,
+                    form feed, carriage return), U+0085 (next line) and the Unicode separators
+                    (categories Zs, Zl and Zp). After the trim, the label must be one line, with no
+                    control character (category Cc, which includes U+001C to U+001F, and U+0085 inside
+                    the label) and no U+2028 or U+2029; have at least one visible character, which is
+                    a letter, a number, a punctuation mark or a symbol (categories L, N, P and S); and
+                    be 1 to 40 Unicode code points, counted after the trim. A format character such
+                    as U+200D (zero-width joiner) is allowed, but it is not visible, so it cannot make
+                    a label on its own. The label, a colon, a space and the body together must be at
+                    most 1024 code points.
                   example: Appointment reminder
                 markConversationRead:
                   type: boolean
