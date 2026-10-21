@@ -3107,9 +3107,12 @@ export interface webhooks {
          *     - `provider_unreachable` — we could not reach the provider. Nothing was sent.
          *     - `outcome_unknown` — the provider's answer was lost, so the message may or may not have
          *       left. We never send it again, because a second try could text the person twice.
-         *     - `opted_out`, `no_send_key`, `media_unavailable` — we stopped it after we accepted it:
-         *       the recipient opted out, the account holds no key to send with, or a picture could not be
-         *       read. Nothing was sent.
+         *     - `opted_out` — the recipient opted out of texts from this number. A reply typed in the
+         *       phone system to that person is refused and raises this event with `source`
+         *       `phone_system`; a queued message whose recipient opted out before it was sent raises it
+         *       too. Nothing was sent.
+         *     - `no_send_key`, `media_unavailable` — we stopped it after we accepted it: the account
+         *       holds no key to send with, or a picture could not be read. Nothing was sent.
          *     - `undelivered` — the recipient's carrier reported that it did not take the message.
          *       `status` is then `undelivered`; for every other cause it is `failed`.
          *
@@ -5101,7 +5104,11 @@ export interface components {
             to: string;
             /** @description The text. Null for a picture message with no caption. */
             body: string | null;
-            /** @description The described parts of a picture message. An empty list for a text message. */
+            /**
+             * @description The described parts of a picture message. An empty list for a text message, and for a
+             *     picture message refused because the recipient opted out (`failure.cause` `opted_out`):
+             *     its pictures are never kept.
+             */
             media: components["schemas"]["OutboundMessageMediaPart"][];
             /**
              * @description The status this event announces: `sent` on `message.sent`, `delivered` on
