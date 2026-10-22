@@ -60,6 +60,8 @@ interface Surface {
     webhookDeliveries: object;
     pbx: { callRecords: object; subscribers: object; devices: object };
     customers: object;
+    messages: object;
+    inboundMessages: object;
     request: unknown;
   };
   VERSION: string;
@@ -71,6 +73,11 @@ interface Surface {
     options?: { now?: number },
   ) => void;
   SignatureVerificationError: new (message: string) => Error;
+  parseMessageEvent: (payload: unknown) => { type: string | null };
+  INBOUND_MESSAGE_EVENT_TYPES: readonly string[];
+  OUTBOUND_MESSAGE_EVENT_TYPES: readonly string[];
+  isRetryable: (error: unknown) => boolean;
+  senderLabel: (text: string) => string;
 }
 
 async function load(kind: "esm" | "cjs"): Promise<Surface> {
@@ -255,6 +262,46 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
         .filter((name) => name !== "constructor")
         .sort(),
     ).toEqual(["get", "list"]);
+  });
+
+  it("exposes the whole messaging surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["messages:record", "numbers:read"],
+    });
+
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.messages))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["record"]);
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.inboundMessages))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["get", "list"]);
+  });
+
+  it("parses a message event, routes it, and makes a label", async () => {
+    const {
+      parseMessageEvent,
+      INBOUND_MESSAGE_EVENT_TYPES,
+      OUTBOUND_MESSAGE_EVENT_TYPES,
+      isRetryable,
+      senderLabel,
+    } = await load(kind);
+
+    expect(parseMessageEvent({ type: "message.failed", data: {} }).type).toBe("message.failed");
+    expect(parseMessageEvent("not an object").type).toBeNull();
+    expect(INBOUND_MESSAGE_EVENT_TYPES).toEqual(["message.received"]);
+    expect(OUTBOUND_MESSAGE_EVENT_TYPES).toHaveLength(3);
+    expect(isRetryable(new Error("x"))).toBe(false);
+    expect(senderLabel("  Dana \n Smith ")).toBe("Dana Smith");
   });
 
   it("verifies the server's own vector, and refuses a tampered body", async () => {

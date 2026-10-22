@@ -984,3 +984,110 @@ describe("media", () => {
     expect(error.statusCode).toBe(404);
   });
 });
+
+describe("the renamed filter names", () => {
+  it("sends camelCase only, once, and hands an unknown-filter 400 to the caller", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(FAXES_URL, async ({ request }) => {
+        await calls.record(request);
+        // The API's real body for a filter key it does not declare — what an
+        // API from before the rename answers to `filter[faxAccount]`.
+        return HttpResponse.json(
+          {
+            errors: [
+              {
+                detail: "Filter parameter faxAccount is not allowed.",
+                source: { parameter: "filter" },
+                status: "400",
+                title: "Invalid Query Parameter",
+              },
+            ],
+          },
+          { status: 400 },
+        );
+      }),
+    );
+
+    const error = await client()
+      .faxes.list({
+        faxAccount: ACCOUNT_ID,
+        clientReference: "chart-4471",
+        createdAfter: "2026-08-01T00:00:00Z",
+        createdBefore: "2026-08-31T23:59:59Z",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).statusCode).toBe(400);
+    // ONE request: there is no second ask in the old spelling any more.
+    expect(calls.count).toBe(1);
+    expect([...calls.last.url.searchParams.keys()].sort()).toEqual([
+      "filter[clientReference]",
+      "filter[createdAfter]",
+      "filter[createdBefore]",
+      "filter[faxAccount]",
+    ]);
+  });
+});
+
+/**
+ * The v1 naming cleanup's RESPONSE half. The filter-name fallback is gone —
+ * filters go out in camelCase only — but the media link and the send
+ * acknowledgement still read either spelling of their renamed members.
+ */
+describe("the renamed response members", () => {
+  it("reads the media link in the new names and falls back to the old", async () => {
+    const url = `${FAXES_URL}/${FAX_ID}/media/content?signature=abc`;
+    let next = 0;
+    const answers = [
+      { url, expiresAt: "2026-08-16T11:07:31+00:00", byteSize: 7, sha256: "d".repeat(64) },
+      { url, expires_at: "2026-08-16T11:07:31+00:00", byte_size: 7, sha256: "d".repeat(64) },
+    ];
+    server.use(
+      http.get(`${FAXES_URL}/${FAX_ID}/media`, () => {
+        const body = answers[next];
+        next += 1;
+        return HttpResponse.json(body);
+      }),
+    );
+
+    const ringivo = client();
+    const renamed = await ringivo.faxes.mediaLink(FAX_ID);
+    const legacy = await ringivo.faxes.mediaLink(FAX_ID);
+
+    const stamp = new Date("2026-08-16T11:07:31Z").getTime();
+    expect([renamed.expiresAt?.getTime(), renamed.byteSize]).toEqual([stamp, 7]);
+    expect([legacy.expiresAt?.getTime(), legacy.byteSize]).toEqual([stamp, 7]);
+  });
+
+  it("reads the send acknowledgement in the new names and falls back to the old", async () => {
+    let next = 0;
+    const base = { id: FAX_ID, status: "queued", direction: "outbound" };
+    const answers = [
+      { ...base, clientReference: "new", createdAt: "2026-08-16T11:02:31+00:00" },
+      { ...base, client_reference: "old", created_at: "2026-08-16T11:02:31+00:00" },
+    ];
+    server.use(
+      http.post(FAXES_URL, () => {
+        const data = answers[next];
+        next += 1;
+        return HttpResponse.json({ data }, { status: 202 });
+      }),
+    );
+
+    const ringivo = client();
+    const send = () =>
+      ringivo.faxes.send({
+        faxAccount: ACCOUNT_ID,
+        to: "+13025556789",
+        urls: ["https://x.example/a.pdf"],
+      });
+    const renamed = await send();
+    const legacy = await send();
+
+    const stamp = new Date("2026-08-16T11:02:31Z").getTime();
+    expect([renamed.clientReference, renamed.createdAt?.getTime()]).toEqual(["new", stamp]);
+    expect([legacy.clientReference, legacy.createdAt?.getTime()]).toEqual(["old", stamp]);
+  });
+});

@@ -1589,6 +1589,402 @@ export function customerPageFromDocument(document: RawJson): CustomerPage {
 }
 
 /**
+ * One attachment part of a text, DESCRIBED: there is no file and no URL.
+ *
+ * An attachment is any type — a picture, a contact card, audio, a PDF.
+ * `byteSize` is read from the wire member `bytes` (the part's size).
+ * `filename` and `encoding` are null on a part the platform sent; they are
+ * kept because the member exists on the wire. A received message's parts
+ * carry all four.
+ */
+export interface MessageMediaPart {
+  readonly contentType: string | null;
+  readonly filename: string | null;
+  readonly encoding: string | null;
+  readonly byteSize: number | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * A text you recorded with `client.messages.record()`.
+ *
+ * `replayed` is `true` when the answer was 200: a repeat of an earlier record
+ * with the same provider message id and the same content, so the first record
+ * came back unchanged. A first record answers 201 and reads `false`. The body
+ * is the same resource either way; the status code is the only thing that
+ * tells the two apart.
+ *
+ * `source`, `kind` and `status` are `string`s rather than the spec's enums,
+ * for the reason `Fax.status` is: a word the server adds tomorrow must reach
+ * you today, without a new SDK.
+ */
+export interface OutboundMessage {
+  readonly id: string;
+  readonly source: string | null;
+  readonly kind: string | null;
+  readonly status: string | null;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly body: string | null;
+  readonly media: readonly MessageMediaPart[];
+  readonly senderLabel: string | null;
+  readonly markConversationRead: boolean | null;
+  readonly sentAt: Date | null;
+  readonly providerMessageId: string | null;
+  readonly providerPartIds: readonly string[] | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly replayed: boolean | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * A text or picture message somebody sent to one of your numbers.
+ *
+ * `from` is the sender and `to` is your number. `kind` is `sms` or `mms`,
+ * and is not derivable from `media`: an MMS with only a caption and an SMS
+ * both arrive with a body and no attachment. `body` is null for an MMS with
+ * no caption.
+ *
+ * `media` DESCRIBES each attachment — type, filename, encoding and size — and
+ * carries no file and no URL: the platform does not keep the bytes. Ask your
+ * messaging provider for the file.
+ *
+ * `receivedAt` is when the message was SENT, and is what the date filters
+ * match; `createdAt` is when the platform stored it. They differ by however
+ * long a redelivery took.
+ */
+export interface InboundMessage {
+  readonly id: string;
+  readonly kind: string | null;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly body: string | null;
+  readonly media: readonly MessageMediaPart[];
+  readonly receivedAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One page of `inboundMessages.list()`, newest first.
+ *
+ * The same shape and the same cursor rules as `FaxPage`: pass `nextCursor`
+ * back as `after` for the next page. It is null on the last page.
+ */
+export interface InboundMessagePage {
+  readonly messages: readonly InboundMessage[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * Who sent a message from the phone system: a kind and a display name,
+ * nothing more. No user id is ever sent.
+ *
+ * `kind` is `phone_system_user` (a person typed it) or
+ * `phone_system_automatic` (a call queue's automatic reply — nobody read the
+ * thread to send it). More values can be added: treat one you do not know as
+ * `phone_system_automatic`. `name` is null when the platform does not have
+ * the name yet.
+ */
+export interface MessageSender {
+  readonly kind: string | null;
+  readonly name: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * The message a `message.received` event carries: one somebody sent TO one
+ * of your numbers.
+ *
+ * `from` is the sender, `to` is your number, `id` is the message's id in
+ * `client.inboundMessages`, and `receivedAt` is when it was sent. `customerId`
+ * is null while the number sits unassigned in your own pool.
+ */
+export interface MessageReceivedEventData {
+  readonly id: string | null;
+  readonly tenantId: string | null;
+  readonly customerId: string | null;
+  readonly kind: string | null;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly body: string | null;
+  readonly media: readonly MessageMediaPart[];
+  readonly receivedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * The message `message.sent`, `message.delivered` and `message.failed`
+ * carry: one SENT from one of your numbers, with the same members on all
+ * three.
+ *
+ * `source` is a plain string, not an enum: the contract says more values can
+ * be added, and a value this release does not know must still reach you.
+ *
+ * `sentAt` and `providerMessageId` are null for a message the provider never
+ * accepted, and `providerPartIds` is `[]` for it. Both provider members are
+ * null for a message on a provider account that is not yours. `sentBy` is
+ * null unless `source` is `phone_system`.
+ */
+export interface OutboundMessageEventData {
+  readonly id: string | null;
+  readonly tenantId: string | null;
+  readonly customerId: string | null;
+  readonly source: string | null;
+  readonly kind: string | null;
+  readonly from: string | null;
+  readonly to: string | null;
+  readonly body: string | null;
+  readonly media: readonly MessageMediaPart[];
+  readonly status: string | null;
+  readonly sentBy: MessageSender | null;
+  readonly sentAt: Date | null;
+  readonly providerMessageId: string | null;
+  readonly providerPartIds: readonly string[] | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * The message `message.failed` carries: the sent message's members, plus why
+ * it did not reach its recipient.
+ *
+ * `failureCause` is read from `failure.cause`: `provider_refused`,
+ * `provider_unreachable`, `outcome_unknown`, `submission_interrupted`,
+ * `opted_out`, `no_send_key`, `media_unavailable` or `undelivered`. It is a
+ * plain string, not an enum — more causes can be added, so treat one you do
+ * not know as a failure.
+ */
+export interface MessageFailedEventData extends OutboundMessageEventData {
+  readonly failureCause: string | null;
+}
+
+/** What every message event carries besides its type and its message. */
+interface MessageEventEnvelope {
+  /** The delivery's own id. Dedupe on it: delivery is at least once. */
+  readonly eventId: string | null;
+  readonly occurredAt: Date | null;
+  /** The whole decoded body, exactly as it was handed to the parser. */
+  readonly raw: RawJson;
+}
+
+/** A text or picture message somebody sent to one of your numbers. */
+export interface MessageReceivedEvent extends MessageEventEnvelope {
+  readonly type: "message.received";
+  readonly message: MessageReceivedEventData;
+}
+
+/** The messaging provider accepted a message sent from one of your numbers. */
+export interface MessageSentEvent extends MessageEventEnvelope {
+  readonly type: "message.sent";
+  readonly message: OutboundMessageEventData;
+}
+
+/** The recipient's carrier took a message sent from one of your numbers. */
+export interface MessageDeliveredEvent extends MessageEventEnvelope {
+  readonly type: "message.delivered";
+  readonly message: OutboundMessageEventData;
+}
+
+/** A message sent from one of your numbers did not reach its recipient. */
+export interface MessageFailedEvent extends MessageEventEnvelope {
+  readonly type: "message.failed";
+  readonly message: MessageFailedEventData;
+}
+
+/**
+ * A body that is not one of the four message events: another event type, a
+ * type this release does not know yet, or no JSON object at all.
+ *
+ * `type` is `null` so that `switch (event.type)` narrows the four known
+ * variants cleanly; the type that arrived, if any, is `raw.type`. It carries
+ * no `message`, because this release does not know what such a body holds.
+ */
+export interface UnknownMessageEvent extends MessageEventEnvelope {
+  readonly type: null;
+}
+
+/**
+ * What `parseMessageEvent()` returns: one variant per message event type,
+ * told apart by `type`, plus `UnknownMessageEvent` for anything else.
+ */
+export type MessageEvent =
+  | MessageReceivedEvent
+  | MessageSentEvent
+  | MessageDeliveredEvent
+  | MessageFailedEvent
+  | UnknownMessageEvent;
+
+function mediaPartFromJson(source: RawJson): MessageMediaPart {
+  return Object.freeze({
+    contentType: text(source, "contentType"),
+    filename: text(source, "filename"),
+    encoding: text(source, "encoding"),
+    byteSize: integer(source, "bytes"),
+    raw: source,
+  });
+}
+
+function mediaParts(source: RawJson): readonly MessageMediaPart[] {
+  const value = source.media;
+  return Object.freeze((Array.isArray(value) ? value : []).filter(isRecord).map(mediaPartFromJson));
+}
+
+/**
+ * Build from an `outbound-messages` JSON:API resource object —
+ * `messages.record()`. `replayed` comes from the status code, which only the
+ * caller has.
+ */
+export function outboundMessageFromResource(
+  resource: RawJson,
+  options: { replayed?: boolean } = {},
+): OutboundMessage {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    source: text(attributes, "source"),
+    kind: text(attributes, "kind"),
+    status: text(attributes, "status"),
+    from: text(attributes, "from"),
+    to: text(attributes, "to"),
+    body: text(attributes, "body"),
+    media: mediaParts(attributes),
+    senderLabel: text(attributes, "senderLabel"),
+    markConversationRead: boolean(attributes, "markConversationRead"),
+    sentAt: instant(attributes.sentAt),
+    providerMessageId: text(attributes, "providerMessageId"),
+    providerPartIds: textList(attributes, "providerPartIds"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    replayed: options.replayed ?? null,
+    raw: resource,
+  });
+}
+
+/** Build from an `inbound-messages` JSON:API resource object. */
+export function inboundMessageFromResource(resource: RawJson): InboundMessage {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    kind: text(attributes, "kind"),
+    from: text(attributes, "from"),
+    to: text(attributes, "to"),
+    body: text(attributes, "body"),
+    media: mediaParts(attributes),
+    receivedAt: instant(attributes.receivedAt),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function inboundMessagePageFromDocument(document: RawJson): InboundMessagePage {
+  const data = document.data;
+  const messages = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map(inboundMessageFromResource);
+
+  return Object.freeze({
+    messages: Object.freeze(messages),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+function messageReceivedDataFromJson(source: RawJson): MessageReceivedEventData {
+  return Object.freeze({
+    id: text(source, "id"),
+    tenantId: text(source, "tenantId"),
+    customerId: text(source, "customerId"),
+    kind: text(source, "kind"),
+    from: text(source, "from"),
+    to: text(source, "to"),
+    body: text(source, "body"),
+    media: mediaParts(source),
+    receivedAt: instant(source.receivedAt),
+    raw: source,
+  });
+}
+
+function outboundMessageDataMembers(source: RawJson): OutboundMessageEventData {
+  const sentBy = nested(source, "sentBy");
+
+  return {
+    id: text(source, "id"),
+    tenantId: text(source, "tenantId"),
+    customerId: text(source, "customerId"),
+    source: text(source, "source"),
+    kind: text(source, "kind"),
+    from: text(source, "from"),
+    to: text(source, "to"),
+    body: text(source, "body"),
+    media: mediaParts(source),
+    status: text(source, "status"),
+    sentBy:
+      sentBy === null
+        ? null
+        : Object.freeze({ kind: text(sentBy, "kind"), name: text(sentBy, "name"), raw: sentBy }),
+    sentAt: instant(source.sentAt),
+    providerMessageId: text(source, "providerMessageId"),
+    providerPartIds: textList(source, "providerPartIds"),
+    raw: source,
+  };
+}
+
+/**
+ * Read a decoded `message.*` webhook body as its own variant — see
+ * `parseMessageEvent()` in webhooks.ts, which is the public door.
+ *
+ * NEVER THROWS. A body that is not an object, or whose `type` is not one of
+ * the four, is an `UnknownMessageEvent`; a member that is missing or of the
+ * wrong type reads null, and the whole body stays on `raw`.
+ */
+export function messageEventFromJson(payload: unknown): MessageEvent {
+  const source: RawJson = isRecord(payload) ? payload : {};
+  const envelope = {
+    eventId: text(source, "eventId"),
+    occurredAt: instant(source.occurredAt),
+    raw: source,
+  };
+  const data = nested(source, "data") ?? {};
+
+  switch (source.type) {
+    case "message.received":
+      return Object.freeze({
+        ...envelope,
+        type: "message.received",
+        message: messageReceivedDataFromJson(data),
+      });
+    case "message.sent":
+    case "message.delivered":
+      return Object.freeze({
+        ...envelope,
+        type: source.type,
+        message: Object.freeze(outboundMessageDataMembers(data)),
+      });
+    case "message.failed": {
+      const failure = nested(data, "failure") ?? {};
+      return Object.freeze({
+        ...envelope,
+        type: "message.failed",
+        message: Object.freeze({
+          ...outboundMessageDataMembers(data),
+          failureCause: text(failure, "cause"),
+        }),
+      });
+    }
+    default:
+      return Object.freeze({ ...envelope, type: null });
+  }
+}
+
+/**
  * `links.next`, present on every page but the last — on the final page the
  * key is ABSENT from the document altogether, never present-and-null. Both
  * are read as "no next", because a client that trusted only the documented

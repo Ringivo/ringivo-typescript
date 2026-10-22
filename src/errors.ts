@@ -332,3 +332,64 @@ export async function throwForResponse(response: Response): Promise<void> {
     retryAfter: retryAfterSeconds(response.headers.get("retry-after")),
   });
 }
+
+/** The statuses below 500 the API's contract says to retry unchanged. */
+const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([408, 429]);
+
+/**
+ * Whether the API's contract says to try this call again, unchanged.
+ *
+ * `true` for NO ANSWER and for an `ApiError` whose status is 408, 429 or any
+ * 5xx. `false` for every other `ApiError` (400, 401, 403, 404, 409, 422): the
+ * same request gets the same answer until something changes first — the
+ * request itself, or the account. A 401, 403 or 404 can be a setting that is
+ * fixed later; for example `messages.record()` answers 404 while recording
+ * texts is not turned on for the platform yet. Retry those only after the
+ * change, or slowly. `false` for anything else, because this package did not
+ * throw it for the API — a refusal before any request included.
+ *
+ * NO ANSWER is what Node's `fetch` throws when the request got no response:
+ * the `TimeoutError` of this client's own timeout, and the `TypeError`
+ * whose `cause` carries a system or socket error `code` (`ECONNREFUSED`,
+ * `ENOTFOUND`, `ECONNRESET`, `UND_ERR_SOCKET`, a TLS failure, and so on).
+ * A `TypeError` this client caused is `false`: an unknown URL scheme or a
+ * forbidden port (a `cause` with no `code`) and an invalid URL or argument
+ * (`ERR_INVALID_*`, `UND_ERR_INVALID_ARG`, `UND_ERR_NOT_SUPPORTED`). An
+ * unchanged retry of those fails the same way.
+ *
+ * This decides WHETHER to retry, never WHEN. Wait at least
+ * `error.retryAfter` seconds when it is set; otherwise use your own backoff.
+ * The client never retries by itself: a retry belongs in your durable queue,
+ * not inside a call that would block your worker.
+ *
+ * The Python client's `is_retryable()` is the same contract; the two are kept
+ * the same on purpose.
+ */
+export function isRetryable(error: unknown): boolean {
+  if (error instanceof ApiError) {
+    return RETRYABLE_STATUSES.has(error.statusCode) || error.statusCode >= 500;
+  }
+  return isNoAnswer(error);
+}
+
+function isNoAnswer(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) {
+    return false;
+  }
+  // `AbortSignal.timeout()` rejects with a `DOMException` named
+  // `TimeoutError`. Read by name: a `DOMException` is not an `Error` on every
+  // runtime this package supports.
+  if ((error as { name?: unknown }).name === "TimeoutError") {
+    return true;
+  }
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+  const cause: unknown = error.cause;
+  const code =
+    typeof cause === "object" && cause !== null ? (cause as { code?: unknown }).code : undefined;
+  if (typeof code !== "string" || code === "") {
+    return false;
+  }
+  return !/^(ERR_INVALID|UND_ERR_INVALID_ARG|UND_ERR_NOT_SUPPORTED)/.test(code);
+}
