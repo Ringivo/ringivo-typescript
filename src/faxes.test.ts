@@ -261,7 +261,7 @@ describe("send", () => {
       resolution: "fine",
       clientReference: "chart-4471",
       tags: { clinic: "north" },
-      coverPage: { to_name: "Dr Ruiz", subject: "Records" },
+      coverPage: { toName: "Dr Ruiz", subject: "Records" },
     });
 
     const { request, body } = sends.last;
@@ -300,7 +300,7 @@ describe("send", () => {
       to: "+1302",
       file: new Uint8Array([97]),
       tags: { clinic: "north" },
-      coverPage: { to_name: "Dr Ruiz" },
+      coverPage: { toName: "Dr Ruiz" },
     });
 
     const { body } = sends.last;
@@ -309,7 +309,7 @@ describe("send", () => {
       'name="tags"\r\nContent-Type: application/json\r\n\r\n{"clinic":"north"}',
     );
     expect(body).toContain('name="coverPage"\r\nContent-Type: application/json');
-    // The documented snake_case cover-page keys go out camelCase.
+    // The cover-page keys go out exactly as given (camelCase).
     expect(body).toContain('{"toName":"Dr Ruiz"}');
     // A form field, not an upload: no filename, or a server reads it as a page.
     expect(body).not.toContain('name="tags"; filename');
@@ -1032,12 +1032,13 @@ describe("the renamed filter names", () => {
 });
 
 /**
- * The v1 naming cleanup's RESPONSE half. The filter-name fallback is gone —
- * filters go out in camelCase only — but the media link and the send
- * acknowledgement still read either spelling of their renamed members.
+ * The v1 naming cleanup's RESPONSE half: camelCase only. The media link and
+ * the send acknowledgement read `expiresAt`/`byteSize` and
+ * `clientReference`/`createdAt`; the snake_case names are no longer read, and
+ * reach a caller only through `raw`.
  */
 describe("the renamed response members", () => {
-  it("reads the media link in the new names and falls back to the old", async () => {
+  it("reads the media link in camelCase, and not in snake_case", async () => {
     const url = `${FAXES_URL}/${FAX_ID}/media/content?signature=abc`;
     let next = 0;
     const answers = [
@@ -1053,15 +1054,16 @@ describe("the renamed response members", () => {
     );
 
     const ringivo = client();
-    const renamed = await ringivo.faxes.mediaLink(FAX_ID);
+    const current = await ringivo.faxes.mediaLink(FAX_ID);
     const legacy = await ringivo.faxes.mediaLink(FAX_ID);
 
     const stamp = new Date("2026-08-16T11:07:31Z").getTime();
-    expect([renamed.expiresAt?.getTime(), renamed.byteSize]).toEqual([stamp, 7]);
-    expect([legacy.expiresAt?.getTime(), legacy.byteSize]).toEqual([stamp, 7]);
+    expect([current.expiresAt?.getTime(), current.byteSize]).toEqual([stamp, 7]);
+    expect([legacy.expiresAt, legacy.byteSize]).toEqual([null, null]);
+    expect(legacy.raw.byte_size).toBe(7);
   });
 
-  it("reads the send acknowledgement in the new names and falls back to the old", async () => {
+  it("reads the send acknowledgement in camelCase, and not in snake_case", async () => {
     let next = 0;
     const base = { id: FAX_ID, status: "queued", direction: "outbound" };
     const answers = [
@@ -1083,11 +1085,26 @@ describe("the renamed response members", () => {
         to: "+13025556789",
         urls: ["https://x.example/a.pdf"],
       });
-    const renamed = await send();
+    const current = await send();
     const legacy = await send();
 
     const stamp = new Date("2026-08-16T11:02:31Z").getTime();
-    expect([renamed.clientReference, renamed.createdAt?.getTime()]).toEqual(["new", stamp]);
-    expect([legacy.clientReference, legacy.createdAt?.getTime()]).toEqual(["old", stamp]);
+    expect([current.clientReference, current.createdAt?.getTime()]).toEqual(["new", stamp]);
+    expect([legacy.clientReference, legacy.createdAt]).toEqual([null, null]);
+  });
+
+  it("sends a snake_case cover-page key exactly as given, unrenamed", async () => {
+    const sends = recordSends();
+
+    await client().faxes.send({
+      faxAccount: ACCOUNT_ID,
+      to: "+13025556789",
+      urls: ["https://x.example/a.pdf"],
+      coverPage: { to_name: "Dr Ruiz" },
+    });
+
+    expect((JSON.parse(sends.last.body) as { coverPage: unknown }).coverPage).toEqual({
+      to_name: "Dr Ruiz",
+    });
   });
 });

@@ -25,13 +25,14 @@ filters, the `faxAccountUsers` filter, two `webhookEndpoints` filters, the
 `createdAt`, and the media link's `expiresAt` and `byteSize`. **Your code does
 not change:** the options and fields already had these names.
 
-**The filter-name fallback is gone.** 0.12.x to 0.16.x asked with the new
-filter names and, when an API from before the rename refused them with a 400,
-asked once more with the old names. This release sends the new names only,
-once: an API from before the rename answers that 400 to you. The send
-acknowledgement and the media link are still read in either spelling.
-`raw` and anything you read through `client.request()` carry whatever the API
-sent — camelCase once it is renamed.
+**The compatibility code is gone** (see CHANGELOG.md). 0.12.x to 0.16.x
+asked with the new filter names and, when an API from before the rename
+refused them with a 400, asked once more with the old names; they also read
+the old snake_case and kebab-case response members. This release sends and
+reads the camelCase names only: an API from before the rename answers that
+400 to you. `faxes.send()`'s `coverPage` takes `toName` and `fromName`; a
+snake_case `to_name` is sent as given, not renamed. `raw` and anything you
+read through `client.request()` carry whatever the API sent.
 
 ## Before you install 0.11.0
 

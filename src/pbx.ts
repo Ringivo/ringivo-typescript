@@ -37,12 +37,11 @@
  * `PbxCallRequest`, so a member this package spells wrongly is a compile
  * error rather than a 422 somebody reads out of a log.
  *
- * -- THE WIRE IS camelCase HERE, EXCEPT FOR TWO SUB-COLLECTIONS --------------
+ * -- THE WIRE IS camelCase HERE --------------------------------------------
  * `/v1/pbx/` attributes and filters are spelled `startedAfter`,
- * `displayName`, `includeHidden` — the API's own spelling since its 2026-09
- * rename, which 0.11.0 of this package follows. The recordings and
- * transcripts documents still spell their attributes in kebab-case
- * (`byte-size`, `content-url`); src/models.ts reads each as the API writes it.
+ * `displayName`, `includeHidden`, and the recordings and transcripts
+ * documents `byteSize`, `contentUrl`, `expiresAt` — the API's own spelling
+ * since its 2026-09 rename. The kebab-case names are no longer read.
  */
 import type { components } from "./_generated/schema.js";
 import type { Ringivo } from "./client.js";
