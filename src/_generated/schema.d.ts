@@ -3041,7 +3041,8 @@ export interface webhooks {
          * @description Fired when the messaging provider accepts a message we sent from one of your numbers. For a
          *     staff reply typed in a phone-system app (`source: phone_system`), this is how the reply reaches your
          *     own system: `sentBy` names the staff member, and `sentAt` is the instant to order your
-         *     thread by.
+         *     thread by. A call queue's automatic reply comes the same way, with `sentBy.kind`
+         *     `phone_system_automatic`: nobody typed it, so it is no sign that staff read the thread.
          *
          *     **Not a promise of delivery.** A message the provider accepted can still be dropped by the
          *     recipient's carrier — for example, a text from a number with no 10DLC campaign to a US
@@ -5126,7 +5127,11 @@ export interface components {
              * @enum {string}
              */
             status: "sent" | "delivered" | "undelivered" | "failed";
-            /** @description Who typed the message. Set for a staff reply (`source` is `phone_system`); null otherwise. */
+            /**
+             * @description Who sent the message from the phone system (`source` is `phone_system`): a staff member,
+             *     or the phone system itself for a call queue's automatic reply (`kind`
+             *     `phone_system_automatic`). Null for every other source.
+             */
             sentBy: components["schemas"]["OutboundMessageSender"] | null;
             /**
              * Format: date-time
@@ -5274,16 +5279,24 @@ export interface components {
             data: components["schemas"]["OutboundMessageResource"];
             meta?: components["schemas"]["DocumentMeta"];
         };
-        /** @description Who typed a staff reply. The name only: no phone-system user id is ever sent. */
+        /**
+         * @description Who sent a message from your phone system: a staff member, or the phone system itself. The
+         *     name only: no phone-system user id is ever sent.
+         */
         OutboundMessageSender: {
             /**
-             * @description A user of your phone system, replying from its app.
+             * @description `phone_system_user`: a user of your phone system typed the reply in its app.
+             *     `phone_system_automatic`: the phone system sent it by itself, with nobody typing — a call
+             *     queue's automatic reply to a text that reached the queue. Nobody read the conversation to
+             *     send it, so do not treat it as "staff have read this thread".
+             *     More values can be added; treat a value you do not know as `phone_system_automatic`.
              * @enum {string}
              */
-            kind: "phone_system_user";
+            kind: "phone_system_user" | "phone_system_automatic";
             /**
-             * @description The staff member's display name. Null when we do not have the staff member's name yet,
-             *     for example just after the user was created on your phone system.
+             * @description The staff member's display name, or the call queue's name for `phone_system_automatic`.
+             *     Null when we do not have the name yet, for example just after the user or queue was
+             *     created on your phone system.
              * @example Dana Smith
              */
             name: string | null;
