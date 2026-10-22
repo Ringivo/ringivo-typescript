@@ -15,9 +15,18 @@
  * caller branches rather than only in a message, and that the two do not
  * shadow each other when a body could be read as either.
  */
+import { type Server, createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+
 import { describe, expect, it, vi } from "vitest";
 
-import { ApiError, AuthenticationError, throwForResponse } from "./errors.js";
+import {
+  ApiError,
+  AuthenticationError,
+  RingivoError,
+  isRetryable,
+  throwForResponse,
+} from "./errors.js";
 
 /** The typed error this response folds into, without the try/catch noise. */
 async function fold(body: unknown, status: number): Promise<ApiError> {
@@ -257,5 +266,106 @@ describe("the two shapes side by side", () => {
     expect(error.code).toBeNull();
     expect(error.errors).toEqual([]);
     expect(error.message).toContain("Something went wrong.");
+  });
+});
+
+/**
+ * `isRetryable()`: the API's retry contract, as one table — retry on no
+ * answer, 408, 429 and any 5xx; never on any other refusal.
+ *
+ * "No answer" is asserted against REAL failures of Node's own `fetch`, from a
+ * local socket nobody listens on and a local server that hangs up, not
+ * against hand-built look-alikes: the shape of those errors is the
+ * runtime's, and a test that built its own would agree with itself.
+ */
+describe("isRetryable", () => {
+  function apiError(status: number): ApiError {
+    return new ApiError(`HTTP ${status}`, { statusCode: status });
+  }
+
+  async function listening(handler: Parameters<typeof createServer>[1]): Promise<Server> {
+    const server = createServer(handler);
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    return server;
+  }
+
+  function urlOf(server: Server): string {
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  async function failure(run: () => Promise<unknown>): Promise<unknown> {
+    return run().then(
+      () => {
+        throw new Error("expected the call to fail");
+      },
+      (caught: unknown) => caught,
+    );
+  }
+
+  it.each([408, 429, 500, 502, 503, 504, 599])("retries a %i", (status) => {
+    expect(isRetryable(apiError(status))).toBe(true);
+  });
+
+  it.each([400, 403, 404, 409, 410, 413, 415, 422])("never retries a %i unchanged", (status) => {
+    expect(isRetryable(apiError(status))).toBe(false);
+  });
+
+  it("does not retry a refused credential", () => {
+    expect(isRetryable(new AuthenticationError("HTTP 401", { statusCode: 401 }))).toBe(false);
+  });
+
+  it("retries a connection nobody accepted", async () => {
+    const server = await listening(() => undefined);
+    const url = urlOf(server);
+    await new Promise((resolve) => server.close(resolve));
+
+    const error = await failure(() => fetch(url));
+
+    expect(error).toBeInstanceOf(TypeError);
+    expect(isRetryable(error)).toBe(true);
+  });
+
+  it("retries a connection the server hung up on", async () => {
+    const server = await listening((request) => request.socket.destroy());
+
+    const error = await failure(() => fetch(urlOf(server)));
+    server.close();
+
+    expect(isRetryable(error)).toBe(true);
+  });
+
+  it("retries a request that ran out of time", async () => {
+    const server = await listening(() => undefined);
+
+    const error = await failure(() =>
+      fetch(urlOf(server), { signal: AbortSignal.timeout(50) }),
+    );
+    server.closeAllConnections();
+    server.close();
+
+    expect((error as Error).name).toBe("TimeoutError");
+    expect(isRetryable(error)).toBe(true);
+  });
+
+  it.each([
+    ["an unknown URL scheme", "ftp://127.0.0.1/"],
+    ["a port fetch forbids", "http://127.0.0.1:1/"],
+    ["a URL that does not parse", "not a url"],
+  ])("does not retry %s, which this client caused", async (_name, url) => {
+    const error = await failure(() => fetch(url));
+
+    expect(error).toBeInstanceOf(TypeError);
+    expect(isRetryable(error)).toBe(false);
+  });
+
+  it.each([
+    ["an Error", new Error("bad")],
+    ["a RingivoError", new RingivoError("x")],
+    ["a TypeError with no cause", new TypeError("scopes is required")],
+    ["a string", "fetch failed"],
+    ["null", null],
+    ["undefined", undefined],
+  ])("does not retry %s, which this package did not throw for the API", (_name, error) => {
+    expect(isRetryable(error)).toBe(false);
   });
 });

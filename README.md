@@ -5,7 +5,9 @@ one, list them, cancel one, fetch its pages, manage your customers' fax
 accounts, say who may read them, register the webhooks that tell you what
 happened — and verify them when they arrive. It also lists your customers
 and reads their phone systems: their call records, who holds which
-extension, what their phones have registered, and click-to-dial.
+extension, what their phones have registered, and click-to-dial. For text
+messaging, it records the texts your own system sent, reads the texts sent to
+your numbers, and parses the `message.*` webhooks.
 
 ```sh
 npm install ringivo
@@ -14,96 +16,12 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
-## Before you install 0.12.0: the API's v1 naming cleanup
-
-The API renamed its last snake_case names on the resource surface to
-camelCase, with no alias. The ones this client touches are four `faxes`
-filters, the `faxAccountUsers` filter, two `webhookEndpoints` filters, the
-`webhookDeliveries` filter, the send acknowledgement's `clientReference` and
-`createdAt`, and the media link's `expiresAt` and `byteSize`. **Your code does
-not change:** the options and fields already had these names.
-
-**0.12.x works against the API on both sides of that deploy, so upgrade
-before it.** It asks with the new filter names; an API that has not taken the
-rename refuses them with a 400, and this client then asks once more with the
-old names and remembers which spelling worked (and switches back the same way
-when the API changes under a running process). It reads the send
-acknowledgement and the media link in either spelling. An older client stops
-filtering on the day the API is renamed: every renamed filter it sends is
-refused with a 400.
-
-**The next minor release removes the fallback** and sends the new names only.
-`raw` and anything you read through `client.request()` carry whatever the API
-sent — camelCase once it is renamed.
-
-## Before you install 0.11.0
-
-**0.11.0 breaks the whole `client.pbx` surface, on purpose.** The API renamed
-it, and this release catches up in one step:
-
-- **`pbx.users` is `pbx.subscribers`.** The API path `/v1/pbx/users` is gone,
-  with no alias. `PbxUser`/`PbxUserPage`/`PbxUsers`/`ListPbxUsersOptions` are
-  `PbxSubscriber`/`PbxSubscriberPage`/`PbxSubscribers`/
-  `ListPbxSubscribersOptions`, and a page's rows are `page.subscribers`. The
-  list now returns machines too — auto attendants, queues, AI agents — so a
-  people-only list needs `{ kind: "user" }`. See
-  [Who is on the phone system](#who-is-on-the-phone-system-and-what-is-registered).
-- **The links back to a subscriber moved:** `PbxDevice.pbxUserId` is
-  `subscriberId`, `CallRecord.fromPbxUserId`/`toPbxUserId` are
-  `fromSubscriberId`/`toSubscriberId`, and `user` on `devices.list()` and
-  `callRecords.list()` is `subscriber`. `user` on `subscribers.list()` is still
-  the extension.
-- **`CallRecord` is the API's one clean shape.** `vendorType`, `fromUser`,
-  `fromUri`, `toUser`, `toUri`, `dialed`, `byUser`, `termUser`, `tag`,
-  `duration` and `talkTime` are gone. It now carries `fromNumber`, `toNumber`
-  and `dialedNumber` (E.164 or `null`), `fromExtension`, `routedByExtension`,
-  `answeringExtension`, `durationSeconds`, `talkSeconds`, `releaseCode`,
-  `releaseText`, `tenantId` and `territory`, plus an extended tier you ask for
-  with `fields`. See [Call records](#call-records-subscribers-devices-and-click-to-dial).
-- **The `direction` filter word `on-net` is `internal`** (a call that stayed
-  inside one domain).
-- **The wire moved to camelCase.** 0.10.x read the old kebab-case member
-  names, which the current API no longer sends. Nothing to change in your code
-  for this one beyond the renames above.
-
-The scopes are unchanged: `pbx-users:read` still covers subscribers and their
-devices.
-
-## Before you install 0.8.0
-
-**0.8.0 carries a webhook break you did not ask for.** It is the release that
-first ships a change to `client.webhookEndpoints`: `create()` now **requires**
-`events` and refuses an empty list, and `update()` never sends `null` — an
-endpoint that named no events would be subscribed to every event type the
-platform ever adds. Both are compile errors rather than 422s, so a typed
-caller finds out at build time; see [Webhook endpoints](#webhook-endpoints).
-Nothing else in 0.8.0 changes an existing call — the rest is new: the
-`client.pbx` surface and `client.customers`.
-
-## Before you install 0.4.x
-
-**0.2.x has no future.** It mints at `POST /v1/integration/token`, and that
-endpoint is **deleted** on the platform — not deprecated, not serving out a
-migration window. The day your provider ships that change, every 0.2.x call
-fails at the token exchange. There is no version left to wait on.
-
-**0.4.x needs a provider whose platform mints at `POST /oauth/token`.** Ask
-your provider whether they have made that change.
-
-This matters more than a version bump usually does, because an older platform
-will not tell you no. That path already exists there, serving a different
-population: it ignores `tenant` and `customer`, and answers **200** with a
-token that carries no tenant at all. Nothing fails until you spend it, and then
-every call is refused with a 403 that says nothing about the mint that caused
-it. A version you cannot use looks exactly like a credential problem.
-
-**Name your `tenant`.** It was optional in 0.3.0 and is required now, in the
-type and at construction — see below for what changed and why.
-
 **Webhook verification needs Node.** `verifyWebhook()` uses `node:crypto`,
 so it runs on a server. That is where it belongs: the signing secret is a
 server-side credential, and a `whsec_` sent to a browser is a `whsec_` that
 has been published.
+
+Upgrade notes and breaking changes: [CHANGELOG.md](https://github.com/Ringivo/ringivo-typescript/blob/main/CHANGELOG.md).
 
 ## Your base URL, your tenant, your scopes
 
@@ -149,6 +67,8 @@ their deliveries. The phone-system surface needs `pbx-call-records:read` for
 the call log, `pbx-users:read` for the subscribers and their devices alike,
 and `pbx-calls:write` for click-to-dial. `customers:read` lists your customers
 and reads one, and only a credential issued for your whole account holds it.
+Recording a text you already sent needs `messages:record`, and reading the
+texts sent to your numbers needs `numbers:read` or `numbers:messaging`.
 A client that provisions accounts and then reads them asks for `fax:read` and
 `fax-accounts:write`:
 
@@ -316,11 +236,9 @@ await client.request(
 );
 ```
 
-Send these camelCase names. `client.request()` does not go through the
-filter-name bridge, and the API refuses the old `target_type`/`fax_account`
-body with a 422 rather than routing the number to the PBX. **The body is not
-portable across the API's v1 naming cleanup** (see "Before you install
-0.12.0" above): an API that has not taken the rename reads only
+Send these camelCase names. The API refuses the old
+`target_type`/`fax_account` body with a 422 rather than routing the number to the PBX. **The body is not
+portable across the API's v1 naming cleanup** (see "0.12.0" in CHANGELOG.md): an API that has not taken the rename reads only
 `target_type`/`fax_account`, ignores `targetType`, and routes the number to
 the customer's PBX with a 204. Check where the number routes after the call
 if you cannot be sure which API you are talking to.
@@ -580,7 +498,7 @@ Two rules decide whether this works:
   formatting are free choices no two encoders make alike. Reach for your
   framework's raw-body accessor.
 - **Answer any 2XX to accept.** Deliveries are at-least-once: dedupe on
-  `event_id`, because a retry carries the same one.
+  `eventId`, because a retry carries the same one.
 
 `verifyWebhook()` returns nothing and throws `SignatureVerificationError` on
 any failure — a stale timestamp, the wrong secret, a malformed header, or no
@@ -589,6 +507,84 @@ the header is absent (`undefined`, `null`) or arrived twice (a `string[]`), so
 the one `catch` above is enough to answer 400 and never 500.
 During a secret rotation the header carries two signatures and either secret
 verifies, so a rotation costs you no deliveries.
+
+## Message events
+
+`message.received` describes a text somebody sent TO one of your numbers.
+`message.sent`, `message.delivered` and `message.failed` describe a text
+sent FROM one of your numbers. Verify the raw body, decode it yourself, then
+parse it and branch on `event.type`:
+
+```ts
+import { SIGNATURE_HEADER, SignatureVerificationError, parseMessageEvent, verifyWebhook } from "ringivo";
+
+app.post("/hooks/messages", (request, response) => {
+  try {
+    verifyWebhook(request.rawBody, request.get(SIGNATURE_HEADER), "whsec_...");
+  } catch (error) {
+    if (error instanceof SignatureVerificationError) {
+      return response.sendStatus(400);
+    }
+    throw error;
+  }
+
+  const event = parseMessageEvent(JSON.parse(request.rawBody.toString("utf8")));
+
+  switch (event.type) {
+    case "message.received": // somebody texted one of your numbers
+      console.log(event.message.from, "wrote to", event.message.to, ":", event.message.body);
+      break;
+    case "message.sent":
+    case "message.delivered":
+      if (event.message.source === "phone_system" && event.message.sentBy !== null) {
+        console.log(event.message.sentBy.name, "replied:", event.message.body);
+      }
+      break;
+    case "message.failed":
+      console.log("failed:", event.message.failureCause); // treat a cause you do not know as a failure
+      break;
+    default: // not a message event (type is null): accept it and ignore it
+  }
+  return response.sendStatus(204);
+});
+```
+
+- **One variant per event type.** `event.type` tells them apart, and each
+  variant carries only its own members: a received message has `receivedAt`
+  and no provider ids; the three sent-message events share
+  `OutboundMessageEventData`; only `message.failed` has `failureCause`.
+- **Anything else is an `UnknownMessageEvent`**, whose `type` is `null` and
+  which has no `message`: another event type, a type this release does not
+  know yet, or a body that is not a JSON object. The type that arrived, if
+  any, is `event.raw.type`.
+- **To route by direction without parsing**, use
+  `INBOUND_MESSAGE_EVENT_TYPES` (`message.received`) and
+  `OUTBOUND_MESSAGE_EVENT_TYPES` (`message.sent`, `message.delivered`,
+  `message.failed`). There is no list of all four: a receiver that read every
+  type in one list as a sent message would file received texts as sent.
+- **The parse never throws on content.** A member that is missing or of the
+  wrong type reads `null`, and the whole body stays on `event.raw` — the same
+  rule as every model here. Decide for yourself which `null` you cannot work
+  without (for example, no `message.providerMessageId`).
+- **`source` and `failureCause` are strings, not enums**: the API can add
+  values, and a value this release does not know still reaches you.
+  `FAILURE_CAUSES` lists the eight causes the API documents today, and
+  `failureCause` is typed `FailureCause` or any other string.
+- **`sentBy`** is set only for a staff reply (`source === "phone_system"`),
+  and its `name` can be `null`. For a message the provider never accepted,
+  **`sentAt` and `providerMessageId` are `null` and `providerPartIds` is
+  `[]`**. The provider ids are set only on your own provider account; on any
+  other account both are `null`.
+- **On `message.received`**, `message.id` is the id
+  `client.inboundMessages.get()` takes, and `receivedAt` is when it was sent.
+- **Attachment parts are described, never linked**: `media` holds
+  `MessageMediaPart`s (`contentType`, `filename`, `encoding`, `byteSize`) and
+  no file or URL.
+- Deliveries are at least once, and the three outbound events can arrive in
+  any order. Dedupe on `event.eventId`, or on the pair (`message.id`,
+  `event.type`). Never on the message id alone: that would drop the
+  `message.delivered` or `message.failed` that follows the `message.sent` of
+  the same message.
 
 ## Customers
 
@@ -1009,6 +1005,104 @@ a phone system is refused with a **400** rather than handed an empty page, so
 "nobody has one yet" never reads as "nobody has any users". Anything outside
 your reach answers **404**, not 403.
 
+## Record a text you already sent
+
+When your own system sends texts through your own messaging-provider
+account, record each one so it shows in your staff's threads. The platform
+sends nothing: the text already left, and the call files it in the
+conversation with your label in front of it. It needs `messages:record`.
+
+```ts
+const recorded = await client.messages.record({
+  from: "+14075550142",
+  to: "+13215550187",
+  body: "Reminder: Rex is due for his rabies booster on Oct 24.",
+  senderLabel: "Appointment reminder",
+  providerMessageId: "01JC8ZA1F5T3R8C2P6M0L4JSWQ", // your provider's id
+  providerPartIds: ["01JC8ZA1F5T3R8C2P6M0L4JSWQ"], // every part; a one-part text names its own id
+  sentAt: new Date("2026-10-19T15:02:44Z"),
+  mediaUrls: [], // up to 10 https links to attachments
+  markConversationRead: false,
+});
+recorded.id, recorded.status, recorded.replayed;
+```
+
+- **Staff see `"<senderLabel>: <body>"`.** A label is one line, has at
+  least one visible character, and is 1 to 40 Unicode code points after its
+  ends are trimmed. `record()` refuses a label that breaks the rule before
+  any request; it never changes your label. `senderLabel(text)` makes a valid
+  label from any text — a person's name, say — and throws only when nothing
+  visible is left.
+- **The provider message id is the dedupe key.** No `Idempotency-Key` is
+  sent. A repeat with the same id and the same `from`, `to`, `body` and
+  attachment count answers 200 with the first record (`replayed` is `true`);
+  the same id with different content is a 409.
+- **`mediaUrls` links to attachments of any type**: a picture, a contact
+  card (vCard), audio, video, a PDF or any other file, copied into the staff
+  threads as you sent it. The limits are **at most 10 attachments, at most
+  10 MB each and at most 20 MB together**. The API refuses `text/plain` (put
+  the text in `body`), a SMIL layout, HTML, XML, SVG and script, by the
+  declared type and by the file's first bytes, with a 422.
+- **Attachments are fetched during the call and never again**, so make new
+  presigned links for each attempt. The call can take up to 20 seconds to
+  fetch them, so `record()` waits at least 25 seconds
+  (`RECORD_MIN_TIMEOUT_MS`) whatever the client's own `timeoutMs` is.
+- **Refused before any request**: an empty provider id or part-id list, a
+  `sentAt` that is not a valid `Date`, neither a body nor an attachment, more
+  than ten links, a link that is not `https`, a label that breaks the rule.
+  A wrong type (one string where a list belongs) is a `TypeError`, every
+  other refusal an `Error`. None of these is worth retrying.
+- **`markConversationRead: true`** marks the staff threads read — for a
+  reply a person typed in your own inbox. The default leaves them as they
+  were.
+
+The API also limits the label, `": "` and the body together to 1024 code
+points; a longer text is a 422. Only a text from one of your numbers on your
+own provider account can be recorded. No `message.sent` event is raised for
+a recorded text, but its delivery reports raise `message.delivered` and
+`message.failed` with `source: "recorded"`.
+
+## Read the texts sent to your numbers
+
+`client.inboundMessages` reads every text and picture message somebody sent
+to one of your text-enabled numbers, newest first. It needs `numbers:read`
+or `numbers:messaging`.
+
+```ts
+let page = await client.inboundMessages.list({
+  number: "+13215550101", // your number: the one it was sent TO
+  receivedAfter: "2026-09-01T00:00:00Z",
+});
+for (const message of page.messages) {
+  console.log(message.from, message.kind, message.body, message.receivedAt);
+}
+
+if (page.nextCursor) {
+  page = await client.inboundMessages.list({ number: "+13215550101", after: page.nextCursor });
+}
+
+const first = page.messages[0]; // a page can be empty
+if (first) {
+  const message = await client.inboundMessages.get(first.id);
+}
+```
+
+- **This is the polling half of a pair.** The other half is the
+  `message.received` webhook (see "Message events" above). Read this
+  collection to catch up on what you missed while your endpoint was down,
+  or instead of a webhook when you have no public callback URL. The event's
+  `message.id` is the id `get()` takes.
+- **Filters:** `number`, `from`, `kind` (`sms` or `mms`), `receivedAfter`,
+  `receivedBefore` (both ends inclusive; a value that is not a date matches
+  nothing) and `ids` (a list). Pages walk with `after` / `before` and
+  `pageSize`, as on every list here.
+- **`receivedAt` is when the message was sent**, and the date filters match
+  it. `createdAt` is when the platform stored it.
+- **Attachments are described, never carried**: `media` holds
+  `MessageMediaPart`s (`contentType`, `filename`, `encoding`, `byteSize`) and
+  no file or URL. The platform does not keep the bytes, so ask your messaging
+  provider for the file. `body` is `null` for an MMS with no caption.
+
 ## When something is refused
 
 ```ts
@@ -1076,6 +1170,39 @@ retries once on a 401, and that is the only retry it performs — a 429 is
 handed to you to back off from, because how long a fax send may sit is your
 decision and not a library's.
 
+### Retrying from a queue
+
+`isRetryable(error)` is the API's retry contract — `true` for no answer
+(Node's `fetch` timed out, or got no response: a refused connection, a reset,
+a DNS or TLS failure) and for 408, 429 and every 5xx. `false` for every other
+refusal (400, 401, 403, 404, 409, 422): the same request gets the same answer
+until something changes first. `false` too for a `fetch` failure this client
+caused (an unknown URL scheme, a forbidden port, a URL that does not parse),
+and for anything this package did not throw for the API — a refusal before
+any request included. Fix the request for a 400, 409 or 422 — never retry
+those unchanged. A 401, 403 or 404 can be an account setting that is fixed
+later: `messages.record()` answers 404 while recording texts is not turned on
+for the platform yet. A queue may retry those slowly, after the change.
+
+```ts
+import { ApiError, isRetryable } from "ringivo";
+
+try {
+  await client.messages.record({ ... });
+} catch (error) {
+  if (isRetryable(error)) {
+    const wait = error instanceof ApiError ? error.retryAfter : undefined; // seconds, or undefined
+    queue.retryLater(wait ?? yourBackoff(attempt));
+  } else if (error instanceof ApiError && [401, 403, 404].includes(error.statusCode)) {
+    // An account setting, such as a missing scope, or recording texts not
+    // turned on yet (404): retry slowly, and alert someone to fix it.
+    queue.retryLater(yourSlowBackoff(attempt));
+  } else {
+    queue.giveUp(); // 400, 409, 422, or refused before sending: fix the call
+  }
+}
+```
+
 ## What is in the box
 
 | | Scope | |
@@ -1119,12 +1246,22 @@ decision and not a library's.
 | `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
 | `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `subscriber` is a subscribers id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
-| `client.request(request)` | — | Any endpoint this client does not wrap yet, with your credential. |
+| `client.messages.record({ from, to, senderLabel, providerMessageId, providerPartIds, sentAt, body?, mediaUrls?, markConversationRead? })` | `messages:record` | Record a text you already sent. Resolves to an `OutboundMessage`; `replayed` is `true` on a repeat. |
+| `client.inboundMessages.list({ number?, from?, kind?, receivedAfter?, receivedBefore?, ids?, after?, before?, pageSize? })` | `numbers:read` or `numbers:messaging` | An `InboundMessagePage`: `messages` plus `nextCursor`. |
+| `client.inboundMessages.get(inboundMessageId)` | `numbers:read` or `numbers:messaging` | One `InboundMessage`. |
+| `client.request(request, { timeoutMs? })` | — | Any endpoint this client does not wrap yet, with your credential. `timeoutMs` replaces the client's for this one request. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
+| `parseMessageEvent(payload)` | — | A decoded `message.*` body as its own `MessageEvent` variant, told apart by `type`. Never throws. |
+| `INBOUND_MESSAGE_EVENT_TYPES`, `OUTBOUND_MESSAGE_EVENT_TYPES` | — | The message event types by direction, for routing. |
+| `FAILURE_CAUSES` | — | The `failure.cause` values the API documents for `message.failed`. |
+| `senderLabel(text)` | — | Any text as a label that keeps the label rule. |
+| `isRetryable(error)` | — | Whether the API's contract allows the same call again. |
 
 `CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
-`FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `MediaLink`, `PbxCall`,
+`FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `InboundMessage`,
+`InboundMessagePage`, `MediaLink`, `MessageEvent` (each of its variants),
+`MessageMediaPart`, `MessageSender`, `OutboundMessage`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
 `Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
 `WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was

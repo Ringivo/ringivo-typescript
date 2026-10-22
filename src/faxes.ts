@@ -49,6 +49,7 @@ import {
   isRecord,
   mediaLinkFromJson,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /**
  * The query the spec publishes for `GET /v1/faxes`.
@@ -108,8 +109,7 @@ export interface SendFaxOptions {
   /** Your own flat labels. Replaced wholesale on a write. */
   tags?: Readonly<Record<string, string>>;
   /**
-   * `toName`, `fromName`, `subject`, `message`. The snake_case `to_name` and
-   * `from_name` this package documented before are accepted and renamed.
+   * `toName`, `fromName`, `subject`, `message`, sent exactly as given.
    */
   coverPage?: Readonly<Record<string, string>>;
   /**
@@ -208,7 +208,7 @@ export class Faxes {
         json.tags = { ...options.tags };
       }
       if (options.coverPage !== undefined) {
-        json.coverPage = coverPageWire(options.coverPage);
+        json.coverPage = { ...options.coverPage };
       }
       json.documents = [...urls];
 
@@ -412,10 +412,7 @@ async function downloadUnauthenticated(url: string, timeoutMs: number): Promise<
  * trusting the library to keep doing it.
  */
 function faxIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a fax id is required");
-  }
-  return value;
+  return pathSegment(value, "a fax id is required");
 }
 
 /**
@@ -540,7 +537,7 @@ async function multipartBody(
     parts.push({
       name: "coverPage",
       contentType: JSON_MEDIA_TYPE,
-      content: encoder.encode(JSON.stringify(coverPageWire(options.coverPage))),
+      content: encoder.encode(JSON.stringify({ ...options.coverPage })),
     });
   }
 
@@ -640,19 +637,4 @@ function concat(chunks: readonly Uint8Array[]): Uint8Array {
     offset += chunk.byteLength;
   }
   return joined;
-}
-
-const COVER_PAGE_WIRE_NAMES: Readonly<Record<string, string>> = {
-  to_name: "toName",
-  from_name: "fromName",
-};
-
-/**
- * The cover page with the API's camelCase field names. The snake_case keys
- * this package documented before are renamed on the way out.
- */
-function coverPageWire(coverPage: Readonly<Record<string, string>>): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(coverPage).map(([key, value]) => [COVER_PAGE_WIRE_NAMES[key] ?? key, value]),
-  );
 }

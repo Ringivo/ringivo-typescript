@@ -48,10 +48,86 @@
  * server and not in a browser. That is where it belongs: the secret is a
  * server-side credential, and a `whsec_` shipped to a browser is a `whsec_`
  * that has been published.
+ *
+ * -- PARSING COMES AFTER, AND IS SEPARATE -----------------------------------
+ * `verifyWebhook()` proves the bytes; it does not read them. A receiver
+ * verifies the raw body, decodes the JSON itself — so it decides what a body
+ * that is not JSON deserves — and then hands the value to a parser:
+ *
+ *     verifyWebhook(rawBody, signature, WHSEC);
+ *     const event = parseMessageEvent(JSON.parse(rawBody.toString("utf8")));
+ *     switch (event.type) {
+ *       case "message.received": // a text sent TO one of your numbers
+ *         break;
+ *       case "message.sent":
+ *       case "message.delivered":
+ *       case "message.failed": // a text sent FROM one of your numbers
+ *         break;
+ *       default: // not a message event: accept it and ignore it
+ *     }
+ *
+ * `parseMessageEvent()` reads defensively, like every model in this package:
+ * a member that is missing or of the wrong type reads null and the whole body
+ * stays on `raw`. It never throws on content, so the receiver decides which
+ * null it cannot work without.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { SignatureVerificationError } from "./errors.js";
+import { type FailureCause, type MessageEvent, messageEventFromJson } from "./models.js";
+
+/**
+ * The events about a message somebody sent TO one of your numbers. Route on
+ * this list for received messages.
+ */
+export const INBOUND_MESSAGE_EVENT_TYPES: readonly string[] = Object.freeze(["message.received"]);
+
+/**
+ * The events about a message sent FROM one of your numbers. All three carry
+ * the same members, and `message.failed` adds `failureCause`. Route on this
+ * list for sent messages.
+ */
+export const OUTBOUND_MESSAGE_EVENT_TYPES: readonly string[] = Object.freeze([
+  "message.sent",
+  "message.delivered",
+  "message.failed",
+]);
+
+/**
+ * The `failure.cause` values the API documents for `message.failed` — the
+ * members of `FailureCause`. More can be added: a cause not in this list
+ * still reaches you on `failureCause`, and is a failure all the same.
+ */
+export const FAILURE_CAUSES: readonly FailureCause[] = Object.freeze([
+  "provider_refused",
+  "provider_unreachable",
+  "outcome_unknown",
+  "submission_interrupted",
+  "opted_out",
+  "no_send_key",
+  "media_unavailable",
+  "undelivered",
+] as const);
+
+/**
+ * Read a decoded `message.received`, `message.sent`, `message.delivered` or
+ * `message.failed` body.
+ *
+ * @param payload - The decoded JSON body — call `verifyWebhook()` on the raw
+ *   bytes first.
+ *
+ * @returns One variant per event type, told apart by `type`. A body whose
+ *   `type` is none of the four — another event, a type this release does not
+ *   know yet, or no JSON object at all — is an `UnknownMessageEvent`, whose
+ *   `type` is `null`. Members that are missing or of the wrong type are
+ *   `null`, and the whole body is on `raw`.
+ *
+ *   NEVER THROWS. A receiver that answered a malformed delivery with a 500
+ *   would only be sent it again.
+ */
+export function parseMessageEvent(payload: unknown): MessageEvent {
+  return messageEventFromJson(payload);
+}
 
 /** The header a delivery carries its signature in. */
 export const SIGNATURE_HEADER = "Ringivo-Signature";

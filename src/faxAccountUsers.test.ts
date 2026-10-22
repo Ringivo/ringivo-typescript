@@ -81,8 +81,7 @@ describe("list", () => {
     const params = calls.last.url.searchParams;
 
     // `filter[faxAccount]`, camelCase since the API's v1 naming cleanup, like
-    // the relationship it narrows. The old spelling is never sent first; see
-    // src/filterBridge.test.ts for when it is sent at all.
+    // the relationship it narrows. The old spelling is never sent.
     expect(params.get("filter[faxAccount]")).toBe(ACCOUNT_ID);
     expect(params.has("filter[fax_account]")).toBe(false);
     expect(params.get("filter[user]")).toBe(USER_ID);

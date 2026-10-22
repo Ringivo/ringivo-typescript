@@ -48,11 +48,26 @@
  * A customer's `id` is what `client.pbx` lists take as `customer`. Both need
  * `customers:read`, which only an account-wide credential holds.
  *
+ * `client.messages.record()` records a text your own system already sent
+ * through your own messaging-provider account, so staff see it in their
+ * threads. It needs `messages:record`. `senderLabel()` makes any text a label
+ * that keeps the API's label rule.
+ *
+ * `client.inboundMessages` reads the texts somebody sent to your numbers:
+ * list them, or read one. It needs `numbers:read` or `numbers:messaging`.
+ *
  * Webhook receivers want `verifyWebhook()`, which needs no client and no
- * network.
+ * network. `parseMessageEvent()` reads a verified `message.received`,
+ * `message.sent`, `message.delivered` or `message.failed` body as its own
+ * variant: branch on `event.type`, or route on `INBOUND_MESSAGE_EVENT_TYPES`
+ * (texts sent to you) and `OUTBOUND_MESSAGE_EVENT_TYPES` (texts sent from you).
+ *
+ * `isRetryable(error)` says whether the API's contract allows the same call
+ * again (no answer, 408, 429, 5xx); `ApiError.retryAfter` says how long the
+ * server asked you to wait. The client never retries by itself.
  */
 export { Ringivo } from "./client.js";
-export type { RingivoOptions } from "./client.js";
+export type { RequestOptions, RingivoOptions } from "./client.js";
 export { Customers } from "./customers.js";
 export type { ListCustomersOptions } from "./customers.js";
 export {
@@ -63,6 +78,7 @@ export {
   SignatureVerificationError,
   TranscriptRequestLimitedError,
   TranscriptionCappedError,
+  isRetryable,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
 export { FaxAccountUsers } from "./faxAccountUsers.js";
@@ -83,6 +99,17 @@ export type {
   SendFaxOptions,
   FaxUpload,
 } from "./faxes.js";
+export { InboundMessages } from "./inboundMessages.js";
+export type { ListInboundMessagesOptions } from "./inboundMessages.js";
+export {
+  MAX_MEDIA,
+  MAX_PROVIDER_ID_LENGTH,
+  MAX_SENDER_LABEL_CODE_POINTS,
+  Messages,
+  RECORD_MIN_TIMEOUT_MS,
+  senderLabel,
+} from "./messages.js";
+export type { RecordMessageOptions } from "./messages.js";
 export type {
   CallRecord,
   CallRecordPage,
@@ -95,8 +122,22 @@ export type {
   FaxAccountUser,
   FaxAccountUserPage,
   FaxDocument,
+  FailureCause,
   FaxPage,
+  InboundMessage,
+  InboundMessagePage,
   MediaLink,
+  MessageDeliveredEvent,
+  MessageEvent,
+  MessageFailedEvent,
+  MessageFailedEventData,
+  MessageMediaPart,
+  MessageReceivedEvent,
+  MessageReceivedEventData,
+  MessageSender,
+  MessageSentEvent,
+  OutboundMessage,
+  OutboundMessageEventData,
   PbxCall,
   PbxDevice,
   PbxDevicePage,
@@ -106,6 +147,7 @@ export type {
   Transcript,
   TranscriptChannel,
   TranscriptSegment,
+  UnknownMessageEvent,
   WebhookDelivery,
   WebhookDeliveryPage,
   WebhookEndpoint,
@@ -127,5 +169,13 @@ export type {
   ListWebhookEndpointsOptions,
   UpdateWebhookEndpointOptions,
 } from "./webhookEndpoints.js";
-export { DEFAULT_TOLERANCE_SECONDS, SIGNATURE_HEADER, verifyWebhook } from "./webhooks.js";
+export {
+  DEFAULT_TOLERANCE_SECONDS,
+  FAILURE_CAUSES,
+  INBOUND_MESSAGE_EVENT_TYPES,
+  OUTBOUND_MESSAGE_EVENT_TYPES,
+  SIGNATURE_HEADER,
+  parseMessageEvent,
+  verifyWebhook,
+} from "./webhooks.js";
 export type { VerifyWebhookOptions } from "./webhooks.js";

@@ -69,6 +69,7 @@ import {
   isRecord,
   nextCursorOfDocument,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /**
  * The query the spec publishes for `GET /v1/fax-accounts`.
@@ -407,10 +408,7 @@ export class FaxAccounts {
  * itself because it never reaches openapi-fetch.
  */
 function faxAccountIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a fax account id is required");
-  }
-  return value;
+  return pathSegment(value, "a fax account id is required");
 }
 
 function dataObject(payload: unknown): RawJson {

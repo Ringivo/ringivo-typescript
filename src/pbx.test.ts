@@ -6,10 +6,10 @@
  * return value alone. Three things here are worth more than the usual
  * round-trip check:
  *
- * - **The wire is camelCase on this surface** (since 0.11.0):
- *   `filter[startedAfter]`, `displayName`. The recordings and transcripts
- *   documents are the exception and stay kebab-case (`byte-size`), so each is
- *   asserted in the spelling the API actually writes.
+ * - **The wire is camelCase on this surface**: `filter[startedAfter]`,
+ *   `displayName`, and the recordings and transcripts documents' `byteSize`,
+ *   `contentUrl` and `expiresAt`. The kebab-case names the API dropped on
+ *   2026-09-29 are not read.
  * - **`false` is a value, not an absence.** `registered: false` and
  *   `includeHidden: false` are the halves of those filters somebody actually
  *   wants — expired registrations, and the default hidden-records behaviour
@@ -134,12 +134,11 @@ function recordingResource(
     id: resourceId,
     attributes: {
       duration: 64,
-      "byte-size": 512000,
+      byteSize: 512000,
       sha256: "a".repeat(64),
       superseded: false,
-      "content-url": `${BASE_URL}/v1/pbx/recordings-content/signed-token`,
-      "expires-at": "2026-09-12T15:00:00Z",
-      // Members added after the kebab-case rename: camelCase only.
+      contentUrl: `${BASE_URL}/v1/pbx/recordings-content/signed-token`,
+      expiresAt: "2026-09-12T15:00:00Z",
       contentType: "audio/webm",
       recordingStatus: "available",
       callRecordId: CALL_RECORD_ID,
@@ -699,7 +698,7 @@ describe("callRecords.get", () => {
 });
 
 describe("callRecords.recordings", () => {
-  it("reads a kebab-case document into a plain array of camelCase objects", async () => {
+  it("reads a camelCase document into a plain array of frozen objects", async () => {
     server.use(
       http.get(CALL_RECORD_RECORDINGS_URL, () =>
         HttpResponse.json({ data: [recordingResource()] }),
@@ -735,6 +734,31 @@ describe("callRecords.recordings", () => {
     const [recording] = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
 
     expect(recording?.contentType).toBe(contentType);
+  });
+
+  it("does not read the kebab-case names the API dropped", async () => {
+    server.use(
+      http.get(CALL_RECORD_RECORDINGS_URL, () =>
+        HttpResponse.json({
+          data: [
+            recordingResource({
+              byteSize: undefined,
+              contentUrl: undefined,
+              expiresAt: undefined,
+              "byte-size": 512000,
+              "content-url": `${BASE_URL}/v1/pbx/recordings-content/signed-token`,
+              "expires-at": "2026-09-12T15:00:00Z",
+            }),
+          ],
+        }),
+      ),
+    );
+
+    const [recording] = await client().pbx.callRecords.recordings(CALL_RECORD_ID);
+
+    expect(recording?.byteSize).toBeNull();
+    expect(recording?.contentUrl).toBeNull();
+    expect(recording?.expiresAt).toBeNull();
   });
 
   it("reads a null callRecordId when the owning record cannot be named", async () => {
@@ -1139,10 +1163,10 @@ describe("callRecords.requestTranscript", () => {
     status: "pending",
     language: null,
     duration: null,
-    "byte-size": null,
+    byteSize: null,
     sha256: null,
-    "content-url": null,
-    "expires-at": null,
+    contentUrl: null,
+    expiresAt: null,
   };
 
   function refusal(status: number, code: string, retryAfter?: string): Response {
@@ -1682,7 +1706,7 @@ describe("subscribers.call", () => {
     expect(calls.last.request.headers.get("Authorization")).toBe("Bearer tok");
   });
 
-  it("sends only the attributes the caller named, kebab-cased", async () => {
+  it("sends only the attributes the caller named, camelCased", async () => {
     const calls = new Calls();
     server.use(
       http.post(PLACE_CALL_URL, async ({ request }) => {

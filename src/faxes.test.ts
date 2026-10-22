@@ -261,7 +261,7 @@ describe("send", () => {
       resolution: "fine",
       clientReference: "chart-4471",
       tags: { clinic: "north" },
-      coverPage: { to_name: "Dr Ruiz", subject: "Records" },
+      coverPage: { toName: "Dr Ruiz", subject: "Records" },
     });
 
     const { request, body } = sends.last;
@@ -300,7 +300,7 @@ describe("send", () => {
       to: "+1302",
       file: new Uint8Array([97]),
       tags: { clinic: "north" },
-      coverPage: { to_name: "Dr Ruiz" },
+      coverPage: { toName: "Dr Ruiz" },
     });
 
     const { body } = sends.last;
@@ -309,7 +309,7 @@ describe("send", () => {
       'name="tags"\r\nContent-Type: application/json\r\n\r\n{"clinic":"north"}',
     );
     expect(body).toContain('name="coverPage"\r\nContent-Type: application/json');
-    // The documented snake_case cover-page keys go out camelCase.
+    // The cover-page keys go out exactly as given (camelCase).
     expect(body).toContain('{"toName":"Dr Ruiz"}');
     // A form field, not an upload: no filename, or a server reads it as a page.
     expect(body).not.toContain('name="tags"; filename');
@@ -982,5 +982,129 @@ describe("media", () => {
       .catch((caught: unknown) => caught)) as ApiError;
 
     expect(error.statusCode).toBe(404);
+  });
+});
+
+describe("the renamed filter names", () => {
+  it("sends camelCase only, once, and hands an unknown-filter 400 to the caller", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(FAXES_URL, async ({ request }) => {
+        await calls.record(request);
+        // The API's real body for a filter key it does not declare — what an
+        // API from before the rename answers to `filter[faxAccount]`.
+        return HttpResponse.json(
+          {
+            errors: [
+              {
+                detail: "Filter parameter faxAccount is not allowed.",
+                source: { parameter: "filter" },
+                status: "400",
+                title: "Invalid Query Parameter",
+              },
+            ],
+          },
+          { status: 400 },
+        );
+      }),
+    );
+
+    const error = await client()
+      .faxes.list({
+        faxAccount: ACCOUNT_ID,
+        clientReference: "chart-4471",
+        createdAfter: "2026-08-01T00:00:00Z",
+        createdBefore: "2026-08-31T23:59:59Z",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).statusCode).toBe(400);
+    // ONE request: there is no second ask in the old spelling any more.
+    expect(calls.count).toBe(1);
+    expect([...calls.last.url.searchParams.keys()].sort()).toEqual([
+      "filter[clientReference]",
+      "filter[createdAfter]",
+      "filter[createdBefore]",
+      "filter[faxAccount]",
+    ]);
+  });
+});
+
+/**
+ * The v1 naming cleanup's RESPONSE half: camelCase only. The media link and
+ * the send acknowledgement read `expiresAt`/`byteSize` and
+ * `clientReference`/`createdAt`; the snake_case names are no longer read, and
+ * reach a caller only through `raw`.
+ */
+describe("the renamed response members", () => {
+  it("reads the media link in camelCase, and not in snake_case", async () => {
+    const url = `${FAXES_URL}/${FAX_ID}/media/content?signature=abc`;
+    let next = 0;
+    const answers = [
+      { url, expiresAt: "2026-08-16T11:07:31+00:00", byteSize: 7, sha256: "d".repeat(64) },
+      { url, expires_at: "2026-08-16T11:07:31+00:00", byte_size: 7, sha256: "d".repeat(64) },
+    ];
+    server.use(
+      http.get(`${FAXES_URL}/${FAX_ID}/media`, () => {
+        const body = answers[next];
+        next += 1;
+        return HttpResponse.json(body);
+      }),
+    );
+
+    const ringivo = client();
+    const current = await ringivo.faxes.mediaLink(FAX_ID);
+    const legacy = await ringivo.faxes.mediaLink(FAX_ID);
+
+    const stamp = new Date("2026-08-16T11:07:31Z").getTime();
+    expect([current.expiresAt?.getTime(), current.byteSize]).toEqual([stamp, 7]);
+    expect([legacy.expiresAt, legacy.byteSize]).toEqual([null, null]);
+    expect(legacy.raw.byte_size).toBe(7);
+  });
+
+  it("reads the send acknowledgement in camelCase, and not in snake_case", async () => {
+    let next = 0;
+    const base = { id: FAX_ID, status: "queued", direction: "outbound" };
+    const answers = [
+      { ...base, clientReference: "new", createdAt: "2026-08-16T11:02:31+00:00" },
+      { ...base, client_reference: "old", created_at: "2026-08-16T11:02:31+00:00" },
+    ];
+    server.use(
+      http.post(FAXES_URL, () => {
+        const data = answers[next];
+        next += 1;
+        return HttpResponse.json({ data }, { status: 202 });
+      }),
+    );
+
+    const ringivo = client();
+    const send = () =>
+      ringivo.faxes.send({
+        faxAccount: ACCOUNT_ID,
+        to: "+13025556789",
+        urls: ["https://x.example/a.pdf"],
+      });
+    const current = await send();
+    const legacy = await send();
+
+    const stamp = new Date("2026-08-16T11:02:31Z").getTime();
+    expect([current.clientReference, current.createdAt?.getTime()]).toEqual(["new", stamp]);
+    expect([legacy.clientReference, legacy.createdAt]).toEqual([null, null]);
+  });
+
+  it("sends a snake_case cover-page key exactly as given, unrenamed", async () => {
+    const sends = recordSends();
+
+    await client().faxes.send({
+      faxAccount: ACCOUNT_ID,
+      to: "+13025556789",
+      urls: ["https://x.example/a.pdf"],
+      coverPage: { to_name: "Dr Ruiz" },
+    });
+
+    expect((JSON.parse(sends.last.body) as { coverPage: unknown }).coverPage).toEqual({
+      to_name: "Dr Ruiz",
+    });
   });
 });

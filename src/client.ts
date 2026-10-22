@@ -5,7 +5,7 @@
  * below), one authenticated request path, and the resource namespaces hung
  * off it (`client.faxes`, `client.faxAccounts`, `client.faxAccountUsers`,
  * `client.webhookEndpoints`, `client.webhookDeliveries`, `client.pbx`,
- * `client.customers`).
+ * `client.customers`, `client.messages`, `client.inboundMessages`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -44,10 +44,11 @@ import type { paths } from "./_generated/schema.js";
 import { ClientCredentialsAuth, USER_AGENT } from "./auth.js";
 import { Customers } from "./customers.js";
 import { throwForResponse } from "./errors.js";
-import { bridgeFilters } from "./filterBridge.js";
 import { FaxAccountUsers } from "./faxAccountUsers.js";
 import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
+import { InboundMessages } from "./inboundMessages.js";
+import { Messages } from "./messages.js";
 import { Pbx } from "./pbx.js";
 import { VERSION } from "./version.js";
 import { WebhookDeliveries } from "./webhookDeliveries.js";
@@ -65,6 +66,15 @@ export const JSON_MEDIA_TYPE = "application/json";
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 const transports = new WeakMap<Ringivo, PathBasedClient<paths>>();
+
+/** What `client.request()` accepts beyond the request itself. */
+export interface RequestOptions {
+  /**
+   * Milliseconds this one request may take, in place of the client's own
+   * `timeoutMs`. Left out, the client's is used.
+   */
+  timeoutMs?: number;
+}
 
 /** How `Ringivo` is constructed. */
 export interface RingivoOptions {
@@ -107,6 +117,9 @@ export interface RingivoOptions {
    * Listing and reading your customers needs `customers:read`, which only a
    * credential issued for your whole account holds: it is dropped from a
    * credential issued for one customer when the token is minted.
+   *
+   * Recording a text you already sent needs `messages:record`; reading the
+   * texts sent to your numbers needs `numbers:read` or `numbers:messaging`.
    */
   scopes: readonly string[];
   /**
@@ -172,10 +185,13 @@ export class Ringivo {
   /** Your customers: list them, read one. */
   readonly customers: Customers;
 
-  private readonly auth: ClientCredentialsAuth;
+  /** Record a text your own system already sent. */
+  readonly messages: Messages;
 
-  /** Which filter spelling the API took last — see src/filterBridge.ts. */
-  private readonly filterSpelling = { legacy: false };
+  /** Read the texts somebody sent to your numbers: list them, read one. */
+  readonly inboundMessages: InboundMessages;
+
+  private readonly auth: ClientCredentialsAuth;
 
   constructor(options: RingivoOptions) {
     if (!options.baseUrl) {
@@ -246,9 +262,8 @@ export class Ringivo {
         // The whole point of the seam. `openapi-fetch` builds and types the
         // request; this method is what actually sends it, so the typed calls
         // and the hand-written multipart send share one auth flow and one
-        // error path. The v1 naming cleanup bridge (src/filterBridge.ts) wraps
-        // this seam only, so the escape hatch below never sees it.
-        fetch: bridgeFilters((outgoing: Request) => this.request(outgoing), this.filterSpelling),
+        // error path.
+        fetch: (outgoing: Request) => this.request(outgoing),
       }),
     );
 
@@ -259,6 +274,8 @@ export class Ringivo {
     this.webhookDeliveries = new WebhookDeliveries(this);
     this.pbx = new Pbx(this);
     this.customers = new Customers(this);
+    this.messages = new Messages(this);
+    this.inboundMessages = new InboundMessages(this);
   }
 
   toString(): string {
@@ -287,33 +304,43 @@ export class Ringivo {
    *
    * What you get back is a plain `Response`, not one of this package's
    * frozen objects — you are past the boundary and the shape is the API's.
+   *
+   * `options.timeoutMs` gives this one request its own timeout in place of
+   * the client's `timeoutMs`, for an endpoint known to take longer. The
+   * token request keeps the client's own.
    */
-  async request(outgoing: Request): Promise<Response> {
+  async request(outgoing: Request, options: RequestOptions = {}): Promise<Response> {
+    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+
     // Cloned BEFORE anything reads the body: a `Request` may be sent once,
     // and the retry below needs a second copy of the same bytes. Cloning
     // after the first send is too late.
     const spare = outgoing.clone();
 
-    let response = await this.attempt(outgoing, await this.auth.accessToken());
+    let response = await this.attempt(outgoing, await this.auth.accessToken(), timeoutMs);
 
     if (response.status === 401) {
       // ONCE. A second 401 is answered by the caller's error, not by another
       // mint: a credential that has lost its reach would otherwise spin, and
       // every attempt costs the server a token.
-      response = await this.attempt(spare, await this.auth.accessToken({ forceRefresh: true }));
+      response = await this.attempt(
+        spare,
+        await this.auth.accessToken({ forceRefresh: true }),
+        timeoutMs,
+      );
     }
 
     await throwForResponse(response);
     return response;
   }
 
-  private attempt(outgoing: Request, token: string): Promise<Response> {
+  private attempt(outgoing: Request, token: string, timeoutMs: number): Promise<Response> {
     const headers = new Headers(outgoing.headers);
     headers.set("Authorization", `Bearer ${token}`);
     headers.set("User-Agent", USER_AGENT);
 
     return fetch(
-      new Request(outgoing, { headers, signal: AbortSignal.timeout(this.timeoutMs) }),
+      new Request(outgoing, { headers, signal: AbortSignal.timeout(timeoutMs) }),
     );
   }
 }

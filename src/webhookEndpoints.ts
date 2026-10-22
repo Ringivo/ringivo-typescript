@@ -58,6 +58,7 @@ import {
   webhookEndpointFromResource,
   webhookEndpointPageFromDocument,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /**
  * The query the spec publishes for `GET /v1/webhook-endpoints`.
@@ -397,10 +398,7 @@ export class WebhookEndpoints {
  * because it never reaches openapi-fetch.
  */
 function webhookEndpointIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a webhook endpoint id is required");
-  }
-  return value;
+  return pathSegment(value, "a webhook endpoint id is required");
 }
 
 function dataObject(payload: unknown): RawJson {

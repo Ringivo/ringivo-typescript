@@ -35,6 +35,7 @@ import {
   webhookDeliveryFromResource,
   webhookDeliveryPageFromDocument,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /**
  * The query the spec publishes for `GET /v1/webhook-deliveries`.
@@ -148,10 +149,7 @@ export class WebhookDeliveries {
  * which is the whole collection rather than the row somebody asked for.
  */
 function webhookDeliveryIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a webhook delivery id is required");
-  }
-  return value;
+  return pathSegment(value, "a webhook delivery id is required");
 }
 
 function dataObject(payload: unknown): RawJson {

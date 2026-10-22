@@ -50,6 +50,7 @@ import {
   faxAccountUserPageFromDocument,
   isRecord,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /**
  * The create document as the spec declares it.
@@ -218,10 +219,7 @@ export class FaxAccountUsers {
  * library to keep doing it.
  */
 function faxAccountUserIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a fax account user id is required");
-  }
-  return value;
+  return pathSegment(value, "a fax account user id is required");
 }
 
 /**
