@@ -165,7 +165,7 @@ describe("list", () => {
 });
 
 describe("get", () => {
-  it("reads one message and describes its attachments", async () => {
+  it("reads one message and describes its media", async () => {
     const calls = new Calls();
     server.use(
       http.get(`${MESSAGES_URL}/${MESSAGE_ID}`, async ({ request }) => {
@@ -175,8 +175,8 @@ describe("get", () => {
             kind: "mms",
             body: null,
             media: [
-              { contentType: "image/jpeg", filename: "photo.jpg", encoding: "base64", bytes: 40213 },
-              { contentType: "text/vcard", filename: null, encoding: "base64", bytes: "large" },
+              { contentType: "image/jpeg", filename: "photo.jpg", size: 40213 },
+              { contentType: "text/vcard", filename: null, size: "large" },
             ],
           }),
         });
@@ -189,16 +189,16 @@ describe("get", () => {
     expect(message.kind).toBe("mms");
     expect(message.body).toBeNull();
     expect(message.media).toHaveLength(2);
-    expect(message.media[0]).toMatchObject({
+    expect(message.media[0]).toEqual({
       contentType: "image/jpeg",
       filename: "photo.jpg",
-      encoding: "base64",
-      byteSize: 40213,
+      size: 40213,
+      raw: { contentType: "image/jpeg", filename: "photo.jpg", size: 40213 },
     });
     // A member of the wrong type reads null; the value is still in raw.
     expect(message.media[1]?.filename).toBeNull();
-    expect(message.media[1]?.byteSize).toBeNull();
-    expect(message.media[1]?.raw.bytes).toBe("large");
+    expect(message.media[1]?.size).toBeNull();
+    expect(message.media[1]?.raw.size).toBe("large");
     expect(Object.isFrozen(message.media)).toBe(true);
   });
 

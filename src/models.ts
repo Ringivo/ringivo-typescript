@@ -1555,19 +1555,30 @@ export function customerPageFromDocument(document: RawJson): CustomerPage {
 }
 
 /**
- * One attachment part of a text, DESCRIBED: there is no file and no URL.
+ * One media item of an MMS sent from your number, DESCRIBED: there are no
+ * bytes and no URL.
  *
- * An attachment is any type — a picture, a contact card, audio, a PDF.
- * `byteSize` is read from the wire member `bytes` (the part's size).
- * `filename` and `encoding` are null on a part the platform sent; they are
- * kept because the member exists on the wire. A received message's parts
- * carry all four.
+ * A media item is any type — an image, a contact card, audio, a PDF. `size`
+ * is its size in bytes. It has no `filename`: the platform does not keep one
+ * for a message sent from your number.
  */
-export interface MessageMediaPart {
+export interface OutboundMessageMediaItem {
+  readonly contentType: string | null;
+  readonly size: number | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * One media item of an MMS sent to your number, DESCRIBED: there are no bytes
+ * and no URL. Ask your messaging provider for the file.
+ *
+ * `size` is its size in bytes. `filename` is the name the sender's carrier
+ * gave the item, and null when it gave none.
+ */
+export interface InboundMessageMediaItem {
   readonly contentType: string | null;
   readonly filename: string | null;
-  readonly encoding: string | null;
-  readonly byteSize: number | null;
+  readonly size: number | null;
   readonly raw: RawJson;
 }
 
@@ -1592,7 +1603,7 @@ export interface OutboundMessage {
   readonly from: string | null;
   readonly to: string | null;
   readonly body: string | null;
-  readonly media: readonly MessageMediaPart[];
+  readonly media: readonly OutboundMessageMediaItem[];
   readonly senderLabel: string | null;
   readonly markConversationRead: boolean | null;
   readonly sentAt: Date | null;
@@ -1605,16 +1616,16 @@ export interface OutboundMessage {
 }
 
 /**
- * A text or picture message somebody sent to one of your numbers.
+ * A text message (SMS or MMS) somebody sent to one of your numbers.
  *
  * `from` is the sender and `to` is your number. `kind` is `sms` or `mms`,
  * and is not derivable from `media`: an MMS with only a caption and an SMS
- * both arrive with a body and no attachment. `body` is null for an MMS with
+ * both arrive with a body and no media item. `body` is null for an MMS with
  * no caption.
  *
- * `media` DESCRIBES each attachment — type, filename, encoding and size — and
- * carries no file and no URL: the platform does not keep the bytes. Ask your
- * messaging provider for the file.
+ * `media` DESCRIBES each media item — content type, filename and size — and
+ * carries no bytes and no URL: the platform does not serve the bytes. Ask
+ * your messaging provider for the file.
  *
  * `receivedAt` is when the message was SENT, and is what the date filters
  * match; `createdAt` is when the platform stored it. They differ by however
@@ -1626,7 +1637,7 @@ export interface InboundMessage {
   readonly from: string | null;
   readonly to: string | null;
   readonly body: string | null;
-  readonly media: readonly MessageMediaPart[];
+  readonly media: readonly InboundMessageMediaItem[];
   readonly receivedAt: Date | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
@@ -1678,7 +1689,7 @@ export interface MessageReceivedEventData {
   readonly from: string | null;
   readonly to: string | null;
   readonly body: string | null;
-  readonly media: readonly MessageMediaPart[];
+  readonly media: readonly InboundMessageMediaItem[];
   readonly receivedAt: Date | null;
   readonly raw: RawJson;
 }
@@ -1691,10 +1702,11 @@ export interface MessageReceivedEventData {
  * `source` is a plain string, not an enum: the contract says more values can
  * be added, and a value this release does not know must still reach you.
  *
- * `sentAt` and `providerMessageId` are null for a message the provider never
- * accepted, and `providerPartIds` is `[]` for it. Both provider members are
- * null for a message on a provider account that is not yours. `sentBy` is
- * null unless `source` is `phone_system`.
+ * `sentAt`, `providerMessageId` and `providerPartIds` are null for a message
+ * the provider never accepted. Both provider members are null for a message
+ * on a provider account that is not yours. `providerPartIds` is null exactly
+ * when `providerMessageId` is null, and never `[]`. `sentBy` is null unless
+ * `source` is `phone_system`.
  */
 export interface OutboundMessageEventData {
   readonly id: string | null;
@@ -1705,7 +1717,7 @@ export interface OutboundMessageEventData {
   readonly from: string | null;
   readonly to: string | null;
   readonly body: string | null;
-  readonly media: readonly MessageMediaPart[];
+  readonly media: readonly OutboundMessageMediaItem[];
   readonly status: string | null;
   readonly sentBy: MessageSender | null;
   readonly sentAt: Date | null;
@@ -1716,16 +1728,20 @@ export interface OutboundMessageEventData {
 
 /**
  * Why a sent message did not reach its recipient: the `failure.cause` of a
- * `message.failed` event. These are the causes the API documents today
- * (`FAILURE_CAUSES` lists them at runtime). More can be added, so
- * `MessageFailedEventData.failureCause` also accepts any other string: a
- * cause this release does not know still arrives. Treat it as a failure.
+ * `message.failed` event. These are the causes the API documents today (its
+ * `OutboundMessageFailureCause` enum; `FAILURE_CAUSES` lists them at
+ * runtime). More can be added, so `MessageFailedEventData.failureCause` also
+ * accepts any other string: a cause this release does not know still
+ * arrives. Treat it as a failure.
+ *
+ * `send_interrupted` means the send was interrupted before the carrier
+ * confirmed it. Treat the text as not sent; rarely, it may still arrive. The
+ * platform never sends it again.
  */
 export type FailureCause =
   | "provider_refused"
   | "provider_unreachable"
-  | "outcome_unknown"
-  | "submission_interrupted"
+  | "send_interrupted"
   | "opted_out"
   | "no_send_key"
   | "media_unavailable"
@@ -1757,7 +1773,7 @@ interface MessageEventEnvelope {
   readonly raw: RawJson;
 }
 
-/** A text or picture message somebody sent to one of your numbers. */
+/** A text message (SMS or MMS) somebody sent to one of your numbers. */
 export interface MessageReceivedEvent extends MessageEventEnvelope {
   readonly type: "message.received";
   readonly message: MessageReceivedEventData;
@@ -1804,19 +1820,34 @@ export type MessageEvent =
   | MessageFailedEvent
   | UnknownMessageEvent;
 
-function mediaPartFromJson(source: RawJson): MessageMediaPart {
-  return Object.freeze({
-    contentType: text(source, "contentType"),
-    filename: text(source, "filename"),
-    encoding: text(source, "encoding"),
-    byteSize: integer(source, "bytes"),
-    raw: source,
-  });
+function mediaItems(source: RawJson): RawJson[] {
+  const value = source.media;
+  return (Array.isArray(value) ? value : []).filter(isRecord);
 }
 
-function mediaParts(source: RawJson): readonly MessageMediaPart[] {
-  const value = source.media;
-  return Object.freeze((Array.isArray(value) ? value : []).filter(isRecord).map(mediaPartFromJson));
+function outboundMedia(source: RawJson): readonly OutboundMessageMediaItem[] {
+  return Object.freeze(
+    mediaItems(source).map((item) =>
+      Object.freeze({
+        contentType: text(item, "contentType"),
+        size: integer(item, "size"),
+        raw: item,
+      }),
+    ),
+  );
+}
+
+function inboundMedia(source: RawJson): readonly InboundMessageMediaItem[] {
+  return Object.freeze(
+    mediaItems(source).map((item) =>
+      Object.freeze({
+        contentType: text(item, "contentType"),
+        filename: text(item, "filename"),
+        size: integer(item, "size"),
+        raw: item,
+      }),
+    ),
+  );
 }
 
 /**
@@ -1838,7 +1869,7 @@ export function outboundMessageFromResource(
     from: text(attributes, "from"),
     to: text(attributes, "to"),
     body: text(attributes, "body"),
-    media: mediaParts(attributes),
+    media: outboundMedia(attributes),
     senderLabel: text(attributes, "senderLabel"),
     markConversationRead: boolean(attributes, "markConversationRead"),
     sentAt: instant(attributes.sentAt),
@@ -1861,7 +1892,7 @@ export function inboundMessageFromResource(resource: RawJson): InboundMessage {
     from: text(attributes, "from"),
     to: text(attributes, "to"),
     body: text(attributes, "body"),
-    media: mediaParts(attributes),
+    media: inboundMedia(attributes),
     receivedAt: instant(attributes.receivedAt),
     createdAt: instant(attributes.createdAt),
     updatedAt: instant(attributes.updatedAt),
@@ -1892,7 +1923,7 @@ function messageReceivedDataFromJson(source: RawJson): MessageReceivedEventData 
     from: text(source, "from"),
     to: text(source, "to"),
     body: text(source, "body"),
-    media: mediaParts(source),
+    media: inboundMedia(source),
     receivedAt: instant(source.receivedAt),
     raw: source,
   });
@@ -1910,7 +1941,7 @@ function outboundMessageDataMembers(source: RawJson): OutboundMessageEventData {
     from: text(source, "from"),
     to: text(source, "to"),
     body: text(source, "body"),
-    media: mediaParts(source),
+    media: outboundMedia(source),
     status: text(source, "status"),
     sentBy:
       sentBy === null

@@ -101,8 +101,7 @@ export const OUTBOUND_MESSAGE_EVENT_TYPES: readonly string[] = Object.freeze([
 export const FAILURE_CAUSES: readonly FailureCause[] = Object.freeze([
   "provider_refused",
   "provider_unreachable",
-  "outcome_unknown",
-  "submission_interrupted",
+  "send_interrupted",
   "opted_out",
   "no_send_key",
   "media_unavailable",

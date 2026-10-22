@@ -17,29 +17,44 @@
  *
  * -- NO IDEMPOTENCY-KEY -----------------------------------------------------
  * The provider message id IS the key, by contract. A repeat with the same id
- * and the same `from`, `to`, `body` and attachment count answers 200 with the
+ * and the same `from`, `to`, `body` and media count answers 200 with the
  * first record and stores nothing new; `OutboundMessage.replayed` is then
  * `true`. A repeat with different content is a 409. So a retry is the same
- * call with the same arguments — and NEW presigned attachment links, because
- * the platform fetches the attachments during the call and never fetches a
- * link again.
+ * call with the same arguments — and NEW presigned media links, because the
+ * platform fetches the media during the call and never fetches a link again.
  *
- * -- ATTACHMENTS ------------------------------------------------------------
- * `mediaUrls` links to ATTACHMENTS of any type: a picture, a contact card
- * (vCard), audio, video, a PDF or any other file. Each is copied into the
- * staff threads as you sent it. The API's limits: at most 10 attachments, at
- * most 10 MB each and at most 20 MB together, all fetched within 20 seconds.
- * It refuses `text/plain` (put the text in `body`), a SMIL layout, HTML, XML,
- * SVG and script, by the declared type and by the file's own first bytes.
- * Only the count and the `https` scheme are checked here — the type and the
- * size are known only once the API fetches the link, so those refusals are a
- * 422 from the API.
+ * -- MEDIA ------------------------------------------------------------------
+ * `mediaUrls` links to MEDIA ITEMS of any type: an image, a contact card
+ * (vCard), audio, video, a PDF or any other file. They go on the wire as
+ * `mediaUrls`. Each is copied into the staff threads as you sent it. The
+ * API's limits: at most 10 media items, at most 10 MB each and at most 20 MB
+ * together. It refuses `text/plain` (put the text in `body`), a SMIL layout,
+ * HTML, XML, SVG and script, by the declared type and by the file's own first
+ * bytes. Only the count and the `https` scheme are checked here — the type
+ * and the size are known only once the API fetches the link, so those
+ * refusals come from the API. The answer describes the media in
+ * `OutboundMessage.media` (content type and size), never with your links.
+ *
+ * If any link fails, nothing is stored. The `ApiError` names the link in
+ * `errors[0].source.pointer` (`/data/attributes/mediaUrls/<index>`) and the
+ * reason in `code`:
+ *
+ * - 422 `media_rejected`: the link or what it served can never be used. Fix
+ *   the link; do not retry it unchanged.
+ * - 504 `media_timeout`: the link did not finish within 10 seconds.
+ * - 502 `media_unreachable`: its host answered 5xx, refused the connection,
+ *   or does not resolve.
+ * - 503 `media_store_unavailable`: the platform could not keep the media
+ *   right now.
+ *
+ * The last three carry `Retry-After` and `isRetryable()` is `true` for them:
+ * retry after `retryAfter` seconds, with NEW links for the first two.
  *
  * -- REFUSED BEFORE ANY REQUEST ---------------------------------------------
  * What the API would answer with a 422 that no retry can fix is thrown here
  * instead, before a request goes out: an empty provider message id or
  * part-id list, a `sentAt` that is not a valid `Date`, a text with neither a
- * body nor an attachment, more than ten attachment links, a link that is not
+ * body nor a media link, more than ten media links, a link that is not
  * `https`, and a label that breaks the label rule. A wrong TYPE — one string
  * where a list belongs — is a `TypeError`; every other refusal is an `Error`.
  * Neither is an `ApiError`, `isRetryable()` answers `false` for both, and
@@ -59,11 +74,13 @@
  * it after its own trim; a text over it is a 422.
  *
  * -- THE TIMEOUT ------------------------------------------------------------
- * The call fetches your attachments before it answers, for up to 20 seconds
- * together. A client built with a shorter timeout would give up on a call
- * that was going to succeed, and the retry would fetch the attachments
- * again. So this one call waits at least `RECORD_MIN_TIMEOUT_MS`, whatever
- * the client's own `timeoutMs` is; a longer client timeout is kept.
+ * The call fetches your media before it answers: all links at once, each
+ * within 10 seconds, and then stores up to 20 MB. The API ends any request
+ * at 30 seconds. A client built with a shorter timeout would give up on a
+ * call that was about to succeed; the retry is then answered 200, but it
+ * fetches the media again. So this one call waits at least
+ * `RECORD_MIN_TIMEOUT_MS` (30 000), whatever the client's own `timeoutMs`
+ * is; a longer client timeout is kept.
  *
  * The Python client keeps the same rules in `ringivo/messages.py`; the two
  * are kept the same on purpose.
@@ -85,18 +102,18 @@ type RecordRequest = components["schemas"]["OutboundMessageRecordRequest"];
  */
 export const MAX_SENDER_LABEL_CODE_POINTS = 40;
 
-/** The most attachment links one record may carry — the spec's `media.maxItems`. */
+/** The most media links one record may carry — the spec's `mediaUrls.maxItems`. */
 export const MAX_MEDIA = 10;
 
 /** The longest provider message id or part id — the spec's `maxLength`. */
 export const MAX_PROVIDER_ID_LENGTH = 128;
 
 /**
- * The shortest timeout `record()` uses, in milliseconds: the API fetches
- * attachments for up to 20 seconds before it answers, plus room for the
- * record itself.
+ * The shortest timeout `record()` uses, in milliseconds: the API's own cut
+ * for any request. It fetches every media link at once, each within 10
+ * seconds, then stores the media, all before it answers.
  */
-export const RECORD_MIN_TIMEOUT_MS = 25_000;
+export const RECORD_MIN_TIMEOUT_MS = 30_000;
 
 /** What `messages.record()` accepts. */
 export interface RecordMessageOptions {
@@ -115,12 +132,13 @@ export interface RecordMessageOptions {
   providerPartIds: readonly string[];
   /** When your provider accepted the text. */
   sentAt: Date;
-  /** The text as you sent it. Required unless `mediaUrls` names an attachment. */
+  /** The text as you sent it. Required unless `mediaUrls` names a media item. */
   body?: string | null;
   /**
-   * Up to ten `https` links to the attachments you sent, in order — any type
-   * but plain text, at most 10 MB each and 20 MB together. Make NEW presigned
-   * links for each attempt: they are fetched during this call and never again.
+   * Up to ten `https` links to the media you sent, in order — any type but
+   * plain text, at most 10 MB each and 20 MB together. Make NEW presigned
+   * links for each attempt: they are all fetched at once during this call,
+   * each within 10 seconds, and never again.
    */
   mediaUrls?: readonly string[];
   /**
@@ -144,8 +162,8 @@ export class Messages {
    *   refuse with a 422 that no retry can fix.
    * @throws {@link ApiError} when the API refused. Retry only what
    *   `isRetryable()` says is retryable, after `retryAfter` when it is set. A
-   *   404 means recording texts is not turned on for the platform yet: retry
-   *   it only slowly, after that changes.
+   *   media link that failed is named by `code` and `source.pointer` (see the
+   *   top of this module).
    *
    * Needs `messages:record`.
    */
@@ -268,7 +286,7 @@ function recordDocument(options: RecordMessageOptions): RecordRequest {
     throw new TypeError("mediaUrls must be a list of links");
   }
   if (mediaUrls.length > MAX_MEDIA) {
-    throw new Error(`a record carries at most ${MAX_MEDIA} attachments; got ${mediaUrls.length}`);
+    throw new Error(`a record carries at most ${MAX_MEDIA} media links; got ${mediaUrls.length}`);
   }
   const links = mediaUrls.map((link: unknown, index) => {
     if (typeof link !== "string" || !isHttpsLink(link)) {
@@ -279,7 +297,7 @@ function recordDocument(options: RecordMessageOptions): RecordRequest {
 
   const body = options.body ?? null;
   if (!body && links.length === 0) {
-    throw new Error("a recorded text needs a body or at least one attachment");
+    throw new Error("a recorded text needs a body or at least one media link");
   }
 
   const refusal = labelRefusal(options.senderLabel);
@@ -294,7 +312,7 @@ function recordDocument(options: RecordMessageOptions): RecordRequest {
         from: options.from,
         to: options.to,
         body,
-        media: links.map((url) => ({ url })),
+        mediaUrls: links,
         senderLabel: options.senderLabel,
         markConversationRead: options.markConversationRead ?? false,
         alreadySent: {

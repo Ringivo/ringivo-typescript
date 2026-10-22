@@ -20,6 +20,23 @@ no longer carries code for the API's v1 naming cleanup.
 - **`faxes.send({ coverPage })` takes camelCase keys only.** `to_name` and
   `from_name` are no longer renamed; they are sent as given. Migration: pass
   `toName` and `fromName`.
+- **Messaging follows the API's new messaging contract, and needs it.**
+  `messages.record()` sends `mediaUrls`, a list of strings; an API from before
+  the change refuses that member. The messaging surface below is new in this
+  release, so no code written against 0.16.x changes. The Python client
+  changes in the same way, with the same names. What the new contract is:
+  - Each media item is described by `contentType` and `size` (bytes), with
+    no `encoding`. An item on a received message also has `filename`.
+  - The failure cause `send_interrupted` replaces `outcome_unknown` and
+    `submission_interrupted`: treat the text as not sent (rarely, it may
+    still arrive).
+  - `providerPartIds` is `null`, not `[]`, for a message the provider never
+    accepted.
+  - The record call fetches all media links at once, each within 10 seconds,
+    and the API ends any request at 30 seconds.
+  - A media link that fails has its own `code`: 422 `media_rejected`, 504
+    `media_timeout`, 502 `media_unreachable`, 503 `media_store_unavailable`.
+    The record no longer answers 404, or 429 for media in flight.
 
 ## Unreleased — Added
 
@@ -31,10 +48,15 @@ no longer carries code for the API's v1 naming cleanup.
   `message.delivered` and `message.failed` as a union told apart by `type`,
   and anything else as an `UnknownMessageEvent` (`type: null`); it never
   throws. Route by direction with `INBOUND_MESSAGE_EVENT_TYPES` and
-  `OUTBOUND_MESSAGE_EVENT_TYPES`.
+  `OUTBOUND_MESSAGE_EVENT_TYPES`. Media items are described, never carried:
+  `OutboundMessageMediaItem` (`contentType`, `size`) on a recorded or sent
+  message, and `InboundMessageMediaItem` (`contentType`, `filename`, `size`)
+  on a received one. `record()` waits at least 30 seconds
+  (`RECORD_MIN_TIMEOUT_MS`), the API's own cut. A media link that fails
+  names itself in `errors[0].source.pointer` and the reason in `code`.
 - **`isRetryable(error)`**: the API's retry contract (no answer, 408, 429,
   5xx).
-- **`FailureCause` and `FAILURE_CAUSES`**: the eight `failure.cause` values
+- **`FailureCause` and `FAILURE_CAUSES`**: the seven `failure.cause` values
   the API documents for `message.failed`. `failureCause` still accepts any
   other string: more causes can be added.
 - **`client.request(request, { timeoutMs })`**: a timeout for one request.
