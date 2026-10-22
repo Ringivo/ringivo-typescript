@@ -1594,7 +1594,8 @@ export interface paths {
          *
          *     **Send every part id** in `alreadySent.providerPartIds`. A long text gets one delivery
          *     report per part, and its status moves only when every part is known. A one-part text names
-         *     its own id.
+         *     its own id. Name each id once, and at most 32 ids: more than the longest text this endpoint
+         *     accepts can have.
          *
          *     **`markConversationRead`** defaults to `false`: the text leaves the staff threads' read marks
          *     as they were. Set it to `true` for a reply a person typed in your own inbox.
@@ -1623,7 +1624,11 @@ export interface paths {
          *
          *     This call has its own rate limit: 300 records a minute per reseller by default, separate from
          *     the limit for other API calls. Only a record answered 201 or 200 counts against it; a refused
-         *     one does not. Over it, the answer is 429 with `Retry-After`.
+         *     one does not. Over it, the answer is 429 with `Retry-After`. A reseller may also have at most
+         *     2 records **with attachments** in flight at once (by default), because each one waits for its
+         *     links; one more is 429 with `Retry-After`. A record without attachments is not counted there.
+         *
+         *     The request body is at most 131,072 bytes; a larger one answers 413 and nothing is read.
          *     Sending a text through this endpoint is not available yet: `alreadySent` is required.
          */
         post: operations["recordOutboundMessage"];
@@ -5196,7 +5201,10 @@ export interface components {
                          * @example 01JC8ZA1F5T3R8C2P6M0L4JSWQ
                          */
                         providerMessageId: string;
-                        /** @description Every part id your provider returned. A one-part text names its own id. */
+                        /**
+                         * @description Every part id your provider returned, each once. A one-part text names its own
+                         *     id. At most 32: the longest text this endpoint accepts has at most 31 parts.
+                         */
                         providerPartIds: string[];
                         /**
                          * Format: date-time
@@ -12258,8 +12266,21 @@ export interface operations {
                 };
             };
             /**
+             * @description The request body is larger than 131,072 bytes. Nothing is read or stored. Do not retry
+             *     unchanged.
+             */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
              * @description A request no retry can fix: a label that breaks the rule, a `from` that is not your
-             *     number on your own provider account, more than one `to`, a `sentAt` more than 60 seconds in the future, or a
+             *     number on your own provider account, more than one `to`, a `sentAt` more than 60 seconds in the future,
+             *     more than 10 attachments, more than 32 part ids or a part id named twice, or a
              *     picture link that is not https, reaches a private address, is too large (10 MB a picture,
              *     20 MB together), is not an attachment (plain text or a SMIL layout; and HTML, XML, SVG or
              *     script while the platform blocks active content, which it does not by default), redirects
@@ -12290,7 +12311,8 @@ export interface operations {
             };
             /**
              * @description Over this reseller's rate limit for recording texts (300 a minute by default), which is
-             *     separate from the limit for other API calls. Wait for `Retry-After` seconds, then retry. Nothing is stored.
+             *     separate from the limit for other API calls, or over its records with attachments in
+             *     flight at once (2 by default). Wait for `Retry-After` seconds, then retry. Nothing is stored.
              */
             429: {
                 headers: {
