@@ -589,6 +589,13 @@ app.post("/hooks/messages", (request, response) => {
   `size`). On the three outbound events it holds
   `OutboundMessageMediaItem`s (`contentType`, `size`), with no filename.
   `size` is in bytes.
+- **A redelivery carries the values its event was built with.** An event
+  built before the API's 0.23.0 messaging change still has the old values
+  when it is delivered again: `bytes` and `encoding` on a media item (`size`
+  then reads `null`; the old members stay on `raw`), the causes
+  `outcome_unknown` and `submission_interrupted` (they arrive as plain
+  strings; treat them as `send_interrupted`), and `providerPartIds: []`
+  (reads `[]`).
 - Deliveries are at least once, and the three outbound events can arrive in
   any order. Dedupe on `event.eventId`, or on the pair (`message.id`,
   `event.type`). Never on the message id alone: that would drop the
@@ -1058,9 +1065,12 @@ recorded.media; // each an OutboundMessageMediaItem { contentType, size }
 - **Media is fetched during the call and never again**, so make new
   presigned links for each attempt. The API fetches all links at once and
   gives each one 10 seconds, then stores the media. It ends any request at
-  30 seconds, so `record()` waits at least 30 seconds
-  (`RECORD_MIN_TIMEOUT_MS`) whatever the client's own `timeoutMs` is. A
-  shorter timeout can give up on a record that is about to succeed.
+  30 seconds of its own time. `record()` waits at least 35 seconds
+  (`RECORD_MIN_TIMEOUT_MS`) whatever the client's own `timeoutMs` is: the
+  API's cut plus a margin, because the client's clock starts first. So you
+  always get the API's own answer. A client that gives up sooner can abandon
+  a record that is about to succeed; its retry is answered 200, with no
+  second fetch. The floor is the whole request (connect, send and wait).
 - **If any link fails, nothing is stored.** The `ApiError` names the link in
   `error.errors[0].source.pointer` (`/data/attributes/mediaUrls/<index>`)
   and the reason in `error.code`:

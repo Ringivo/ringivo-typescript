@@ -76,11 +76,19 @@
  * -- THE TIMEOUT ------------------------------------------------------------
  * The call fetches your media before it answers: all links at once, each
  * within 10 seconds, and then stores up to 20 MB. The API ends any request
- * at 30 seconds. A client built with a shorter timeout would give up on a
- * call that was about to succeed; the retry is then answered 200, but it
- * fetches the media again. So this one call waits at least
- * `RECORD_MIN_TIMEOUT_MS` (30 000), whatever the client's own `timeoutMs`
- * is; a longer client timeout is kept.
+ * at 30 seconds of its own time. A client that gives up first can abandon a
+ * call that was about to succeed. Its retry is then answered 200 (the API
+ * looks for a repeat before it fetches anything), but the wait was wasted.
+ * This client's clock starts before the API's does — the request still has
+ * to reach it — so this one call waits at least `RECORD_MIN_TIMEOUT_MS`
+ * (35 000): the API's cut plus a margin, so that you always get the API's
+ * own answer. That is whatever the client's own `timeoutMs` is; a longer
+ * client timeout is kept.
+ *
+ * The floor bounds the WHOLE REQUEST — connect, send and wait — because
+ * `fetch` has no separate read timeout. The Python client's floor bounds
+ * only the wait for the answer (httpx's read timeout), which starts once the
+ * request is sent. The 5-second margin covers that difference too.
  *
  * The Python client keeps the same rules in `ringivo/messages.py`; the two
  * are kept the same on purpose.
@@ -110,10 +118,12 @@ export const MAX_PROVIDER_ID_LENGTH = 128;
 
 /**
  * The shortest timeout `record()` uses, in milliseconds: the API's own cut
- * for any request. It fetches every media link at once, each within 10
- * seconds, then stores the media, all before it answers.
+ * plus a margin. The API fetches every media link at once, each within 10
+ * seconds, stores the media, all before it answers, and ends any request at
+ * 30 seconds. The floor adds 5 seconds to that cut, because this client's
+ * clock starts before the API's.
  */
-export const RECORD_MIN_TIMEOUT_MS = 30_000;
+export const RECORD_MIN_TIMEOUT_MS = 35_000;
 
 /** What `messages.record()` accepts. */
 export interface RecordMessageOptions {

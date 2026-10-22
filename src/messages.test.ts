@@ -607,10 +607,17 @@ describe("the contract's limits, read from the spec", () => {
     expect(documented).toContain("each within 10 seconds");
   });
 
-  it("is the record timeout the spec tells a caller to set", () => {
+  it("is the timeout the spec tells a caller to set, plus a 5-second margin", () => {
+    // The spec's number is the API's own cut; this client's clock starts
+    // before the API's, so the floor sits above it. A spec that moves the
+    // number fails here.
     const flat = SPEC.replace(/\s+/g, " ");
-    expect(flat).toContain("**Set your client timeout to 30 seconds**");
-    expect(RECORD_MIN_TIMEOUT_MS).toBe(30_000);
+    const found = /\*\*Set your client timeout to (\d+) seconds\*\*/.exec(flat);
+    expect(found, "the spec no longer says what timeout to set; read it again").not.toBeNull();
+    const documentedMs = Number(found?.[1]) * 1000;
+    expect(documentedMs).toBe(30_000);
+    expect(RECORD_MIN_TIMEOUT_MS).toBeGreaterThanOrEqual(documentedMs + 5_000);
+    expect(RECORD_MIN_TIMEOUT_MS).toBe(35_000);
   });
 
   it.each([
