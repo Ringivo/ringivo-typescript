@@ -974,8 +974,8 @@ export interface paths {
          *     attribute.
          *
          *     **Scope:** a `fax:write` token may register an endpoint at any scope it already reaches,
-         *     but only for `fax.*` events — naming `message.received` or a `port_order.*` type with a
-         *     `fax:*` token is a 422 on that member, and needs `webhooks:write`. A scope the token does
+         *     but only for `fax.*` events. Any event type that is not `fax.*` needs `webhooks:write`:
+         *     naming one with a `fax:*` token is a 422 on that member. A scope the token does
          *     not reach is refused on `scopeId`, whatever the events are.
          */
         post: operations["createWebhookEndpoint"];
@@ -1036,8 +1036,8 @@ export interface paths {
          *     `events` match again.
          *
          *     **Scope:** `fax:write` reaches the endpoints its own credential reaches, and may leave them
-         *     subscribed to **`fax.*` events only** — an edit naming `message.received` or a `port_order.*`
-         *     type is a 422 on that member. An endpoint outside that reach answers **404** and requires
+         *     subscribed to **`fax.*` events only**. Any event type that is not `fax.*` needs
+         *     `webhooks:write`: an edit naming one with a `fax:*` token is a 422 on that member. An endpoint outside that reach answers **404** and requires
          *     `webhooks:write`.
          */
         patch: operations["updateWebhookEndpoint"];
@@ -1524,7 +1524,7 @@ export interface paths {
         };
         /**
          * List messages sent to your numbers
-         * @description Every text and picture message somebody sent to one of your text-enabled numbers, newest
+         * @description Every text message (SMS or MMS) somebody sent to one of your text-enabled numbers, newest
          *     first.
          *
          *     THIS IS THE POLLING HALF OF A PAIR. The other is the `message.received` webhook: register an
@@ -1535,8 +1535,10 @@ export interface paths {
          *     `receivedAt` is when the message was SENT, and `createdAt` is when we stored it — they differ
          *     by however long a redelivery took. Filter on the first; page on the second.
          *
-         *     **Media is described, never carried.** A picture message lists each part's content type,
-         *     filename and size, and there is no image and no URL to fetch one: we do not keep the bytes.
+         *     **Media is described, never carried.** An MMS lists each media item's content type, filename
+         *     and size. There is no URL to fetch a media item: we do not serve the bytes. For a number
+         *     connected to your phone system we keep them only to deliver them there. If you need the
+         *     file, ask your messaging provider.
          */
         get: operations["listInboundMessages"];
         put?: never;
@@ -1600,33 +1602,51 @@ export interface paths {
          *     **`markConversationRead`** defaults to `false`: the text leaves the staff threads' read marks
          *     as they were. Set it to `true` for a reply a person typed in your own inbox.
          *
-         *     **Attachments** (`media`) are fetched during this call, before anything is stored, and kept.
-         *     We never fetch your link again, so make a new presigned link for each attempt. A link must be
-         *     `https`, must not reach a private address, and must be an attachment of at most 10 MB: a
-         *     picture, a contact card (vCard), audio, video, a PDF or any other file. `text/plain` is
-         *     refused (put the text in `body`), and so is a SMIL layout. Every attachment is copied into the staff threads as you sent it, also when the
-         *     phone app cannot show that format. **At most 10 attachments** per record, **at most 20 MB of
-         *     attachments together**, and
-         *     **all of them must arrive within 20 seconds together** — past that time the call answers 503
-         *     and you retry with new links. A link that redirects more than 3 times is refused with 422.
+         *     **Media** (`mediaUrls`, your links) is fetched during this call, before anything is stored,
+         *     and kept. We fetch **all links at once**, and **each must finish within 10 seconds**
+         *     (redirects included). We never fetch your link again, so make a new presigned link for each
+         *     attempt. A link must be `https`, must not reach a private address, and must be a media item
+         *     of at most 10 MB: an image, a contact card (vCard), audio, video, a PDF or any other file.
+         *     `text/plain` is refused (put the text in `body`), and so is a SMIL layout. Every media item
+         *     is copied into the staff threads as you sent it, also when the phone app cannot show that
+         *     format. **At most 10 media items** per record and **at most 20 MB of media together**. A
+         *     link that redirects more than 3 times is refused. If any link fails, nothing is stored, and
+         *     the error names that link in `source.pointer` (`/data/attributes/mediaUrls/<index>`) and the
+         *     reason in `code`:
+         *
+         *     | Status | `code` | What happened | What to do |
+         *     |---|---|---|---|
+         *     | 422 | `media_rejected` | the link or what it served can never be used | fix the link; do not retry unchanged |
+         *     | 504 | `media_timeout` | the link did not finish within 10 seconds | retry after `Retry-After`, with a new link |
+         *     | 502 | `media_unreachable` | its host answered 5xx, refused the connection, or does not resolve | retry after `Retry-After`, with a new link |
+         *     | 503 | `media_store_unavailable` | we could not keep the media right now | retry after `Retry-After` |
+         *
+         *     **How long the call can take.** A record without media answers in well under a second. With
+         *     media, the fetches take at most 10 seconds together, and storing up to 20 MB adds a few
+         *     seconds more. Our edge ends any request at 30 seconds. **Set your client timeout to 30
+         *     seconds** for this call; a shorter one can give up on a record that is about to succeed, and
+         *     a retry of it is answered 200 if it did. The answer describes the media in `media`
+         *     (content type and size), never with your links.
          *
          *     **`alreadySent.sentAt`** is when your provider accepted the text. We store it as you give it.
          *     Up to 60 seconds ahead of our clock is treated as clock skew and accepted; more than 60 seconds
          *     in the future answers 422.
          *
          *     **Retry from a queue.** A repeat of the same provider message id with the same `from`, `to`,
-         *     `body` and picture count answers 200 with the first resource and changes nothing. Retry on
+         *     `body` and media count answers 200 with the first resource and changes nothing. Retry on
          *     429, 503, any other 5xx and no answer, with backoff. Never retry a 422 or a 409 unchanged.
          *     After a 422, 409, 429 or 503, nothing is stored.
          *
          *     **Events.** No `message.sent` is raised for a recorded text — you sent it. Its delivery
          *     reports still raise `message.delivered` and `message.failed`, with `source: recorded`.
          *
+         *     **The copy into the staff threads can come later.** We answer 201 when the text is stored.
+         *     We then copy it into the threads; if that step is paused on our side, we copy it when the
+         *     step is running again. You do not need to record the text again.
+         *
          *     This call has its own rate limit: 300 records a minute per reseller by default, separate from
          *     the limit for other API calls. Only a record answered 201 or 200 counts against it; a refused
-         *     one does not. Over it, the answer is 429 with `Retry-After`. A reseller may also have at most
-         *     2 records **with attachments** in flight at once (by default), because each one waits for its
-         *     links; one more is 429 with `Retry-After`. A record without attachments is not counted there.
+         *     one does not. Over it, the answer is 429 with `Retry-After`.
          *
          *     The request body is at most 131,072 bytes; a larger one answers 413 and nothing is read.
          *     Sending a text through this endpoint is not available yet: `alreadySent` is required.
@@ -3000,15 +3020,16 @@ export interface webhooks {
         get?: never;
         put?: never;
         /**
-         * A text or picture message arrived for one of your numbers
+         * A text message (SMS or MMS) arrived for one of your numbers
          * @description Fired when somebody texts a number you have enabled for messaging. This is the push half of
          *     `GET /v1/inbound-messages` — `data.id` is that collection's id, so refetch the message there
          *     when you want it back.
          *
-         *     **Media is described, never carried.** Each part names its content type, its filename when
-         *     it had one, the vendor's encoding and its decoded size. There is no image and no URL: we do
-         *     not keep the bytes, so ask your messaging provider for the file. A text message carries an
-         *     empty `media` list rather than an absent key.
+         *     **Media is described, never carried.** Each media item names its content type, its filename
+         *     when it had one, and its size in bytes. There is no URL: we do not serve the bytes. For a
+         *     number connected to your phone system we keep them only to deliver them there. Ask your
+         *     messaging provider for the file. An SMS carries an empty `media` list rather than an absent
+         *     key.
          *
          *     **Scope: `tenant` and `customer`** — which is every scope there is, so the only endpoint
          *     that does not hear a message is one that did not ask for the type. A message belongs to a
@@ -3037,7 +3058,7 @@ export interface webhooks {
         get?: never;
         put?: never;
         /**
-         * A text or picture message from one of your numbers was sent
+         * A text message (SMS or MMS) from one of your numbers was sent
          * @description Fired when the messaging provider accepts a message we sent from one of your numbers. For a
          *     staff reply typed in a phone-system app (`source: phone_system`), this is how the reply reaches your
          *     own system: `sentBy` names the staff member, and `sentAt` is the instant to order your
@@ -3114,23 +3135,22 @@ export interface webhooks {
          *
          *     - `provider_refused` — the messaging provider refused it. Nothing was sent.
          *     - `provider_unreachable` — we could not reach the provider. Nothing was sent.
-         *     - `outcome_unknown` — the provider's answer was lost, so the message may or may not have
-         *       left. We never send it again, because a second try could text the person twice.
-         *     - `submission_interrupted` — our process stopped while it was sending the message, so it
-         *       may or may not have left. We never send it again, for the same reason.
+         *     - `send_interrupted` — the send was interrupted before the carrier confirmed it. Treat
+         *       the text as not sent (rarely, it may still arrive). We never send it again, because a
+         *       second try could text the person twice.
          *     - `opted_out` — the recipient opted out of texts from this number. A reply typed in the
          *       phone system to that person is refused and raises this event with `source`
          *       `phone_system`; a queued message whose recipient opted out before it was sent raises it
          *       too. Nothing was sent.
          *     - `no_send_key`, `media_unavailable` — we stopped it after we accepted it: the account
-         *       holds no key that we can send with, or a picture could not be read. Nothing was sent.
+         *       holds no key that we can send with, or a media item could not be read. Nothing was sent.
          *     - `undelivered` — the recipient's carrier reported that it did not take the message.
          *       `status` is then `undelivered`; for every other cause it is `failed`.
          *
          *     Treat a cause you do not know as a failure: more can be added.
          *
          *     A message that never left raises this event with no `message.sent` before it, and with null
-         *     `sentAt` and `providerMessageId`.
+         *     `sentAt`, `providerMessageId` and `providerPartIds`.
          *
          *     `occurredAt` is the instant we recorded the failure, and never the moment we reached you.
          */
@@ -3746,7 +3766,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable";
+        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable" | "media_rejected" | "media_timeout" | "media_unreachable" | "media_store_unavailable";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -4334,7 +4354,7 @@ export interface components {
         PhoneNumberMessaging: {
             /** @description Whether this number can send and receive text messages. */
             enabled: boolean;
-            /** @description Whether picture messaging is on too. Null when messaging is off. */
+            /** @description Whether MMS (messages with media) is on too. Null when messaging is off. */
             mmsEnabled: boolean | null;
             /**
              * @description What the number is registered as. Every number we enable is `A2P` — application-to-person,
@@ -4765,8 +4785,8 @@ export interface components {
          *     but the rule is the one every event on this channel follows: a retry six hours later carries
          *     the values the event was built with.
          *
-         *     **No media bytes and no URL.** The parts are described and nothing more — we do not retain
-         *     the file, so there is nothing here to fetch it with either.
+         *     **No media bytes and no URL.** The media items are described and nothing more — we do not
+         *     serve the bytes, so there is nothing here to fetch them with.
          */
         MessageReceivedEventData: {
             /**
@@ -4792,10 +4812,10 @@ export interface components {
              * @example +14075550100
              */
             to?: string;
-            /** @description The text. Null for a picture message with no caption. */
+            /** @description The text. Null for an MMS with no caption. */
             body?: string | null;
-            /** @description The described parts of a picture message. An empty list for a text message. */
-            media?: components["schemas"]["MessageReceivedMediaPart"][];
+            /** @description The media items of an MMS, described. An empty list for an SMS. */
+            media?: components["schemas"]["InboundMessageMediaItem"][];
             /**
              * Format: date-time
              * @description When the message was sent. The envelope's `occurredAt` is this same instant.
@@ -5085,7 +5105,7 @@ export interface components {
          *
          *     A SNAPSHOT: a retry six hours later carries the values the event was built with.
          *
-         *     **No media bytes and no URL.** Picture parts are described and nothing more.
+         *     **No media bytes and no URL.** Media items are described and nothing more.
          */
         OutboundMessageEventData: {
             /**
@@ -5113,14 +5133,13 @@ export interface components {
              * @example +13215550187
              */
             to: string;
-            /** @description The text. Null for a picture message with no caption. */
+            /** @description The text. Null for an MMS with no caption. */
             body: string | null;
             /**
-             * @description The described parts of a picture message. An empty list for a text message, and for a
-             *     picture message refused because the recipient opted out (`failure.cause` `opted_out`):
-             *     its pictures are never kept.
+             * @description The media items of an MMS, described. An empty list for an SMS, and for an MMS refused
+             *     because the recipient opted out (`failure.cause` `opted_out`): its media is never kept.
              */
-            media: components["schemas"]["OutboundMessageMediaPart"][];
+            media: components["schemas"]["OutboundMessageMediaItem"][];
             /**
              * @description The status this event announces: `sent` on `message.sent`, `delivered` on
              *     `message.delivered`, and `failed` or `undelivered` on `message.failed`.
@@ -5146,8 +5165,9 @@ export interface components {
             providerMessageId: string | null;
             /**
              * @description Your messaging provider's id for every part of the message — a long text has one per
-             *     part, and a one-part text names its own id. Null on any account that is not your own;
-             *     an empty list for a message the provider never accepted.
+             *     part, and a one-part text names its own id. Null exactly when `providerMessageId` is
+             *     null: on any account that is not your own, and for a message the provider never
+             *     accepted. Never an empty list.
              */
             providerPartIds: string[] | null;
         };
@@ -5166,20 +5186,15 @@ export interface components {
                      * @example +13215550187
                      */
                     to: string;
-                    /** @description The text as you sent it. Required unless `media` names a picture. */
+                    /** @description The text as you sent it. Required unless `mediaUrls` names a media item. */
                     body?: string | null;
                     /**
-                     * @description Your links to the pictures you sent, in order — fetched once, during this call,
-                     *     and never kept. At most 10, each at most 10 MB and 20 MB together, all fetched
-                     *     within 20 seconds together. Make a new presigned link for each attempt.
+                     * @description Your links to the media you sent, in order — all fetched at once during this
+                     *     call, each within 10 seconds, and never kept. At most 10, each at most 10 MB and
+                     *     20 MB together. Make a new presigned link for each attempt. The answer describes
+                     *     them in `media`.
                      */
-                    media?: {
-                        /**
-                         * Format: uri
-                         * @example https://media.example.com/rex.jpg
-                         */
-                        url: string;
-                    }[];
+                    mediaUrls?: string[];
                     /**
                      * @description What staff see in front of the text, as `"<senderLabel>: <body>"`. We first trim
                      *     white space at both ends: ASCII white space (space, tab, line feed, vertical tab,
@@ -5242,10 +5257,10 @@ export interface components {
              * @example +13215550187
              */
             to?: string;
-            /** @description The text. Null for a picture message with no caption. */
+            /** @description The text. Null for an MMS with no caption. */
             body?: string | null;
-            /** @description The described parts of a picture message — no image and no URL. Empty for a text. */
-            media?: components["schemas"]["OutboundMessageMediaPart"][];
+            /** @description The media items of an MMS, described — no bytes and no URL. Empty for an SMS. */
+            media?: components["schemas"]["OutboundMessageMediaItem"][];
             /** @description The label you recorded the text with. Null on a message we sent. */
             senderLabel?: string | null;
             /** @description Your read choice for a recorded text. Null on a message we sent. */
@@ -5257,7 +5272,10 @@ export interface components {
             sentAt?: string | null;
             /** @description Your provider's id for the message. Set only on your own provider account. */
             providerMessageId?: string | null;
-            /** @description Every part id. A one-part text names its own id. Null on any account that is not yours. */
+            /**
+             * @description Every part id. A one-part text names its own id. Null exactly when `providerMessageId`
+             *     is null, and never an empty list.
+             */
             providerPartIds?: string[] | null;
             /**
              * Format: date-time
@@ -5301,22 +5319,15 @@ export interface components {
              */
             name: string | null;
         };
-        /**
-         * @description One part of a picture message we sent, DESCRIBED. There is no image and no URL. We do not
-         *     keep the sender's filename or transfer encoding for a part we sent, so both are null.
-         */
-        OutboundMessageMediaPart: {
+        /** @description One media item of an MMS sent from your number, DESCRIBED. There are no bytes and no URL. */
+        OutboundMessageMediaItem: {
             /** @example image/jpeg */
-            contentType?: string;
-            /** @description Always null: for a picture we send we keep the bytes and the content type, not a filename. */
-            filename?: string | null;
-            /** @description Always null: for a picture we send we keep the decoded bytes, so there is no transfer encoding to report. */
-            encoding?: string | null;
+            contentType: string;
             /**
-             * @description The part's size, in bytes.
+             * @description The media item's size, in bytes.
              * @example 40213
              */
-            bytes?: number;
+            size: number;
         };
         /**
          * @description Who asked us to send the message — the surface, never the vendor. `phone_system` is a staff
@@ -5327,20 +5338,24 @@ export interface components {
          */
         OutboundMessageSource: "api" | "phone_system" | "recorded" | "system";
         /**
-         * @description A text message (`sms`) or a picture message (`mms`).
+         * @description A text message without media (`sms`) or with media (`mms`).
          * @enum {string}
          */
         OutboundMessageKind: "sms" | "mms";
+        /**
+         * @description Why a message did not reach its recipient — see the `message.failed` webhook for what each
+         *     value means. More values can be added: treat a value you do not know as a failure.
+         * @enum {string}
+         */
+        OutboundMessageFailureCause: "provider_refused" | "provider_unreachable" | "send_interrupted" | "opted_out" | "no_send_key" | "media_unavailable" | "undelivered";
         MessageFailedEventData: components["schemas"]["OutboundMessageEventData"] & {
             failure: {
                 /**
-                 * @description Why the message did not reach its recipient. One of `provider_refused`,
-                 *     `provider_unreachable`, `outcome_unknown`, `submission_interrupted`, `opted_out`,
-                 *     `no_send_key`, `media_unavailable` or `undelivered` — see the `message.failed`
-                 *     webhook. Treat a value you do not know as a failure: more can be added.
+                 * @description Why the message did not reach its recipient — see the `message.failed` webhook.
+                 *     Treat a value you do not know as a failure: more can be added.
                  * @example undelivered
                  */
-                cause: string;
+                cause: components["schemas"]["OutboundMessageFailureCause"];
             };
         };
         MessageSentEvent: components["schemas"]["WebhookEventEnvelope"] & {
@@ -5744,50 +5759,28 @@ export interface components {
         };
         /**
          * @description Which family the message came from. NOT derivable from `media`: an MMS carrying only a
-         *     caption and an SMS both arrive with a body and no attachment.
+         *     caption and an SMS both arrive with a body and no media item.
          * @enum {string}
          */
         InboundMessageKind: "sms" | "mms";
         /**
-         * @description One part of a picture message, DESCRIBED, as the `message.received` webhook payload carries
-         *     it — camelCase like every webhook payload. There is no image and no URL — we do not keep the
+         * @description One media item of an MMS sent to your number, DESCRIBED — in `GET /v1/inbound-messages` and
+         *     in the `message.received` webhook alike. There are no bytes and no URL: we do not serve the
          *     bytes. If you need the file, ask your messaging provider.
          */
-        MessageReceivedMediaPart: {
+        InboundMessageMediaItem: {
             /** @example image/jpeg */
-            contentType?: string;
+            contentType: string;
             /**
-             * @description The part's filename, when it named one.
+             * @description The filename the sender's carrier gave the item. Null when it gave none.
              * @example photo.jpg
              */
-            filename?: string | null;
-            /** @example base64 */
-            encoding?: string;
+            filename: string | null;
             /**
-             * @description The part's decoded size, in bytes.
+             * @description The media item's size, in bytes.
              * @example 40213
              */
-            bytes?: number;
-        };
-        /**
-         * @description One part of a picture message, DESCRIBED. There is no image and no URL — we do not keep the
-         *     bytes. If you need the file, ask your messaging provider.
-         */
-        InboundMessageMediaPart: {
-            /** @example image/jpeg */
-            contentType?: string;
-            /**
-             * @description The part's filename, when it named one.
-             * @example photo.jpg
-             */
-            filename?: string | null;
-            /** @example base64 */
-            encoding?: string;
-            /**
-             * @description The part's decoded size, in bytes.
-             * @example 40213
-             */
-            bytes?: number;
+            size: number;
         };
         InboundMessageAttributes: {
             kind?: components["schemas"]["InboundMessageKind"];
@@ -5801,10 +5794,10 @@ export interface components {
              * @example +13215550101
              */
             to?: string;
-            /** @description The text. Null for a picture message with no caption. */
+            /** @description The text. Null for an MMS with no caption. */
             body?: string | null;
-            /** @description The described parts of a picture message. Empty for a text message. */
-            media?: components["schemas"]["InboundMessageMediaPart"][];
+            /** @description The media items of an MMS, described. Empty for an SMS. */
+            media?: components["schemas"]["InboundMessageMediaItem"][];
             /**
              * Format: date-time
              * @description When the message was SENT — filter on this one.
@@ -12192,7 +12185,7 @@ export interface operations {
                  *           "from": "+14075550142",
                  *           "to": "+13215550187",
                  *           "body": "Reminder: Rex is due for his rabies booster on Oct 24.",
-                 *           "media": [],
+                 *           "mediaUrls": [],
                  *           "senderLabel": "Appointment reminder",
                  *           "markConversationRead": false,
                  *           "alreadySent": {
@@ -12212,7 +12205,7 @@ export interface operations {
         responses: {
             /**
              * @description A repeat of an earlier record with the same provider message id and the same `from`,
-             *     `to`, `body` and picture count. The first resource, unchanged.
+             *     `to`, `body` and media count. The first resource, unchanged.
              */
             200: {
                 headers: {
@@ -12259,15 +12252,6 @@ export interface operations {
             };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
-            /** @description Recording texts is not turned on for this platform yet. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
-                };
-            };
             /**
              * @description This provider message id is already recorded with different content, or not by you. The
              *     answer says nothing about the other record. Do not retry unchanged.
@@ -12294,13 +12278,14 @@ export interface operations {
             };
             /**
              * @description A request no retry can fix: a label that breaks the rule, a `from` that is not your
-             *     number on your own provider account, more than one `to`, a `sentAt` more than 60 seconds in the future,
-             *     more than 10 attachments, more than 32 part ids or a part id named twice, or a
-             *     picture link that is not https, reaches a private address, is too large (10 MB a picture,
-             *     20 MB together), is not an attachment (plain text or a SMIL layout; and HTML, XML, SVG or
-             *     script while the platform blocks active content, which it does not by default), redirects
-             *     in a loop, or answers 4xx. A label must also
-             *     have at least one visible character. `source.pointer` names the member.
+             *     number on your own provider account, more than one `to`, a `sentAt` more than 60
+             *     seconds in the future, more than 10 media items, more than 32 part ids or a part id
+             *     named twice, `media` sent instead of `mediaUrls`, or a media link (`code`
+             *     `media_rejected`, `source.pointer` names it) that is not https, reaches a private
+             *     address, is too large (10 MB an item, 20 MB together), is not accepted as media (plain
+             *     text or a SMIL layout; and HTML, XML, SVG or script while the platform blocks active
+             *     content, which it does not by default), redirects in a loop, or answers 4xx. A label
+             *     must also have at least one visible character. `source.pointer` names the member.
              */
             422: {
                 headers: {
@@ -12326,8 +12311,8 @@ export interface operations {
             };
             /**
              * @description Over this reseller's rate limit for recording texts (300 a minute by default), which is
-             *     separate from the limit for other API calls, or over its records with attachments in
-             *     flight at once (2 by default). Wait for `Retry-After` seconds, then retry. Nothing is stored.
+             *     separate from the limit for other API calls. Wait for `Retry-After` seconds, then retry.
+             *     Nothing is stored.
              */
             429: {
                 headers: {
@@ -12340,10 +12325,39 @@ export interface operations {
                 };
             };
             /**
-             * @description A fault that can pass: a picture link timed out, its host answered 5xx, or pictures cannot
-             *     be kept right now. Retry after `Retry-After` seconds with new links. Nothing is stored.
+             * @description `media_unreachable`: a media link's host answered 5xx, refused the connection, or does
+             *     not resolve. `source.pointer` names the link. Retry after `Retry-After` seconds with a
+             *     new link. Nothing is stored.
+             */
+            502: {
+                headers: {
+                    /** @description Seconds to wait. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description `media_store_unavailable`: we could not keep the media right now. Retry after
+             *     `Retry-After` seconds. Nothing is stored.
              */
             503: {
+                headers: {
+                    /** @description Seconds to wait. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description `media_timeout`: a media link did not finish within 10 seconds. `source.pointer` names
+             *     the link. Retry after `Retry-After` seconds with a new link. Nothing is stored.
+             */
+            504: {
                 headers: {
                     /** @description Seconds to wait. */
                     "Retry-After"?: number;
@@ -15726,8 +15740,7 @@ export interface operations {
                  *           {
                  *             "contentType": "image/jpeg",
                  *             "filename": "photo.jpg",
-                 *             "encoding": "base64",
-                 *             "bytes": 40213
+                 *             "size": 40213
                  *           }
                  *         ],
                  *         "receivedAt": "2026-08-16T11:14:07+00:00"
