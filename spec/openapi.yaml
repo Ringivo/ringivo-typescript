@@ -4537,16 +4537,18 @@ paths:
         as they were. Set it to `true` for a reply a person typed in your own inbox.
 
         **Media** (`mediaUrls`, your links) is fetched during this call, before anything is stored,
-        and kept. We fetch **all links at once**, and **each must finish within 10 seconds**
-        (redirects included). We never fetch your link again, so make a new presigned link for each
+        and kept. We fetch **all links at once**, and **each must finish within 10 seconds of
+        the call** (its redirects and DNS lookups included). We never fetch your link again, so make a new presigned link for each
         attempt. A link must be `https`, must not reach a private address, and must be a media item
         of at most 10 MB: an image, a contact card (vCard), audio, video, a PDF or any other file.
         `text/plain` is refused (put the text in `body`), and so is a SMIL layout. Every media item
         is copied into the staff threads as you sent it, also when the phone app cannot show that
-        format. **At most 10 media items** per record and **at most 20 MB of media together**. A
-        link that redirects more than 3 times is refused. If any link fails, nothing is stored, and
-        the error names that link in `source.pointer` (`/data/attributes/mediaUrls/<index>`) and the
-        reason in `code`:
+        format. **At most 10 media items** per record and **at most 20 MB of media together**:
+        we stop downloading the moment your links pass 20 MB together (counted after any
+        decompression), and refuse the record with `media_rejected` and `source.pointer`
+        `/data/attributes/mediaUrls` — the list, not one link. A link that redirects more than 3
+        times is refused. If any link fails, nothing is stored, and the error names that link in
+        `source.pointer` (`/data/attributes/mediaUrls/<index>`) and the reason in `code`:
 
         | Status | `code` | What happened | What to do |
         |---|---|---|---|
@@ -4557,7 +4559,9 @@ paths:
 
         **How long the call can take.** A record without media answers in well under a second. With
         media, the fetches take at most 10 seconds together, and storing up to 20 MB adds a few
-        seconds more. Our edge ends any request at 30 seconds. **Set your client timeout to 30
+        seconds more. (No DNS lookup of your links' hosts starts after 10 seconds, but one that
+        started just before cannot be cut short, so a host whose name server does not answer can
+        add the resolver's own timeout.) Our edge ends any request at 30 seconds. **Set your client timeout to 30
         seconds** for this call; a shorter one can give up on a record that is about to succeed, and
         a retry of it is answered 200 if it did. The answer describes the media in `media`
         (content type and size), never with your links.
@@ -4569,7 +4573,7 @@ paths:
         **Retry from a queue.** A repeat of the same provider message id with the same `from`, `to`,
         `body` and media count answers 200 with the first resource and changes nothing. Retry on
         429, 503, any other 5xx and no answer, with backoff. Never retry a 422 or a 409 unchanged.
-        After a 422, 409, 429 or 503, nothing is stored.
+        After a 422, 409, 429, 502, 503 or 504, nothing is stored.
 
         **Events.** No `message.sent` is raised for a recorded text — you sent it. Its delivery
         reports still raise `message.delivered` and `message.failed`, with `source: recorded`.
