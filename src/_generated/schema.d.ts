@@ -1599,10 +1599,15 @@ export interface paths {
          *     **`markConversationRead`** defaults to `false`: the text leaves the staff threads' read marks
          *     as they were. Set it to `true` for a reply a person typed in your own inbox.
          *
-         *     **Pictures** (`media`) are fetched during this call, before anything is stored, and kept.
+         *     **Attachments** (`media`) are fetched during this call, before anything is stored, and kept.
          *     We never fetch your link again, so make a new presigned link for each attempt. A link must be
-         *     `https`, must not reach a private address, and must be an image, audio or video part of at
-         *     most 10 MB. **At most 10 pictures** per record, **at most 20 MB of pictures together**, and
+         *     `https`, must not reach a private address, and must be an attachment of at most 10 MB: a
+         *     picture, a contact card (vCard), audio, video, a PDF or any other file. `text/plain` is
+         *     refused (put the text in `body`), and so are a SMIL layout, HTML, XML, SVG and script, by the
+         *     `Content-Type` and by the file's own first bytes: a link declared `image/png` that holds HTML
+         *     is refused. Every attachment is copied into the staff threads as you sent it, also when the
+         *     phone app cannot show that format. **At most 10 attachments** per record, **at most 20 MB of
+         *     attachments together**, and
          *     **all of them must arrive within 20 seconds together** — past that time the call answers 503
          *     and you retry with new links. A link that redirects more than 3 times is refused with 422.
          *
@@ -12258,7 +12263,8 @@ export interface operations {
              * @description A request no retry can fix: a label that breaks the rule, a `from` that is not your
              *     number on your own provider account, more than one `to`, a `sentAt` more than 60 seconds in the future, or a
              *     picture link that is not https, reaches a private address, is too large (10 MB a picture,
-             *     20 MB together), is not a picture, redirects in a loop, or answers 4xx. A label must also
+             *     20 MB together), is not an attachment (plain text, a SMIL layout, HTML, XML, SVG or
+             *     script, by its type or its bytes), redirects in a loop, or answers 4xx. A label must also
              *     have at least one visible character. `source.pointer` names the member.
              */
             422: {
