@@ -117,6 +117,9 @@ export interface RingivoOptions {
    * Listing and reading your customers needs `customers:read`, which only a
    * credential issued for your whole account holds: it is dropped from a
    * credential issued for one customer when the token is minted.
+   *
+   * Recording a text you already sent needs `messages:record`; reading the
+   * texts sent to your numbers needs `numbers:read` or `numbers:messaging`.
    */
   scopes: readonly string[];
   /**
