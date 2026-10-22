@@ -29,7 +29,14 @@ import {
   OUTBOUND_MESSAGE_EVENT_TYPES,
   parseMessageEvent,
 } from "./index.js";
-import type { FailureCause, MessageEvent, OutboundMessageEventData } from "./index.js";
+import type { components } from "./_generated/schema.js";
+import type {
+  FailureCause,
+  InboundMessageMediaItem,
+  MessageEvent,
+  OutboundMessageEventData,
+  OutboundMessageMediaItem,
+} from "./index.js";
 
 const MESSAGE_RECEIVED = {
   eventId: "0198c4a1-e7b3-7a41-9c62-5f0d8a1b2c3d",
@@ -43,7 +50,7 @@ const MESSAGE_RECEIVED = {
     from: "+13025556789",
     to: "+14075550100",
     body: "Here is the referral form.",
-    media: [{ contentType: "image/jpeg", filename: "photo.jpg", encoding: "base64", bytes: 40213 }],
+    media: [{ contentType: "image/jpeg", filename: "photo.jpg", size: 40213 }],
     receivedAt: "2026-08-16T11:14:07+00:00",
   },
 };
@@ -138,24 +145,50 @@ describe("the routing lists", () => {
 });
 
 describe("the failure causes", () => {
-  /** The causes `MessageFailedEventData.failure.cause` documents in the vendored spec. */
+  const SPEC = readFileSync(
+    fileURLToPath(new URL("../spec/openapi.yaml", import.meta.url)),
+    "utf8",
+  );
+
+  /** The vendored spec's `OutboundMessageFailureCause` enum. */
   function documentedCauses(): string[] {
-    const spec = readFileSync(
-      fileURLToPath(new URL("../spec/openapi.yaml", import.meta.url)),
-      "utf8",
-    );
-    const start = spec.indexOf("\n    MessageFailedEventData:\n");
+    const start = SPEC.indexOf("\n    OutboundMessageFailureCause:\n");
     expect(start).toBeGreaterThan(-1);
-    const block = spec.slice(start, spec.indexOf("\n    MessageSentEvent:\n", start));
-    const listed = block.split("One of", 2)[1]?.split("— see", 1)[0] ?? "";
-    return [...listed.matchAll(/`([a-z_]+)`/g)].map((match) => match[1] ?? "");
+    const block = SPEC.slice(start + 1, SPEC.indexOf("\n    MessageFailedEventData:\n", start));
+    const listed = block.split("      enum:\n", 2)[1] ?? "";
+    return [...listed.matchAll(/^ {8}- ([a-z_]+)$/gm)].map((match) => match[1] ?? "");
   }
 
-  it("are the eight causes the spec documents", () => {
+  it("are the seven causes the spec's enum lists", () => {
     const documented = documentedCauses();
 
-    expect(documented, "the spec's list moved; read it again").toHaveLength(8);
+    expect(documented, "the spec's list moved; read it again").toHaveLength(7);
     expect([...FAILURE_CAUSES].sort()).toEqual([...documented].sort());
+  });
+
+  it("type failure.cause in the spec by that enum", () => {
+    const start = SPEC.indexOf("\n    MessageFailedEventData:\n");
+    const block = SPEC.slice(start, SPEC.indexOf("\n    MessageSentEvent:\n", start));
+    expect(block).toContain("$ref: '#/components/schemas/OutboundMessageFailureCause'");
+  });
+
+  it("are the generated enum, at compile time", () => {
+    // Both directions: `npm run typecheck` fails the day the spec's enum
+    // and the hand-written union differ by one member.
+    type Generated = components["schemas"]["OutboundMessageFailureCause"];
+    const sameMembers: [FailureCause] extends [Generated]
+      ? [Generated] extends [FailureCause]
+        ? true
+        : false
+      : false = true;
+    expect(sameMembers).toBe(true);
+  });
+
+  it("replace outcome_unknown and submission_interrupted with send_interrupted", () => {
+    const causes: readonly string[] = FAILURE_CAUSES;
+    expect(causes).toContain("send_interrupted");
+    expect(causes).not.toContain("outcome_unknown");
+    expect(causes).not.toContain("submission_interrupted");
   });
 
   it("are every member of FailureCause, and nothing else", () => {
@@ -164,8 +197,7 @@ describe("the failure causes", () => {
     const every: Record<FailureCause, true> = {
       provider_refused: true,
       provider_unreachable: true,
-      outcome_unknown: true,
-      submission_interrupted: true,
+      send_interrupted: true,
       opted_out: true,
       no_send_key: true,
       media_unavailable: true,
@@ -221,11 +253,11 @@ describe("message.received", () => {
     });
     expect(event.message.receivedAt?.toISOString()).toBe("2026-08-16T11:14:07.000Z");
     expect(event.message.media).toHaveLength(1);
-    expect(event.message.media[0]).toMatchObject({
+    expect(event.message.media[0]).toEqual({
       contentType: "image/jpeg",
       filename: "photo.jpg",
-      encoding: "base64",
-      byteSize: 40213,
+      size: 40213,
+      raw: { contentType: "image/jpeg", filename: "photo.jpg", size: 40213 },
     });
     expect(event.raw).toBe(MESSAGE_RECEIVED);
     expect(Object.isFrozen(event)).toBe(true);
@@ -326,7 +358,7 @@ describe("message.sent, message.delivered, message.failed", () => {
         sentBy: null,
         sentAt: null,
         providerMessageId: null,
-        providerPartIds: [],
+        providerPartIds: null,
         failure: { cause: "provider_refused" },
       },
     });
@@ -337,8 +369,23 @@ describe("message.sent, message.delivered, message.failed", () => {
     expect(event.message.sentBy).toBeNull();
     expect(event.message.sentAt).toBeNull();
     expect(event.message.providerMessageId).toBeNull();
-    expect(event.message.providerPartIds).toEqual([]);
+    expect(event.message.providerPartIds).toBeNull();
     expect(event.message.failureCause).toBe("provider_refused");
+  });
+
+  it("still reads an empty part-id list as an empty list", () => {
+    // The API never sends `[]` any more (null exactly when the message id is
+    // null), but the reader does not flatten `[]` into null: what arrived is
+    // what you read.
+    const event = parseMessageEvent({
+      ...MESSAGE_FAILED,
+      data: { ...MESSAGE_FAILED.data, providerMessageId: null, providerPartIds: [] },
+    });
+
+    if (event.type !== "message.failed") {
+      throw new Error("expected message.failed");
+    }
+    expect(event.message.providerPartIds).toEqual([]);
   });
 
   it("keeps values and members this release does not know", () => {
@@ -364,25 +411,45 @@ describe("message.sent, message.delivered, message.failed", () => {
     expect(event.raw.future).toBe(true);
   });
 
-  it("reads picture parts from the bytes member", () => {
+  it("reads outbound media items by content type and size", () => {
     const event = parseMessageEvent({
       ...MESSAGE_SENT,
-      data: {
-        ...SENT_DATA,
-        kind: "mms",
-        media: [{ contentType: "image/png", filename: null, encoding: null, bytes: 512 }],
-      },
+      data: { ...SENT_DATA, kind: "mms", media: [{ contentType: "image/png", size: 512 }] },
     });
 
     if (event.type !== "message.sent") {
       throw new Error("expected message.sent");
     }
-    expect(event.message.media[0]).toMatchObject({
+    expect(event.message.media[0]).toEqual({
       contentType: "image/png",
-      filename: null,
-      encoding: null,
-      byteSize: 512,
+      size: 512,
+      raw: { contentType: "image/png", size: 512 },
     });
+    // An outbound item has no filename: the platform keeps none for it.
+    expect("filename" in (event.message.media[0] ?? {})).toBe(false);
+    // @ts-expect-error — a media item sent from your number has no filename.
+    void event.message.media[0]?.filename;
+  });
+
+  it("no longer reads the old bytes and encoding members", () => {
+    // `bytes` and `encoding` left the wire in 0.23.0; an item that still
+    // carries them reads no size, and the old members stay on `raw` only.
+    const event = parseMessageEvent({
+      ...MESSAGE_RECEIVED,
+      data: {
+        ...MESSAGE_RECEIVED.data,
+        media: [{ contentType: "image/jpeg", filename: "a.jpg", encoding: "base64", bytes: 9 }],
+      },
+    });
+
+    if (event.type !== "message.received") {
+      throw new Error("expected message.received");
+    }
+    const item = event.message.media[0];
+    expect(item?.size).toBeNull();
+    expect(item?.raw.bytes).toBe(9);
+    // @ts-expect-error — `encoding` is gone.
+    void item?.encoding;
   });
 
   it("reads a failure that is not an object as no cause", () => {
@@ -472,5 +539,30 @@ describe("narrowing on type", () => {
     }
 
     expect(outbound.map((message) => message.status)).toEqual(["sent", "delivered", "undelivered"]);
+  });
+});
+
+describe("the media item shapes", () => {
+  // The drift lock for the two media items, in both directions: every member
+  // the generated schema declares is a member of the model, and the model has
+  // no member besides those and `raw`. `npm run typecheck` fails on the first
+  // difference — against the spec from before 0.23.0 (`bytes`, `encoding`,
+  // one `...MediaPart` schema per surface) it fails on the names alone.
+  type SameKeys<Model, Wire> = [Exclude<keyof Model, "raw">] extends [keyof Wire]
+    ? [keyof Wire] extends [Exclude<keyof Model, "raw">]
+      ? true
+      : false
+    : false;
+
+  it("are the spec's OutboundMessageMediaItem and InboundMessageMediaItem", () => {
+    const outbound: SameKeys<
+      OutboundMessageMediaItem,
+      components["schemas"]["OutboundMessageMediaItem"]
+    > = true;
+    const inbound: SameKeys<
+      InboundMessageMediaItem,
+      components["schemas"]["InboundMessageMediaItem"]
+    > = true;
+    expect([outbound, inbound]).toEqual([true, true]);
   });
 });

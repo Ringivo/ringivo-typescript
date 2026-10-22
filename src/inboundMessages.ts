@@ -1,5 +1,5 @@
 /**
- * Read the text and picture messages somebody sent to your numbers.
+ * Read the text messages (SMS and MMS) somebody sent to your numbers.
  *
  *     const page = await client.inboundMessages.list({ number: "+13215550101" });
  *     for (const message of page.messages) {
@@ -19,9 +19,9 @@
  * platform stored it; they differ by however long a redelivery took. The
  * date filters match `receivedAt`, and the cursor walks `createdAt`.
  *
- * -- ATTACHMENTS ARE DESCRIBED, NEVER CARRIED -------------------------------
- * Each part names its content type, filename, encoding and size. There is no
- * file and no URL: the platform does not keep the bytes, so ask your
+ * -- MEDIA IS DESCRIBED, NEVER CARRIED --------------------------------------
+ * Each media item names its content type, filename and size. There are no
+ * bytes and no URL: the platform does not serve the bytes, so ask your
  * messaging provider for the file.
  *
  * -- WHAT IS SPEC-TYPED -----------------------------------------------------

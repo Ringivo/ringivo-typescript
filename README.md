@@ -568,18 +568,34 @@ app.post("/hooks/messages", (request, response) => {
   without (for example, no `message.providerMessageId`).
 - **`source` and `failureCause` are strings, not enums**: the API can add
   values, and a value this release does not know still reaches you.
-  `FAILURE_CAUSES` lists the eight causes the API documents today, and
-  `failureCause` is typed `FailureCause` or any other string.
+  `FAILURE_CAUSES` lists the seven causes the API documents today, and
+  `failureCause` is typed `FailureCause` or any other string. **Treat a
+  cause you do not know as a failure.** The seven causes are
+  `provider_refused`, `provider_unreachable`, `send_interrupted`,
+  `opted_out`, `no_send_key`, `media_unavailable` and `undelivered`.
+  `send_interrupted` means the send was interrupted before the carrier
+  confirmed it: treat the text as not sent (rarely, it may still arrive).
+  The platform never sends it again.
 - **`sentBy`** is set only for a staff reply (`source === "phone_system"`),
   and its `name` can be `null`. For a message the provider never accepted,
-  **`sentAt` and `providerMessageId` are `null` and `providerPartIds` is
-  `[]`**. The provider ids are set only on your own provider account; on any
-  other account both are `null`.
+  **`sentAt`, `providerMessageId` and `providerPartIds` are `null`**. The
+  provider ids are set only on your own provider account; on any other
+  account both are `null`. `providerPartIds` is `null` exactly when
+  `providerMessageId` is `null`, and never `[]`.
 - **On `message.received`**, `message.id` is the id
   `client.inboundMessages.get()` takes, and `receivedAt` is when it was sent.
-- **Attachment parts are described, never linked**: `media` holds
-  `MessageMediaPart`s (`contentType`, `filename`, `encoding`, `byteSize`) and
-  no file or URL.
+- **Media items are described, never linked.** On `message.received`,
+  `media` holds `InboundMessageMediaItem`s (`contentType`, `filename`,
+  `size`). On the three outbound events it holds
+  `OutboundMessageMediaItem`s (`contentType`, `size`), with no filename.
+  `size` is in bytes.
+- **A redelivery carries the values its event was built with.** An event
+  built before the API's 0.23.0 messaging change still has the old values
+  when it is delivered again: `bytes` and `encoding` on a media item (`size`
+  then reads `null`; the old members stay on `raw`), the causes
+  `outcome_unknown` and `submission_interrupted` (they arrive as plain
+  strings; treat them as `send_interrupted`), and `providerPartIds: []`
+  (reads `[]`).
 - Deliveries are at least once, and the three outbound events can arrive in
   any order. Dedupe on `event.eventId`, or on the pair (`message.id`,
   `event.type`). Never on the message id alone: that would drop the
@@ -1021,10 +1037,11 @@ const recorded = await client.messages.record({
   providerMessageId: "01JC8ZA1F5T3R8C2P6M0L4JSWQ", // your provider's id
   providerPartIds: ["01JC8ZA1F5T3R8C2P6M0L4JSWQ"], // every part; a one-part text names its own id
   sentAt: new Date("2026-10-19T15:02:44Z"),
-  mediaUrls: [], // up to 10 https links to attachments
+  mediaUrls: [], // up to 10 https links to media
   markConversationRead: false,
 });
 recorded.id, recorded.status, recorded.replayed;
+recorded.media; // each an OutboundMessageMediaItem { contentType, size }
 ```
 
 - **Staff see `"<senderLabel>: <body>"`.** A label is one line, has at
@@ -1035,20 +1052,43 @@ recorded.id, recorded.status, recorded.replayed;
   visible is left.
 - **The provider message id is the dedupe key.** No `Idempotency-Key` is
   sent. A repeat with the same id and the same `from`, `to`, `body` and
-  attachment count answers 200 with the first record (`replayed` is `true`);
-  the same id with different content is a 409.
-- **`mediaUrls` links to attachments of any type**: a picture, a contact
-  card (vCard), audio, video, a PDF or any other file, copied into the staff
-  threads as you sent it. The limits are **at most 10 attachments, at most
+  media count answers 200 with the first record (`replayed` is `true`); the
+  same id with different content is a 409.
+- **`mediaUrls` links to media of any type**: an image, a contact card
+  (vCard), audio, video, a PDF or any other file, copied into the staff
+  threads as you sent it. The limits are **at most 10 media items, at most
   10 MB each and at most 20 MB together**. The API refuses `text/plain` (put
   the text in `body`), a SMIL layout, HTML, XML, SVG and script, by the
-  declared type and by the file's first bytes, with a 422.
-- **Attachments are fetched during the call and never again**, so make new
-  presigned links for each attempt. The call can take up to 20 seconds to
-  fetch them, so `record()` waits at least 25 seconds
-  (`RECORD_MIN_TIMEOUT_MS`) whatever the client's own `timeoutMs` is.
+  declared type and by the file's first bytes, with a 422. The answer
+  describes each item in `recorded.media` by content type and size, never
+  by your link.
+- **Media is fetched during the call and never again**, so make new
+  presigned links for each attempt. The API fetches all links at once and
+  gives each one 10 seconds from the start of the call (redirects and DNS
+  lookups included), then stores the media. It ends any request at
+  30 seconds of its own time. `record()` waits at least 35 seconds
+  (`RECORD_MIN_TIMEOUT_MS`) whatever the client's own `timeoutMs` is: the
+  API's cut plus a margin, because the client's clock starts first. So you
+  always get the API's own answer. A client that gives up sooner can abandon
+  a record that is about to succeed; its retry is answered 200, with no
+  second fetch. The floor is the whole request (connect, send and wait).
+- **If any link fails, nothing is stored.** The `ApiError` names the link in
+  `error.errors[0].source.pointer` (`/data/attributes/mediaUrls/<index>`)
+  and the reason in `error.code`:
+
+  | Status | `error.code` | What happened | What to do |
+  |---|---|---|---|
+  | 422 | `media_rejected` | The link, or what it served, can never be used. | Fix the link. Do not retry it unchanged. |
+  | 504 | `media_timeout` | The link did not finish within 10 seconds of the call. | Retry after `error.retryAfter`, with a new link. |
+  | 502 | `media_unreachable` | Its host answered 5xx, refused the connection, or does not resolve. | Retry after `error.retryAfter`, with a new link. |
+  | 503 | `media_store_unavailable` | The platform could not keep the media right now. | Retry after `error.retryAfter`. |
+
+  `isRetryable()` is `true` for the last three. When your links pass 20 MB
+  together (counted after any decompression), the API stops downloading and
+  answers 422 `media_rejected` with the pointer `/data/attributes/mediaUrls`:
+  the list, not one link.
 - **Refused before any request**: an empty provider id or part-id list, a
-  `sentAt` that is not a valid `Date`, neither a body nor an attachment, more
+  `sentAt` that is not a valid `Date`, neither a body nor a media link, more
   than ten links, a link that is not `https`, a label that breaks the rule.
   A wrong type (one string where a list belongs) is a `TypeError`, every
   other refusal an `Error`. None of these is worth retrying.
@@ -1064,7 +1104,7 @@ a recorded text, but its delivery reports raise `message.delivered` and
 
 ## Read the texts sent to your numbers
 
-`client.inboundMessages` reads every text and picture message somebody sent
+`client.inboundMessages` reads every text message (SMS or MMS) somebody sent
 to one of your text-enabled numbers, newest first. It needs `numbers:read`
 or `numbers:messaging`.
 
@@ -1098,10 +1138,12 @@ if (first) {
   `pageSize`, as on every list here.
 - **`receivedAt` is when the message was sent**, and the date filters match
   it. `createdAt` is when the platform stored it.
-- **Attachments are described, never carried**: `media` holds
-  `MessageMediaPart`s (`contentType`, `filename`, `encoding`, `byteSize`) and
-  no file or URL. The platform does not keep the bytes, so ask your messaging
-  provider for the file. `body` is `null` for an MMS with no caption.
+- **Media is described, never carried**: `media` holds
+  `InboundMessageMediaItem`s (`contentType`, `filename`, `size`) and no
+  bytes or URL. `size` is in bytes; `filename` is the name the sender's
+  carrier gave the item, or `null`. The platform does not serve the bytes,
+  so ask your messaging provider for the file. `body` is `null` for an MMS
+  with no caption.
 
 ## When something is refused
 
@@ -1181,8 +1223,8 @@ caused (an unknown URL scheme, a forbidden port, a URL that does not parse),
 and for anything this package did not throw for the API — a refusal before
 any request included. Fix the request for a 400, 409 or 422 — never retry
 those unchanged. A 401, 403 or 404 can be an account setting that is fixed
-later: `messages.record()` answers 404 while recording texts is not turned on
-for the platform yet. A queue may retry those slowly, after the change.
+later, such as a missing scope. A queue may retry those slowly, after the
+change.
 
 ```ts
 import { ApiError, isRetryable } from "ringivo";
@@ -1194,8 +1236,8 @@ try {
     const wait = error instanceof ApiError ? error.retryAfter : undefined; // seconds, or undefined
     queue.retryLater(wait ?? yourBackoff(attempt));
   } else if (error instanceof ApiError && [401, 403, 404].includes(error.statusCode)) {
-    // An account setting, such as a missing scope, or recording texts not
-    // turned on yet (404): retry slowly, and alert someone to fix it.
+    // An account setting, such as a missing scope: retry slowly, and
+    // alert someone to fix it.
     queue.retryLater(yourSlowBackoff(attempt));
   } else {
     queue.giveUp(); // 400, 409, 422, or refused before sending: fix the call
@@ -1260,8 +1302,9 @@ try {
 `CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `InboundMessage`,
-`InboundMessagePage`, `MediaLink`, `MessageEvent` (each of its variants),
-`MessageMediaPart`, `MessageSender`, `OutboundMessage`, `PbxCall`,
+`InboundMessageMediaItem`, `InboundMessagePage`, `MediaLink`, `MessageEvent`
+(each of its variants), `MessageSender`, `OutboundMessage`,
+`OutboundMessageMediaItem`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
 `Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
 `WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was

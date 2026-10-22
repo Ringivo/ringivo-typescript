@@ -153,7 +153,7 @@ describe("record", () => {
           from: "+14075550142",
           to: "+13215550187",
           body: "Reminder: Rex is due for his rabies booster on Oct 24.",
-          media: [],
+          mediaUrls: [],
           senderLabel: "Appointment reminder",
           markConversationRead: false,
           alreadySent: {
@@ -197,13 +197,13 @@ describe("record", () => {
     expect(message.id).toBe("0192f0c0-5d2e-7a1b-8c3d-4e5f60718293");
   });
 
-  it("sends the attachments, the read choice and every part, and reads the parts back", async () => {
+  it("sends mediaUrls, the read choice and every part, and reads the media back", async () => {
     const calls = answering(
       201,
       recorded({
         kind: "mms",
         markConversationRead: true,
-        media: [{ contentType: "image/jpeg", filename: null, encoding: null, bytes: 40213 }],
+        media: [{ contentType: "image/jpeg", size: 40213 }],
       }),
     );
 
@@ -218,22 +218,62 @@ describe("record", () => {
 
     const attributes = JSON.parse(calls.last.body).data.attributes;
     expect(attributes.body).toBeNull();
-    expect(attributes.media).toEqual([
-      { url: "https://media.example.com/rex.jpg" },
-      { url: "https://media.example.com/card.vcf" },
+    // `mediaUrls` is a list of strings; the API answers `media` with a 422.
+    expect(attributes.mediaUrls).toEqual([
+      "https://media.example.com/rex.jpg",
+      "https://media.example.com/card.vcf",
     ]);
+    expect(attributes).not.toHaveProperty("media");
     expect(attributes.markConversationRead).toBe(true);
     expect(attributes.alreadySent.providerPartIds).toEqual(["part-1", "part-2"]);
 
-    expect(message.media).toHaveLength(1);
-    expect(message.media[0]).toMatchObject({
-      contentType: "image/jpeg",
-      filename: null,
-      encoding: null,
-      byteSize: 40213,
-    });
+    expect(message.media).toEqual([
+      {
+        contentType: "image/jpeg",
+        size: 40213,
+        raw: { contentType: "image/jpeg", size: 40213 },
+      },
+    ]);
     expect(message.markConversationRead).toBe(true);
   });
+
+  it.each([
+    [422, "media_rejected", false],
+    [504, "media_timeout", true],
+    [502, "media_unreachable", true],
+    [503, "media_store_unavailable", true],
+  ] as const)(
+    "throws a %i %s that names the link and the reason",
+    async (status, code, retryable) => {
+      server.use(
+        http.post(RECORD_URL, () =>
+          HttpResponse.json(
+            {
+              errors: [
+                { status: String(status), code, source: { pointer: "/data/attributes/mediaUrls/1" } },
+              ],
+            },
+            { status, headers: status === 422 ? {} : { "Retry-After": "5" } },
+          ),
+        ),
+      );
+
+      const error = (await client()
+        .messages.record(
+          options({
+            mediaUrls: ["https://media.example.com/a.jpg", "https://media.example.com/b.jpg"],
+          }),
+        )
+        .catch((caught: unknown) => caught)) as ApiError;
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error.statusCode).toBe(status);
+      expect(error.code).toBe(code);
+      expect(error.errors[0]?.source).toEqual({ pointer: "/data/attributes/mediaUrls/1" });
+      expect(isRetryable(error)).toBe(retryable);
+      expect(error.retryAfter).toBe(status === 422 ? undefined : 5);
+    },
+  );
 
   it("sends a sentAt with milliseconds as the UTC instant it names", async () => {
     const calls = answering(201);
@@ -288,6 +328,30 @@ describe("record", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).statusCode).toBe(409);
+    expect(isRetryable(error)).toBe(false);
+  });
+
+  it("names the list, not a link, when the media pass 20 MB together", async () => {
+    server.use(
+      http.post(RECORD_URL, () =>
+        HttpResponse.json(
+          {
+            errors: [
+              { status: "422", code: "media_rejected", source: { pointer: "/data/attributes/mediaUrls" } },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    const error = (await client()
+      .messages.record(options({ mediaUrls: ["https://media.example.com/big.mp4"] }))
+      .catch((caught: unknown) => caught)) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.code).toBe("media_rejected");
+    expect(error.errors[0]?.source).toEqual({ pointer: "/data/attributes/mediaUrls" });
     expect(isRetryable(error)).toBe(false);
   });
 
@@ -377,8 +441,8 @@ describe("what no retry can fix is refused before any request", () => {
     ["a link with backslashes", { mediaUrls: ["https:\\\\m.example.com\\a.jpg"] }, "https"],
     ["a link with no host", { mediaUrls: ["https:///a.jpg"] }, "https"],
     ["one link string", { mediaUrls: "https://m.example.com/a.jpg" }, "not one string"],
-    ["no body and no link", { body: null }, "body or at least one attachment"],
-    ["an empty body and no link", { body: "" }, "body or at least one attachment"],
+    ["no body and no link", { body: null }, "body or at least one media link"],
+    ["an empty body and no link", { body: "" }, "body or at least one media link"],
     ["a blank label", { senderLabel: "  " }, "empty"],
     ["a two-line label", { senderLabel: "Dana\nSmith" }, "one line"],
     ["a label with a line separator", { senderLabel: "Dana Smith" }, "one line"],
@@ -412,8 +476,8 @@ describe("what no retry can fix is refused before any request", () => {
 
     await client().messages.record(options({ mediaUrls: ["HTTPS://M.example.com/a.jpg"] }));
 
-    expect(JSON.parse(calls.last.body).data.attributes.media).toEqual([
-      { url: "HTTPS://M.example.com/a.jpg" },
+    expect(JSON.parse(calls.last.body).data.attributes.mediaUrls).toEqual([
+      "HTTPS://M.example.com/a.jpg",
     ]);
   });
 
@@ -534,9 +598,11 @@ describe("the contract's limits, read from the spec", () => {
     expect(label).toMatch(/\n\s+minLength: 1\n/);
   });
 
-  it("is the spec's attachment limit", () => {
-    const media = property(recordRequestSchema(), "media", 16);
-    expect(media).toMatch(new RegExp(`\\n\\s+maxItems: ${MAX_MEDIA}\\n`));
+  it("is the spec's media limit, on a list of strings", () => {
+    const mediaUrls = property(recordRequestSchema(), "mediaUrls", 16);
+    expect(mediaUrls).toMatch(new RegExp(`\\n\\s+maxItems: ${MAX_MEDIA}\\n`));
+    expect(mediaUrls).toMatch(/\n\s+items: \{ type: string,/);
+    expect(recordRequestSchema()).not.toMatch(/\n {16}media:/);
   });
 
   it("is the spec's provider id limits", () => {
@@ -548,18 +614,59 @@ describe("the contract's limits, read from the spec", () => {
     expect(partIds).toContain(`items: { type: string, maxLength: ${MAX_PROVIDER_ID_LENGTH} }`);
   });
 
-  it("documents the attachment sizes the spec publishes", () => {
+  it("documents the media sizes the spec publishes", () => {
     const flat = SPEC.replace(/\s+/g, " ");
-    expect(flat).toContain("must be an attachment of at most 10 MB");
-    expect(flat).toContain("at most 20 MB of attachments together");
+    expect(flat).toContain("must be a media item of at most 10 MB");
+    expect(flat).toContain("at most 20 MB of media together");
+    expect(flat).toContain("**each must finish within 10 seconds of the call**");
     expect(flat).toContain("`text/plain` is refused");
+    // Past 20 MB together the refusal names the list, not one link.
+    expect(flat).toContain(
+      "refuse the record with `media_rejected` and `source.pointer` `/data/attributes/mediaUrls` — the list, not one link",
+    );
 
     const documented = readFileSync(
       fileURLToPath(new URL("./messages.ts", import.meta.url)),
       "utf8",
     ).replace(/\s+\*\s+/g, " ");
     expect(documented).toContain(
-      "at most 10 attachments, at most 10 MB each and at most 20 MB together",
+      "at most 10 media items, at most 10 MB each and at most 20 MB together",
     );
+    expect(documented).toContain("each within 10 seconds of the call");
+    expect(documented).toContain("the pointer is the list itself, `/data/attributes/mediaUrls`");
+  });
+
+  it("is the timeout the spec tells a caller to set, plus a 5-second margin", () => {
+    // The spec's number is the API's own cut; this client's clock starts
+    // before the API's, so the floor sits above it. A spec that moves the
+    // number fails here.
+    const flat = SPEC.replace(/\s+/g, " ");
+    const found = /\*\*Set your client timeout to (\d+) seconds\*\*/.exec(flat);
+    expect(found, "the spec no longer says what timeout to set; read it again").not.toBeNull();
+    const documentedMs = Number(found?.[1]) * 1000;
+    expect(documentedMs).toBe(30_000);
+    expect(RECORD_MIN_TIMEOUT_MS).toBeGreaterThanOrEqual(documentedMs + 5_000);
+    expect(RECORD_MIN_TIMEOUT_MS).toBe(35_000);
+  });
+
+  it.each([
+    [422, "media_rejected"],
+    [504, "media_timeout"],
+    [502, "media_unreachable"],
+    [503, "media_store_unavailable"],
+  ])("documents %i %s as an ErrorCode on its status", (status, code) => {
+    const errorCodes = SPEC.slice(
+      SPEC.indexOf("\n    ErrorCode:\n"),
+      SPEC.indexOf("\n    ErrorDocument:\n"),
+    );
+    expect(errorCodes).toMatch(new RegExp(`^ {8}- ${code}$`, "m"));
+
+    const operation = SPEC.slice(
+      SPEC.indexOf("\n  /v1/outbound-messages:\n"),
+      SPEC.indexOf("\n  /v1/", SPEC.indexOf("\n  /v1/outbound-messages:\n") + 1),
+    );
+    const response = operation.slice(operation.indexOf(`\n        '${status}':\n`));
+    const description = response.slice(0, response.indexOf("\n        '", 1));
+    expect(description).toContain(`\`${code}\``);
   });
 });
