@@ -74,7 +74,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import { SignatureVerificationError } from "./errors.js";
-import { type MessageEvent, messageEventFromJson } from "./models.js";
+import { type FailureCause, type MessageEvent, messageEventFromJson } from "./models.js";
 
 /**
  * The events about a message somebody sent TO one of your numbers. Route on
@@ -92,6 +92,22 @@ export const OUTBOUND_MESSAGE_EVENT_TYPES: readonly string[] = Object.freeze([
   "message.delivered",
   "message.failed",
 ]);
+
+/**
+ * The `failure.cause` values the API documents for `message.failed` — the
+ * members of `FailureCause`. More can be added: a cause not in this list
+ * still reaches you on `failureCause`, and is a failure all the same.
+ */
+export const FAILURE_CAUSES: readonly FailureCause[] = Object.freeze([
+  "provider_refused",
+  "provider_unreachable",
+  "outcome_unknown",
+  "submission_interrupted",
+  "opted_out",
+  "no_send_key",
+  "media_unavailable",
+  "undelivered",
+] as const);
 
 /**
  * Read a decoded `message.received`, `message.sent`, `message.delivered` or

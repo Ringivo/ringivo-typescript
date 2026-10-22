@@ -69,6 +69,7 @@ import {
   transcriptFromResource,
   transcriptsFromDocument,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /** What `pbx.callRecords.list()` accepts. Every member narrows the log. */
 export interface ListCallRecordsOptions {
@@ -677,10 +678,7 @@ export class Pbx {
  * send.
  */
 function idParam(value: string, refusal: string): string {
-  if (!value) {
-    throw new Error(refusal);
-  }
-  return value;
+  return pathSegment(value, refusal);
 }
 
 /**

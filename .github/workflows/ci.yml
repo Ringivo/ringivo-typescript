@@ -22,3 +22,21 @@ jobs:
       # requirement and not a preference.
       - run: npm run build
       - run: npm test
+  # The same gates on Node 20, the oldest line `engines` allows: isRetryable()
+  # reads the shape of the errors Node's own fetch throws, and that shape
+  # belongs to the runtime. A SEPARATE JOB rather than a matrix on `test`, on
+  # purpose: the `main` ruleset requires the check named exactly `test`, and a
+  # matrix would rename it to `test (22)`, which nothing could then satisfy —
+  # every pull request and every spec-sync landing would block.
+  test-node20:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test

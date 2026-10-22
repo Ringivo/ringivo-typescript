@@ -16,92 +16,12 @@ npm install ringivo
 Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
 ships both ES modules and CommonJS, with types for each.
 
-## Before you install 0.12.0: the API's v1 naming cleanup
-
-The API renamed its last snake_case names on the resource surface to
-camelCase, with no alias. The ones this client touches are four `faxes`
-filters, the `faxAccountUsers` filter, two `webhookEndpoints` filters, the
-`webhookDeliveries` filter, the send acknowledgement's `clientReference` and
-`createdAt`, and the media link's `expiresAt` and `byteSize`. **Your code does
-not change:** the options and fields already had these names.
-
-**The compatibility code is gone** (see CHANGELOG.md). 0.12.x to 0.16.x
-asked with the new filter names and, when an API from before the rename
-refused them with a 400, asked once more with the old names; they also read
-the old snake_case and kebab-case response members. This release sends and
-reads the camelCase names only: an API from before the rename answers that
-400 to you. `faxes.send()`'s `coverPage` takes `toName` and `fromName`; a
-snake_case `to_name` is sent as given, not renamed. `raw` and anything you
-read through `client.request()` carry whatever the API sent.
-
-## Before you install 0.11.0
-
-**0.11.0 breaks the whole `client.pbx` surface, on purpose.** The API renamed
-it, and this release catches up in one step:
-
-- **`pbx.users` is `pbx.subscribers`.** The API path `/v1/pbx/users` is gone,
-  with no alias. `PbxUser`/`PbxUserPage`/`PbxUsers`/`ListPbxUsersOptions` are
-  `PbxSubscriber`/`PbxSubscriberPage`/`PbxSubscribers`/
-  `ListPbxSubscribersOptions`, and a page's rows are `page.subscribers`. The
-  list now returns machines too — auto attendants, queues, AI agents — so a
-  people-only list needs `{ kind: "user" }`. See
-  [Who is on the phone system](#who-is-on-the-phone-system-and-what-is-registered).
-- **The links back to a subscriber moved:** `PbxDevice.pbxUserId` is
-  `subscriberId`, `CallRecord.fromPbxUserId`/`toPbxUserId` are
-  `fromSubscriberId`/`toSubscriberId`, and `user` on `devices.list()` and
-  `callRecords.list()` is `subscriber`. `user` on `subscribers.list()` is still
-  the extension.
-- **`CallRecord` is the API's one clean shape.** `vendorType`, `fromUser`,
-  `fromUri`, `toUser`, `toUri`, `dialed`, `byUser`, `termUser`, `tag`,
-  `duration` and `talkTime` are gone. It now carries `fromNumber`, `toNumber`
-  and `dialedNumber` (E.164 or `null`), `fromExtension`, `routedByExtension`,
-  `answeringExtension`, `durationSeconds`, `talkSeconds`, `releaseCode`,
-  `releaseText`, `tenantId` and `territory`, plus an extended tier you ask for
-  with `fields`. See [Call records](#call-records-subscribers-devices-and-click-to-dial).
-- **The `direction` filter word `on-net` is `internal`** (a call that stayed
-  inside one domain).
-- **The wire moved to camelCase.** 0.10.x read the old kebab-case member
-  names, which the current API no longer sends. Nothing to change in your code
-  for this one beyond the renames above.
-
-The scopes are unchanged: `pbx-users:read` still covers subscribers and their
-devices.
-
-## Before you install 0.8.0
-
-**0.8.0 carries a webhook break you did not ask for.** It is the release that
-first ships a change to `client.webhookEndpoints`: `create()` now **requires**
-`events` and refuses an empty list, and `update()` never sends `null` — an
-endpoint that named no events would be subscribed to every event type the
-platform ever adds. Both are compile errors rather than 422s, so a typed
-caller finds out at build time; see [Webhook endpoints](#webhook-endpoints).
-Nothing else in 0.8.0 changes an existing call — the rest is new: the
-`client.pbx` surface and `client.customers`.
-
-## Before you install 0.4.x
-
-**0.2.x has no future.** It mints at `POST /v1/integration/token`, and that
-endpoint is **deleted** on the platform — not deprecated, not serving out a
-migration window. The day your provider ships that change, every 0.2.x call
-fails at the token exchange. There is no version left to wait on.
-
-**0.4.x needs a provider whose platform mints at `POST /oauth/token`.** Ask
-your provider whether they have made that change.
-
-This matters more than a version bump usually does, because an older platform
-will not tell you no. That path already exists there, serving a different
-population: it ignores `tenant` and `customer`, and answers **200** with a
-token that carries no tenant at all. Nothing fails until you spend it, and then
-every call is refused with a 403 that says nothing about the mint that caused
-it. A version you cannot use looks exactly like a credential problem.
-
-**Name your `tenant`.** It was optional in 0.3.0 and is required now, in the
-type and at construction — see below for what changed and why.
-
 **Webhook verification needs Node.** `verifyWebhook()` uses `node:crypto`,
 so it runs on a server. That is where it belongs: the signing secret is a
 server-side credential, and a `whsec_` sent to a browser is a `whsec_` that
 has been published.
+
+Upgrade notes and breaking changes: [CHANGELOG.md](https://github.com/Ringivo/ringivo-typescript/blob/main/CHANGELOG.md).
 
 ## Your base URL, your tenant, your scopes
 
@@ -316,11 +236,9 @@ await client.request(
 );
 ```
 
-Send these camelCase names. `client.request()` does not go through the
-filter-name bridge, and the API refuses the old `target_type`/`fax_account`
-body with a 422 rather than routing the number to the PBX. **The body is not
-portable across the API's v1 naming cleanup** (see "Before you install
-0.12.0" above): an API that has not taken the rename reads only
+Send these camelCase names. The API refuses the old
+`target_type`/`fax_account` body with a 422 rather than routing the number to the PBX. **The body is not
+portable across the API's v1 naming cleanup** (see "0.12.0" in CHANGELOG.md): an API that has not taken the rename reads only
 `target_type`/`fax_account`, ignores `targetType`, and routes the number to
 the customer's PBX with a 204. Check where the number routes after the call
 if you cannot be sure which API you are talking to.
@@ -650,6 +568,8 @@ app.post("/hooks/messages", (request, response) => {
   without (for example, no `message.providerMessageId`).
 - **`source` and `failureCause` are strings, not enums**: the API can add
   values, and a value this release does not know still reaches you.
+  `FAILURE_CAUSES` lists the eight causes the API documents today, and
+  `failureCause` is typed `FailureCause` or any other string.
 - **`sentBy`** is set only for a staff reply (`source === "phone_system"`),
   and its `name` can be `null`. For a message the provider never accepted,
   **`sentAt` and `providerMessageId` are `null` and `providerPartIds` is
@@ -1333,6 +1253,7 @@ try {
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 | `parseMessageEvent(payload)` | — | A decoded `message.*` body as its own `MessageEvent` variant, told apart by `type`. Never throws. |
 | `INBOUND_MESSAGE_EVENT_TYPES`, `OUTBOUND_MESSAGE_EVENT_TYPES` | — | The message event types by direction, for routing. |
+| `FAILURE_CAUSES` | — | The `failure.cause` values the API documents for `message.failed`. |
 | `senderLabel(text)` | — | Any text as a label that keeps the label rule. |
 | `isRetryable(error)` | — | Whether the API's contract allows the same call again. |
 

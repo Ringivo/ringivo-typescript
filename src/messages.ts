@@ -312,10 +312,22 @@ function utcInstant(value: Date): string {
   return value.toISOString().replace(/\.000Z$/, "Z");
 }
 
+/**
+ * Is this an `https` link with a host, as Python's `urlsplit()` reads one?
+ *
+ * The scheme and `//` are checked on the STRING, not on a parsed `URL`. The
+ * WHATWG parser is lenient where the API is not: it reads `https:example.com`
+ * and `https:\\example.com` as `https://example.com/`, but the string sent is
+ * the caller's, and the API refuses it with a 422. Python's
+ * `urlsplit(link).netloc` is empty for both, so both are refused before the
+ * request — here as there. The parse then refuses what is not a URL at all.
+ */
 function isHttpsLink(value: string): boolean {
+  if (!/^https:\/\/[^/?#]/i.test(value)) {
+    return false;
+  }
   try {
-    const url = new URL(value);
-    return url.protocol === "https:" && url.hostname !== "";
+    return new URL(value).hostname !== "";
   } catch {
     return false;
   }

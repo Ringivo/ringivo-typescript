@@ -49,6 +49,7 @@ import {
   isRecord,
   mediaLinkFromJson,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /**
  * The query the spec publishes for `GET /v1/faxes`.
@@ -411,10 +412,7 @@ async function downloadUnauthenticated(url: string, timeoutMs: number): Promise<
  * trusting the library to keep doing it.
  */
 function faxIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a fax id is required");
-  }
-  return value;
+  return pathSegment(value, "a fax id is required");
 }
 
 /**

@@ -371,6 +371,11 @@ describe("what no retry can fix is refused before any request", () => {
     ],
     ["an http link", { mediaUrls: ["http://m.example.com/a.jpg"] }, "https"],
     ["a link that is no URL", { mediaUrls: ["https//m.example.com/a.jpg"] }, "https"],
+    // WHATWG `URL` reads both of these as https://m.example.com/; Python's
+    // `urlsplit()` finds no host in either, and neither does this.
+    ["a link with no slashes", { mediaUrls: ["https:m.example.com/a.jpg"] }, "https"],
+    ["a link with backslashes", { mediaUrls: ["https:\\\\m.example.com\\a.jpg"] }, "https"],
+    ["a link with no host", { mediaUrls: ["https:///a.jpg"] }, "https"],
     ["one link string", { mediaUrls: "https://m.example.com/a.jpg" }, "not one string"],
     ["no body and no link", { body: null }, "body or at least one attachment"],
     ["an empty body and no link", { body: "" }, "body or at least one attachment"],
@@ -400,6 +405,16 @@ describe("what no retry can fix is refused before any request", () => {
     await expect(client().messages.record(options(overrides))).rejects.toThrow(message);
 
     expect(calls.count).toBe(0);
+  });
+
+  it("accepts an https link whatever the case of its scheme, and sends it as given", async () => {
+    const calls = answering(201);
+
+    await client().messages.record(options({ mediaUrls: ["HTTPS://M.example.com/a.jpg"] }));
+
+    expect(JSON.parse(calls.last.body).data.attributes.media).toEqual([
+      { url: "HTTPS://M.example.com/a.jpg" },
+    ]);
   });
 
   it("throws a TypeError for a wrong type and an Error for a wrong value, never an ApiError", async () => {

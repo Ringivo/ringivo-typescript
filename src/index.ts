@@ -122,6 +122,7 @@ export type {
   FaxAccountUser,
   FaxAccountUserPage,
   FaxDocument,
+  FailureCause,
   FaxPage,
   InboundMessage,
   InboundMessagePage,
@@ -170,6 +171,7 @@ export type {
 } from "./webhookEndpoints.js";
 export {
   DEFAULT_TOLERANCE_SECONDS,
+  FAILURE_CAUSES,
   INBOUND_MESSAGE_EVENT_TYPES,
   OUTBOUND_MESSAGE_EVENT_TYPES,
   SIGNATURE_HEADER,

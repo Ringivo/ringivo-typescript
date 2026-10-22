@@ -24,11 +24,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  FAILURE_CAUSES,
   INBOUND_MESSAGE_EVENT_TYPES,
   OUTBOUND_MESSAGE_EVENT_TYPES,
   parseMessageEvent,
 } from "./index.js";
-import type { MessageEvent, OutboundMessageEventData } from "./index.js";
+import type { FailureCause, MessageEvent, OutboundMessageEventData } from "./index.js";
 
 const MESSAGE_RECEIVED = {
   eventId: "0198c4a1-e7b3-7a41-9c62-5f0d8a1b2c3d",
@@ -133,6 +134,69 @@ describe("the routing lists", () => {
   it("routes message.received inbound only", () => {
     expect(INBOUND_MESSAGE_EVENT_TYPES.includes(MESSAGE_RECEIVED.type)).toBe(true);
     expect(OUTBOUND_MESSAGE_EVENT_TYPES.includes(MESSAGE_RECEIVED.type)).toBe(false);
+  });
+});
+
+describe("the failure causes", () => {
+  /** The causes `MessageFailedEventData.failure.cause` documents in the vendored spec. */
+  function documentedCauses(): string[] {
+    const spec = readFileSync(
+      fileURLToPath(new URL("../spec/openapi.yaml", import.meta.url)),
+      "utf8",
+    );
+    const start = spec.indexOf("\n    MessageFailedEventData:\n");
+    expect(start).toBeGreaterThan(-1);
+    const block = spec.slice(start, spec.indexOf("\n    MessageSentEvent:\n", start));
+    const listed = block.split("One of", 2)[1]?.split("— see", 1)[0] ?? "";
+    return [...listed.matchAll(/`([a-z_]+)`/g)].map((match) => match[1] ?? "");
+  }
+
+  it("are the eight causes the spec documents", () => {
+    const documented = documentedCauses();
+
+    expect(documented, "the spec's list moved; read it again").toHaveLength(8);
+    expect([...FAILURE_CAUSES].sort()).toEqual([...documented].sort());
+  });
+
+  it("are every member of FailureCause, and nothing else", () => {
+    // A `Record` over the union must name every member, or this does not
+    // compile; its keys are then held equal to the runtime list.
+    const every: Record<FailureCause, true> = {
+      provider_refused: true,
+      provider_unreachable: true,
+      outcome_unknown: true,
+      submission_interrupted: true,
+      opted_out: true,
+      no_send_key: true,
+      media_unavailable: true,
+      undelivered: true,
+    };
+
+    expect([...FAILURE_CAUSES].sort()).toEqual(Object.keys(every).sort());
+    expect(Object.isFrozen(FAILURE_CAUSES)).toBe(true);
+  });
+
+  it.each([...FAILURE_CAUSES])("reads %s as itself", (cause) => {
+    const event = parseMessageEvent({ ...MESSAGE_FAILED, data: { ...SENT_DATA, failure: { cause } } });
+
+    if (event.type !== "message.failed") {
+      throw new Error("expected message.failed");
+    }
+    expect(event.message.failureCause).toBe(cause);
+  });
+
+  it("still reads a cause this release does not know, as a plain string", () => {
+    const event = parseMessageEvent({
+      ...MESSAGE_FAILED,
+      data: { ...SENT_DATA, failure: { cause: "carrier_on_fire" } },
+    });
+
+    if (event.type !== "message.failed") {
+      throw new Error("expected message.failed");
+    }
+    const cause: string | null = event.message.failureCause;
+    expect(cause).toBe("carrier_on_fire");
+    expect((FAILURE_CAUSES as readonly string[]).includes(cause ?? "")).toBe(false);
   });
 });
 

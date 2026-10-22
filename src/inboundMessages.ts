@@ -41,6 +41,7 @@ import {
   inboundMessagePageFromDocument,
   isRecord,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /** What `inboundMessages.list()` accepts. Every member narrows the collection. */
 export interface ListInboundMessagesOptions {
@@ -128,10 +129,7 @@ export class InboundMessages {
  * collapse the path into the collection, which answers 200 with a page.
  */
 function inboundMessageIdParam(value: string): string {
-  if (!value) {
-    throw new Error("an inbound message id is required");
-  }
-  return value;
+  return pathSegment(value, "an inbound message id is required");
 }
 
 function dataObject(payload: unknown): RawJson {

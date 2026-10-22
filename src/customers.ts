@@ -50,6 +50,7 @@ import {
   customerPageFromDocument,
   isRecord,
 } from "./models.js";
+import { pathSegment } from "./pathSegment.js";
 
 /** What `customers.list()` accepts. Every member narrows the collection. */
 export interface ListCustomersOptions {
@@ -138,10 +139,7 @@ export class Customers {
  * with a page a caller would read as the one row they asked for.
  */
 function customerIdParam(value: string): string {
-  if (!value) {
-    throw new Error("a customer id is required");
-  }
-  return value;
+  return pathSegment(value, "a customer id is required");
 }
 
 function dataObject(payload: unknown): RawJson {

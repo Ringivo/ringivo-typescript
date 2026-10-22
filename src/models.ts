@@ -1715,17 +1715,33 @@ export interface OutboundMessageEventData {
 }
 
 /**
+ * Why a sent message did not reach its recipient: the `failure.cause` of a
+ * `message.failed` event. These are the causes the API documents today
+ * (`FAILURE_CAUSES` lists them at runtime). More can be added, so
+ * `MessageFailedEventData.failureCause` also accepts any other string: a
+ * cause this release does not know still arrives. Treat it as a failure.
+ */
+export type FailureCause =
+  | "provider_refused"
+  | "provider_unreachable"
+  | "outcome_unknown"
+  | "submission_interrupted"
+  | "opted_out"
+  | "no_send_key"
+  | "media_unavailable"
+  | "undelivered";
+
+/**
  * The message `message.failed` carries: the sent message's members, plus why
  * it did not reach its recipient.
  *
- * `failureCause` is read from `failure.cause`: `provider_refused`,
- * `provider_unreachable`, `outcome_unknown`, `submission_interrupted`,
- * `opted_out`, `no_send_key`, `media_unavailable` or `undelivered`. It is a
- * plain string, not an enum — more causes can be added, so treat one you do
- * not know as a failure.
+ * `failureCause` is read from `failure.cause`. It is a `FailureCause`, or a
+ * string this release does not know yet — more causes can be added, so treat
+ * one you do not know as a failure. (`string & {}` keeps the known causes in
+ * an editor's completion list while still accepting any string.)
  */
 export interface MessageFailedEventData extends OutboundMessageEventData {
-  readonly failureCause: string | null;
+  readonly failureCause: FailureCause | (string & {}) | null;
 }
 
 /** What every message event carries besides its type and its message. */
@@ -1733,7 +1749,11 @@ interface MessageEventEnvelope {
   /** The delivery's own id. Dedupe on it: delivery is at least once. */
   readonly eventId: string | null;
   readonly occurredAt: Date | null;
-  /** The whole decoded body, exactly as it was handed to the parser. */
+  /**
+   * The whole decoded body, exactly as it was handed to the parser — or `{}`
+   * when what was handed over was not a JSON object (null, a string, an
+   * array, a number).
+   */
   readonly raw: RawJson;
 }
 
