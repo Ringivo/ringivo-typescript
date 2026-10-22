@@ -3115,12 +3115,14 @@ export interface webhooks {
          *     - `provider_unreachable` — we could not reach the provider. Nothing was sent.
          *     - `outcome_unknown` — the provider's answer was lost, so the message may or may not have
          *       left. We never send it again, because a second try could text the person twice.
+         *     - `submission_interrupted` — our process stopped while it was sending the message, so it
+         *       may or may not have left. We never send it again, for the same reason.
          *     - `opted_out` — the recipient opted out of texts from this number. A reply typed in the
          *       phone system to that person is refused and raises this event with `source`
          *       `phone_system`; a queued message whose recipient opted out before it was sent raises it
          *       too. Nothing was sent.
          *     - `no_send_key`, `media_unavailable` — we stopped it after we accepted it: the account
-         *       holds no key to send with, or a picture could not be read. Nothing was sent.
+         *       holds no key that we can send with, or a picture could not be read. Nothing was sent.
          *     - `undelivered` — the recipient's carrier reported that it did not take the message.
          *       `status` is then `undelivered`; for every other cause it is `failed`.
          *
@@ -5320,9 +5322,9 @@ export interface components {
             failure: {
                 /**
                  * @description Why the message did not reach its recipient. One of `provider_refused`,
-                 *     `provider_unreachable`, `outcome_unknown`, `opted_out`, `no_send_key`,
-                 *     `media_unavailable` or `undelivered` — see the `message.failed` webhook. Treat
-                 *     a value you do not know as a failure: more can be added.
+                 *     `provider_unreachable`, `outcome_unknown`, `submission_interrupted`, `opted_out`,
+                 *     `no_send_key`, `media_unavailable` or `undelivered` — see the `message.failed`
+                 *     webhook. Treat a value you do not know as a failure: more can be added.
                  * @example undelivered
                  */
                 cause: string;
