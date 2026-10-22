@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased — Breaking
+## 0.23.0 (2026-10-22) — Breaking
 
 These removals are part of one clean breaking release (0.23.0). The package
 no longer carries code for the API's v1 naming cleanup.
@@ -61,7 +61,7 @@ no longer carries code for the API's v1 naming cleanup.
     the list, `/data/attributes/mediaUrls`, not at one link. The record no
     longer answers 404, or 429 for media in flight.
 
-## Unreleased — Added
+## 0.23.0 (2026-10-22) — Added
 
 - **Text messaging, at parity with the Python SDK.**
   `client.messages.record()` records a text your own system already sent;
@@ -84,7 +84,7 @@ no longer carries code for the API's v1 naming cleanup.
   other string: more causes can be added.
 - **`client.request(request, { timeoutMs })`**: a timeout for one request.
 
-## Unreleased — Fixed
+## 0.23.0 (2026-10-22) — Fixed
 
 - **An id of `"."` or `".."` is refused before any request**, on every
   method that takes one, as an empty id already was. URL parsing resolves
