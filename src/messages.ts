@@ -40,8 +40,11 @@
  * reason in `code`:
  *
  * - 422 `media_rejected`: the link or what it served can never be used. Fix
- *   the link; do not retry it unchanged.
- * - 504 `media_timeout`: the link did not finish within 10 seconds.
+ *   the link; do not retry it unchanged. When your links pass 20 MB together
+ *   (counted after any decompression), the API stops downloading and the
+ *   pointer is the list itself, `/data/attributes/mediaUrls`, not one link.
+ * - 504 `media_timeout`: the link did not finish within 10 seconds of the
+ *   call (its redirects and DNS lookups included).
  * - 502 `media_unreachable`: its host answered 5xx, refused the connection,
  *   or does not resolve.
  * - 503 `media_store_unavailable`: the platform could not keep the media
@@ -75,7 +78,7 @@
  *
  * -- THE TIMEOUT ------------------------------------------------------------
  * The call fetches your media before it answers: all links at once, each
- * within 10 seconds, and then stores up to 20 MB. The API ends any request
+ * within 10 seconds of the call, and then stores up to 20 MB. The API ends any request
  * at 30 seconds of its own time. A client that gives up first can abandon a
  * call that was about to succeed. Its retry is then answered 200 (the API
  * looks for a repeat before it fetches anything), but the wait was wasted.
@@ -119,7 +122,7 @@ export const MAX_PROVIDER_ID_LENGTH = 128;
 /**
  * The shortest timeout `record()` uses, in milliseconds: the API's own cut
  * plus a margin. The API fetches every media link at once, each within 10
- * seconds, stores the media, all before it answers, and ends any request at
+ * seconds of the call, stores the media, all before it answers, and ends any request at
  * 30 seconds. The floor adds 5 seconds to that cut, because this client's
  * clock starts before the API's.
  */
@@ -148,7 +151,7 @@ export interface RecordMessageOptions {
    * Up to ten `https` links to the media you sent, in order — any type but
    * plain text, at most 10 MB each and 20 MB together. Make NEW presigned
    * links for each attempt: they are all fetched at once during this call,
-   * each within 10 seconds, and never again.
+   * each within 10 seconds of the call, and never again.
    */
   mediaUrls?: readonly string[];
   /**

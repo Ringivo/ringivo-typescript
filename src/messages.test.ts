@@ -331,6 +331,30 @@ describe("record", () => {
     expect(isRetryable(error)).toBe(false);
   });
 
+  it("names the list, not a link, when the media pass 20 MB together", async () => {
+    server.use(
+      http.post(RECORD_URL, () =>
+        HttpResponse.json(
+          {
+            errors: [
+              { status: "422", code: "media_rejected", source: { pointer: "/data/attributes/mediaUrls" } },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    const error = (await client()
+      .messages.record(options({ mediaUrls: ["https://media.example.com/big.mp4"] }))
+      .catch((caught: unknown) => caught)) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.code).toBe("media_rejected");
+    expect(error.errors[0]?.source).toEqual({ pointer: "/data/attributes/mediaUrls" });
+    expect(isRetryable(error)).toBe(false);
+  });
+
   it.each([429, 503])("throws a %i with Retry-After, which is retryable", async (status) => {
     server.use(
       http.post(RECORD_URL, () =>
@@ -594,8 +618,12 @@ describe("the contract's limits, read from the spec", () => {
     const flat = SPEC.replace(/\s+/g, " ");
     expect(flat).toContain("must be a media item of at most 10 MB");
     expect(flat).toContain("at most 20 MB of media together");
-    expect(flat).toContain("**each must finish within 10 seconds**");
+    expect(flat).toContain("**each must finish within 10 seconds of the call**");
     expect(flat).toContain("`text/plain` is refused");
+    // Past 20 MB together the refusal names the list, not one link.
+    expect(flat).toContain(
+      "refuse the record with `media_rejected` and `source.pointer` `/data/attributes/mediaUrls` — the list, not one link",
+    );
 
     const documented = readFileSync(
       fileURLToPath(new URL("./messages.ts", import.meta.url)),
@@ -604,7 +632,8 @@ describe("the contract's limits, read from the spec", () => {
     expect(documented).toContain(
       "at most 10 media items, at most 10 MB each and at most 20 MB together",
     );
-    expect(documented).toContain("each within 10 seconds");
+    expect(documented).toContain("each within 10 seconds of the call");
+    expect(documented).toContain("the pointer is the list itself, `/data/attributes/mediaUrls`");
   });
 
   it("is the timeout the spec tells a caller to set, plus a 5-second margin", () => {

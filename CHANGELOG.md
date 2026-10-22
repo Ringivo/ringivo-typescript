@@ -50,14 +50,16 @@ no longer carries code for the API's v1 naming cleanup.
     still arrive).
   - `providerPartIds` is `null`, not `[]`, for a message the provider never
     accepted.
-  - The record call fetches all media links at once, each within 10 seconds,
-    and the API ends any request at 30 seconds of its own time.
+  - The record call fetches all media links at once, each within 10 seconds
+    of the call, and the API ends any request at 30 seconds of its own time.
     `record()` waits at least 35 seconds (`RECORD_MIN_TIMEOUT_MS`): a
     5-second margin, because the client's clock starts first. The floor is
     the whole request; in the Python client it is the wait for the answer.
   - A media link that fails has its own `code`: 422 `media_rejected`, 504
     `media_timeout`, 502 `media_unreachable`, 503 `media_store_unavailable`.
-    The record no longer answers 404, or 429 for media in flight.
+    When the links pass 20 MB together, the 422 `media_rejected` points at
+    the list, `/data/attributes/mediaUrls`, not at one link. The record no
+    longer answers 404, or 429 for media in flight.
 
 ## Unreleased — Added
 
