@@ -190,15 +190,47 @@ describe("get", () => {
 
   it("reads the endpoint linkage the spec says every read carries", () => {
     // The API sends `relationships.endpoint.data` on every read of this
-    // resource, with no `links`. The fixtures above are that shape; this pins
-    // the spec's own word for it, so the day it changes is a failing test.
+    // resource, with no `links`: the relationship has its own shape, not
+    // `RelationshipToOne`. The fixtures above are that shape; this pins the
+    // spec's, so the day it changes is a failing test.
     const block = SPEC.slice(
       SPEC.indexOf("\n    WebhookTestDeliveryResource:\n"),
       SPEC.indexOf("\n    WebhookTestDeliveryDocumentResponse:\n"),
     );
-    expect(block).toContain("`data` is always present");
-    expect(block).toContain("there are no `links`");
+    expect(block).toContain("`data` is ALWAYS present");
+    expect(block).toContain("required: [data]");
+    expect(block).not.toContain("RelationshipToOne'");
     expect(JSON.stringify(testResource())).not.toContain("links");
+
+    // The compile-time half: `data` is required, non-null, and an identifier
+    // with exactly `type` and `id`; the relationship has no other member.
+    // `npm run typecheck` fails on the first difference.
+    type Endpoint = NonNullable<
+      NonNullable<components["schemas"]["WebhookTestDeliveryResource"]["relationships"]>["endpoint"]
+    >;
+    type Identifier = components["schemas"]["ResourceIdentifier"];
+    const dataIsIdentifier: [Endpoint["data"]] extends [Identifier]
+      ? [Identifier] extends [Endpoint["data"]]
+        ? true
+        : false
+      : false = true;
+    const onlyData: [keyof Endpoint] extends ["data"]
+      ? ["data"] extends [keyof Endpoint]
+        ? true
+        : false
+      : false = true;
+    const identifierKeys: [keyof Identifier] extends ["type" | "id"]
+      ? ["type" | "id"] extends [keyof Identifier]
+        ? true
+        : false
+      : false = true;
+    const required: undefined extends Endpoint["data"] ? false : true = true;
+    expect([dataIsIdentifier, onlyData, identifierKeys, required]).toEqual([
+      true,
+      true,
+      true,
+      true,
+    ]);
   });
 
   it("reads no endpoint rather than crashing when a body has no relationships", async () => {
