@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased — Added
+## 0.24.0 (2026-10-23) — Added
 
 - **`pbx.subscribers.call()` sends an `Idempotency-Key`.** The API is about
   to require the header on click-to-dial and to refuse a call without it
@@ -19,7 +19,7 @@
   Migration: none, unless you build `PbxCall` objects yourself; the member
   is new.
 
-## Unreleased — Changed
+## 0.24.0 (2026-10-23) — Changed
 
 - **`isRetryable()` is `true` for a 409 `idempotency_key_in_use`.** The API
   is about to answer that 409 when a request with the same
