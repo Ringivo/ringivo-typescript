@@ -310,6 +310,32 @@ describe("isRetryable", () => {
     expect(isRetryable(apiError(status))).toBe(false);
   });
 
+  it("retries a 409 idempotency_key_in_use, which asks for the same key again", async () => {
+    // The first request with this `Idempotency-Key` still runs. The API's own
+    // answer says to retry after `Retry-After` WITH THE SAME KEY to get the
+    // first request's result — a new key could do the act twice. So "try
+    // this call again, unchanged" is exactly the contract.
+    const response = new Response(
+      JSON.stringify({ errors: [{ status: "409", code: "idempotency_key_in_use" }] }),
+      { status: 409, headers: { "Content-Type": "application/vnd.api+json", "Retry-After": "15" } },
+    );
+    const error = (await throwForResponse(response).catch((caught: unknown) => caught)) as ApiError;
+
+    expect(isRetryable(error)).toBe(true);
+    expect(error.retryAfter).toBe(15);
+  });
+
+  it.each(["fax_account_suspended", "recording_audio_missing", "idempotency_key_reused", "conflict"])(
+    "never retries any other 409 unchanged (%s)",
+    async (code) => {
+      // Only the one code is carved out: these answer the same however often
+      // they are sent.
+      const error = await fold({ errors: [{ status: "409", code }] }, 409);
+
+      expect(isRetryable(error)).toBe(false);
+    },
+  );
+
   it("does not retry a refused credential", () => {
     expect(isRetryable(new AuthenticationError("HTTP 401", { statusCode: 401 }))).toBe(false);
   });

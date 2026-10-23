@@ -1857,6 +1857,32 @@ describe("subscribers.call", () => {
     expect(calls.last.body).not.toContain("idempotencyKey");
   });
 
+  it("sends an empty key as given rather than replacing it", async () => {
+    // AN EMPTY KEY IS SENT AS GIVEN, not swapped for a fresh one. The API
+    // reads a blank key as a refusal (400 `idempotency_key_required`), never
+    // as "no key"; a retry key that came out blank — a column defaulting to
+    // "" — must fail loudly, not turn into a new key that does the act again.
+    // The Python client does the same.
+    const calls = new Calls();
+    server.use(
+      http.post(PLACE_CALL_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json(
+          { errors: [{ status: "400", code: "idempotency_key_required" }] },
+          { status: 400 },
+        );
+      }),
+    );
+
+    await expect(
+      client().pbx.subscribers.call(PBX_USER_ID, {
+        destination: "+13025556789",
+        idempotencyKey: "",
+      }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "idempotency_key_required" });
+    expect(calls.last.request.headers.get("idempotency-key")).toBe("");
+  });
+
   it("sends the same key again on the 401 retry", async () => {
     // The 401 retry in client.ts is the ONE request this client ever repeats
     // by itself. It must repeat the call with the SAME key: a fresh key there

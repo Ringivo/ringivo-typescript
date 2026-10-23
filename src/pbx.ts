@@ -272,9 +272,14 @@ export interface PlaceCallOptions {
    * key with a different request (another destination, another subscriber) is
    * a **422** `idempotency_key_reused`; the same key while the first request
    * still runs is a **409** `idempotency_key_in_use`, whose `retryAfter` says
-   * when to send it again; a key that is not 1 to 255 printable ASCII
-   * characters is a **400** `idempotency_key_invalid`. Nothing is dialled on
-   * any of these refusals.
+   * when to send it again, with the same key (`isRetryable()` is `true` for
+   * it). Spaces around the key are trimmed (by `Headers`, and again by the
+   * API). A key that is blank after that, `""` included, is sent as given and
+   * refused with a **400** `idempotency_key_required` — it is never replaced
+   * with a fresh one. A key longer than 255 characters, or with a character
+   * that is not printable ASCII, is a **400** `idempotency_key_invalid`; a
+   * character above U+00FF never leaves this client, because `Headers`
+   * throws a `TypeError` first. Nothing is dialled on any of these refusals.
    */
   idempotencyKey?: string;
 }
@@ -569,7 +574,12 @@ export class PbxSubscribers {
    * the same request with it again: the API returns the first call's 202,
    * with the same id, and dials nothing. `PbxCall.idempotentReplay` is `true`
    * on that answer. Only a 202 is kept against a key, so after a refusal the
-   * same key may be sent again. The **502** below says by itself that nothing
+   * same key may be sent again.
+   *
+   * **A refused retry does not prove that nothing rang.** The API checks the
+   * subscriber (404), your scope (403) and that the phone can be called (422
+   * `Not Callable`) BEFORE it looks at the key, so a retry after the phone
+   * went offline gets that 422 even when the first request placed the call. The **502** below says by itself that nothing
    * was dialled.
    *
    * A subscriber outside your customers' domains answers **404**, not 403.

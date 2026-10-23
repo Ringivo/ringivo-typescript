@@ -63,8 +63,10 @@
  * (texts sent to you) and `OUTBOUND_MESSAGE_EVENT_TYPES` (texts sent from you).
  *
  * `isRetryable(error)` says whether the API's contract allows the same call
- * again (no answer, 408, 429, 5xx); `ApiError.retryAfter` says how long the
- * server asked you to wait. The client never retries by itself.
+ * again (no answer, 408, 429, 5xx, and a 409 `idempotency_key_in_use`);
+ * `ApiError.retryAfter` says how long the server asked you to wait. The
+ * client never retries by itself, apart from one resend with a fresh token
+ * after a 401.
  */
 export { Ringivo } from "./client.js";
 export type { RequestOptions, RingivoOptions } from "./client.js";
