@@ -506,6 +506,29 @@ describe("wait", () => {
     expect((await waiting.result).status).toBe("delivered");
   });
 
+  it("waits at least the interval after a 429, so Retry-After: 0 cannot make a hot loop", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return calls.count <= 2 ? rateLimited("0") : HttpResponse.json({ data: testResource() });
+      }),
+    );
+    const pending = await sent();
+
+    const waiting = track(client().webhookTestDeliveries.wait(pending, { intervalMs: 1_000 }));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls.count).toBe(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.count).toBe(3);
+    expect((await waiting.result).status).toBe("delivered");
+  });
+
   it("waits out a 429 on the first read of an id too", async () => {
     const calls = new Calls();
     server.use(

@@ -470,8 +470,8 @@ is already `failed` means the test could not be queued: send it again later.
 API marks a test with no result `failed`. Pass `{ intervalMs, timeoutMs }` to
 change either. Past `timeoutMs` it throws a `WebhookTestTimeoutError`, whose
 `delivery` is the last result read. Its reads count against the API's rate
-limit: a 429 on a read with a `Retry-After` is waited out inside the deadline,
-and every other refused read is thrown. `endpointId` names the endpoint the
+limit: a 429 on a read with a `Retry-After` is waited out, for at least
+`intervalMs` and inside the deadline, and every other refused read is thrown. `endpointId` names the endpoint the
 test was sent to, on every result. `webhookTestDeliveries.get(id)` and
 `list({ endpoint?, ids? })` read results yourself; they are kept for 7 days.
 

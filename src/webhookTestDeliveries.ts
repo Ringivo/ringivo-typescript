@@ -17,7 +17,8 @@
  * only call in this package that waits, and it waits in the caller's own
  * process: a sleep between reads. It never sends a test again. The reads
  * count against the API's own rate limit, so a 429 on a read that names a
- * `Retry-After` is waited out — for that long, or for what is left of the
+ * `Retry-After` is waited out — for that long but never less than the
+ * interval, so `Retry-After: 0` cannot make a hot loop, and never past the
  * deadline — and the read is made again. Every other refused read (a 404, a
  * 503, a 429 with no `Retry-After`) is thrown at once, as `get()` throws it.
  *
@@ -152,8 +153,9 @@ export class WebhookTestDeliveries {
    *     const result = await client.webhookTestDeliveries.wait(test);
    *     result.status; // "delivered" or "failed"
    *
-   * A 429 on a read with a `Retry-After` sleeps for that long — cut to what
-   * is left before the deadline — and reads again. The deadline is kept on
+   * A 429 on a read with a `Retry-After` sleeps for that long, never less
+   * than `intervalMs` and cut to what is left before the deadline, and reads
+   * again. The deadline is kept on
    * the monotonic clock (`performance.now()`), so a wall-clock step does not
    * move it.
    *
@@ -213,7 +215,9 @@ export class WebhookTestDeliveries {
         if (backoff === undefined || deadline - performance.now() <= 0) {
           throw error;
         }
-        pause = backoff;
+        // Never less than the interval: a `Retry-After: 0` would otherwise
+        // read again at once, as often as the server answers.
+        pause = Math.max(backoff, intervalMs);
         continue;
       }
 

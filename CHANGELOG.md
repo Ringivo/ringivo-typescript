@@ -64,7 +64,8 @@
   the 2 minutes after which the API marks a test with no result `failed`.
   Past `timeoutMs` it throws the new `WebhookTestTimeoutError`, whose
   `delivery` is the last result read. A 429 on a read with a `Retry-After`
-  is waited out inside the deadline; any other refused read is thrown. The
+  is waited out (never less than `intervalMs`) inside the deadline; any
+  other refused read is thrown. The
   deadline is on the monotonic clock.
 - **`test` on every `MessageEvent` variant.** `parseMessageEvent()` reads
   `test: true` when the body's `test` member is literally `true` — a test
