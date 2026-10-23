@@ -86,9 +86,24 @@ const CALLS: Array<[string, Call, string]> = [
     "a webhook endpoint id is required",
   ],
   [
+    "webhookEndpoints.sendTest",
+    (r, id) => r.webhookEndpoints.sendTest(id),
+    "a webhook endpoint id is required",
+  ],
+  [
     "webhookDeliveries.get",
     (r, id) => r.webhookDeliveries.get(id),
     "a webhook delivery id is required",
+  ],
+  [
+    "webhookTestDeliveries.get",
+    (r, id) => r.webhookTestDeliveries.get(id),
+    "a webhook test id is required",
+  ],
+  [
+    "webhookTestDeliveries.wait",
+    (r, id) => r.webhookTestDeliveries.wait(id),
+    "a webhook test id is required",
   ],
   ["customers.get", (r, id) => r.customers.get(id), "a customer id is required"],
   [

@@ -8,14 +8,22 @@
  * `wait()` is the part that needs care, because it is the only call in this
  * package that waits. Its tests run on vitest's fake timers, so nothing here
  * really sleeps: the clock is moved by hand, and the number of reads is
- * counted at each step. The three outcomes the brief names are each pinned —
- * pending then delivered, already failed (no read at all), and the timeout —
- * and so is the default, which must outlast the API's own 2-minute cut-off.
+ * counted at each step. Each outcome is pinned — pending then delivered,
+ * already failed (no read at all), and the timeout — and so are the two
+ * defaults: a read every 2 seconds, and an overall wait that outlasts the
+ * API's own 2-minute cut-off. A 429 on a read waits out its `Retry-After`
+ * inside the deadline; every other refused read is thrown.
+ *
+ * The fixtures carry the `endpoint` relationship exactly as the API sends it
+ * on every read: `data` always present, and no `links`.
  *
  * The compile-time half at the bottom is the drift lock: the model has the
  * generated attributes' members and no others, and the status vocabulary
  * `wait()` relies on is the spec's enum.
  */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { HttpResponse, http } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -38,6 +46,7 @@ const OTHER_TEST_ID = "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6072";
 const TEST_URL = `${TESTS_URL}/${TEST_ID}`;
 const ENDPOINT_ID = "0198c4a1-8192-73b4-e5b6-708192031425";
 const JSONAPI = "application/vnd.api+json";
+const SPEC = readFileSync(fileURLToPath(new URL("../spec/openapi.yaml", import.meta.url)), "utf8");
 
 const server = mockServer();
 
@@ -179,18 +188,28 @@ describe("get", () => {
     expect(Object.isFrozen(result)).toBe(true);
   });
 
-  it("reads no endpoint rather than crashing when the linkage is absent", async () => {
-    server.use(
-      http.get(TEST_URL, () =>
-        HttpResponse.json({
-          data: { ...testResource(), relationships: { endpoint: { links: {} } } },
-        }),
-      ),
+  it("reads the endpoint linkage the spec says every read carries", () => {
+    // The API sends `relationships.endpoint.data` on every read of this
+    // resource, with no `links`. The fixtures above are that shape; this pins
+    // the spec's own word for it, so the day it changes is a failing test.
+    const block = SPEC.slice(
+      SPEC.indexOf("\n    WebhookTestDeliveryResource:\n"),
+      SPEC.indexOf("\n    WebhookTestDeliveryDocumentResponse:\n"),
     );
+    expect(block).toContain("`data` is always present");
+    expect(block).toContain("there are no `links`");
+    expect(JSON.stringify(testResource())).not.toContain("links");
+  });
+
+  it("reads no endpoint rather than crashing when a body has no relationships", async () => {
+    // Not a shape the API sends. The parse stays defensive all the same.
+    const { relationships: _dropped, ...bare } = testResource() as Record<string, unknown>;
+    server.use(http.get(TEST_URL, () => HttpResponse.json({ data: bare })));
 
     const result = await client().webhookTestDeliveries.get(TEST_ID);
 
     expect(result.endpointId).toBeNull();
+    expect(result.id).toBe(TEST_ID);
   });
 
   it("keeps a test id inside its own path segment", async () => {
@@ -233,9 +252,10 @@ describe("get", () => {
 
 describe("wait", () => {
   beforeEach(() => {
-    // Only the timer the wait sleeps on and the clock it reads are faked.
-    // msw answers through promises, which stay real.
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    // Only the timer the wait sleeps on and the clocks are faked: the
+    // monotonic one the deadline reads, and the wall clock the handlers below
+    // read. msw answers through promises, which stay real.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -420,7 +440,152 @@ describe("wait", () => {
     expect(calls.count).toBe(1);
   });
 
-  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
+  it("reads every 2 seconds by default", async () => {
+    const calls = answering("pending", "delivered");
+    const pending = await sent();
+
+    const waiting = track(client().webhookTestDeliveries.wait(pending));
+
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(calls.count).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls.count).toBe(2);
+    expect((await waiting.result).status).toBe("delivered");
+  });
+
+  it("keeps its deadline on the monotonic clock, whatever the wall clock does", async () => {
+    // An NTP step moves `Date.now()`; it must not end the wait early.
+    answering("pending", "pending", "delivered");
+    const pending = await sent();
+
+    const waiting = track(
+      client().webhookTestDeliveries.wait(pending, { intervalMs: 1_000, timeoutMs: 5_000 }),
+    );
+    vi.setSystemTime(Date.now() + 3_600_000);
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect((await waiting.result).status).toBe("delivered");
+  });
+
+  /** A 429 the way the API's rate limiter answers it. */
+  function rateLimited(retryAfter: string | null): Response {
+    return HttpResponse.json(
+      { errors: [{ status: "429", title: "Too Many Requests" }] },
+      { status: 429, headers: retryAfter === null ? {} : { "Retry-After": retryAfter } },
+    );
+  }
+
+  it("waits out a 429's Retry-After on a read, then reads again", async () => {
+    // The API's own rate limit covers these reads too. A wait that hits it
+    // sleeps for what the server asked and goes on, inside its deadline.
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        if (calls.count === 1) {
+          return rateLimited("5");
+        }
+        return HttpResponse.json({ data: testResource() });
+      }),
+    );
+    const pending = await sent();
+
+    const waiting = track(client().webhookTestDeliveries.wait(pending, { intervalMs: 1_000 }));
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.count).toBe(1);
+    // Retry-After is 5 s, not the 1 s interval.
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls.count).toBe(2);
+    expect((await waiting.result).status).toBe("delivered");
+  });
+
+  it("waits out a 429 on the first read of an id too", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return calls.count === 1
+          ? rateLimited("2")
+          : HttpResponse.json({ data: testResource({ status: "failed" }) });
+      }),
+    );
+
+    const waiting = track(client().webhookTestDeliveries.wait(TEST_ID));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect((await waiting.result).status).toBe("failed");
+    expect(calls.count).toBe(2);
+  });
+
+  it("cuts a 429's Retry-After to the deadline, and throws the 429 if the last read is refused too", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return rateLimited("60");
+      }),
+    );
+    const pending = await sent();
+
+    const waiting = track(
+      client().webhookTestDeliveries.wait(pending, { intervalMs: 1_000, timeoutMs: 10_000 }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.count).toBe(1);
+    // Not 60 s: the 9 s left before the deadline, then one more read.
+    await vi.advanceTimersByTimeAsync(8_999);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await waiting.result.catch((caught: unknown) => caught);
+
+    expect(calls.count).toBe(2);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ statusCode: 429, retryAfter: 60 });
+  });
+
+  it("throws a 429 that names no Retry-After", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return rateLimited(null);
+      }),
+    );
+
+    await expect(client().webhookTestDeliveries.wait(TEST_ID)).rejects.toMatchObject({
+      statusCode: 429,
+      retryAfter: undefined,
+    });
+    expect(calls.count).toBe(1);
+  });
+
+  it("throws a 503 with a Retry-After at once: only a 429 is waited out", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json(
+          { errors: [{ status: "503", title: "Unavailable" }] },
+          { status: 503, headers: { "Retry-After": "5" } },
+        );
+      }),
+    );
+
+    await expect(client().webhookTestDeliveries.wait(TEST_ID)).rejects.toMatchObject({
+      statusCode: 503,
+    });
+    expect(calls.count).toBe(1);
+  });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31])(
     "refuses an intervalMs of %s before any read",
     async (intervalMs) => {
       const calls = answering("pending");
@@ -439,6 +604,15 @@ describe("wait", () => {
       client().webhookTestDeliveries.wait(TEST_ID, { timeoutMs }),
     ).rejects.toBeInstanceOf(RangeError);
     expect(calls.count).toBe(0);
+  });
+
+  it("accepts the longest interval a timer can hold, 2^31 - 1 ms", async () => {
+    // One more and Node's setTimeout fires after 1 ms instead: a hot loop.
+    const failed = await sent({ ...PENDING, status: "failed" });
+
+    await expect(
+      client().webhookTestDeliveries.wait(failed, { intervalMs: 2 ** 31 - 1 }),
+    ).resolves.toBe(failed);
   });
 });
 

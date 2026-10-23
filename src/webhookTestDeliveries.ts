@@ -15,9 +15,11 @@
  * -- WHY `wait()` EXISTS, AND WHAT IT DOES NOT DO ---------------------------
  * `wait()` re-reads one result until it is no longer `pending`. It is the
  * only call in this package that waits, and it waits in the caller's own
- * process: a sleep between reads, no retry of anything. A refused read (a
- * 404, a 429 from the API's own rate limit) is thrown at once, exactly as
- * `get()` throws it. It never sends a test again.
+ * process: a sleep between reads. It never sends a test again. The reads
+ * count against the API's own rate limit, so a 429 on a read that names a
+ * `Retry-After` is waited out — for that long, or for what is left of the
+ * deadline — and the read is made again. Every other refused read (a 404, a
+ * 503, a 429 with no `Retry-After`) is thrown at once, as `get()` throws it.
  *
  * The default overall wait is 150 seconds — longer than the API's 2-minute
  * cut-off, so a test that never reaches your server still comes back as the
@@ -31,7 +33,7 @@
  * outcome.
  */
 import { type Ringivo, transportOf } from "./client.js";
-import { WebhookTestTimeoutError } from "./errors.js";
+import { ApiError, WebhookTestTimeoutError } from "./errors.js";
 import {
   type RawJson,
   type WebhookTestDelivery,
@@ -75,8 +77,8 @@ export interface ListWebhookTestDeliveriesOptions {
 /** What `webhookTestDeliveries.wait()` accepts. */
 export interface WaitForWebhookTestOptions {
   /**
-   * Milliseconds between two reads. Two seconds by default. Must be a
-   * finite number above zero.
+   * Milliseconds between two reads. Two seconds by default. Must be above
+   * zero and at most 2^31 - 1, the longest delay a timer holds.
    */
   intervalMs?: number;
   /**
@@ -150,11 +152,19 @@ export class WebhookTestDeliveries {
    *     const result = await client.webhookTestDeliveries.wait(test);
    *     result.status; // "delivered" or "failed"
    *
+   * A 429 on a read with a `Retry-After` sleeps for that long — cut to what
+   * is left before the deadline — and reads again. The deadline is kept on
+   * the monotonic clock (`performance.now()`), so a wall-clock step does not
+   * move it.
+   *
    * @throws WebhookTestTimeoutError when the result is still `pending` after
    *   `timeoutMs`. Its `delivery` is the last result read.
-   * @throws ApiError when a read is refused. Nothing is read again after it.
-   * @throws RangeError for an `intervalMs` or a `timeoutMs` that is not a
-   *   usable number, before any read.
+   * @throws ApiError when a read is refused, other than a 429 with a
+   *   `Retry-After` inside the deadline. Nothing is read again after it. A
+   *   429 whose wait reaches the deadline is thrown as itself.
+   * @throws RangeError for an `intervalMs` (above zero, at most 2^31 - 1) or
+   *   a `timeoutMs` (zero or more) that is not a usable number, before any
+   *   read.
    */
   async wait(
     delivery: WebhookTestDelivery | string,
@@ -162,36 +172,83 @@ export class WebhookTestDeliveries {
   ): Promise<WebhookTestDelivery> {
     const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
-      throw new RangeError(`intervalMs must be a finite number above zero, not ${intervalMs}`);
+    if (!Number.isFinite(intervalMs) || intervalMs <= 0 || intervalMs > MAX_TIMER_MS) {
+      throw new RangeError(
+        `intervalMs must be above zero and at most ${MAX_TIMER_MS}, not ${intervalMs}`,
+      );
     }
     if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
       throw new RangeError(`timeoutMs must be a finite number, zero or more, not ${timeoutMs}`);
     }
 
-    const deadline = Date.now() + timeoutMs;
+    // The MONOTONIC clock: a wall-clock step (NTP, a laptop waking) must not
+    // shorten or stretch the wait.
+    const deadline = performance.now() + timeoutMs;
     const id = typeof delivery === "string" ? delivery : delivery.id;
-    let current = typeof delivery === "string" ? await this.get(id) : delivery;
-
-    while (current.status === "pending") {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        throw new WebhookTestTimeoutError(
-          `the webhook test ${id} was still pending after ${timeoutMs} ms`,
-          current,
-        );
-      }
-      await sleep(Math.min(intervalMs, remaining));
-      current = await this.get(id);
+    let last: WebhookTestDelivery | null = typeof delivery === "string" ? null : delivery;
+    if (last !== null && last.status !== "pending") {
+      return last;
     }
 
-    return current;
+    // How long to sleep before the next read: nothing before the first read
+    // of an id, the interval after a pending read, Retry-After after a 429.
+    let pause: number | null = last === null ? null : intervalMs;
+
+    for (;;) {
+      if (pause !== null) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0 && last !== null) {
+          throw new WebhookTestTimeoutError(
+            `the webhook test ${id} was still pending after ${timeoutMs} ms`,
+            last,
+          );
+        }
+        await sleep(Math.max(0, Math.min(pause, remaining)));
+      }
+
+      try {
+        last = await this.get(id);
+      } catch (error) {
+        const backoff = rateLimitBackoffMs(error);
+        if (backoff === undefined || deadline - performance.now() <= 0) {
+          throw error;
+        }
+        pause = backoff;
+        continue;
+      }
+
+      if (last.status !== "pending") {
+        return last;
+      }
+      pause = intervalMs;
+    }
   }
+}
+
+/**
+ * The longest delay Node's `setTimeout` holds. A longer one fires after 1 ms
+ * instead, which would turn a wait into a hot loop.
+ */
+const MAX_TIMER_MS = 2 ** 31 - 1;
+
+/**
+ * The milliseconds a refused read asks `wait()` to sleep, or undefined when
+ * the refusal is to be thrown.
+ *
+ * Only a 429 that names a `Retry-After` is waited out: the API's own rate
+ * limit covers these reads, and a few waits at once can reach it. Every other
+ * refusal — a 503 included — is thrown, as `get()` throws it.
+ */
+function rateLimitBackoffMs(error: unknown): number | undefined {
+  if (error instanceof ApiError && error.statusCode === 429 && error.retryAfter !== undefined) {
+    return error.retryAfter * 1000;
+  }
+  return undefined;
 }
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resume) => {
-    setTimeout(resume, milliseconds);
+    setTimeout(resume, Math.min(milliseconds, MAX_TIMER_MS));
   });
 }
 

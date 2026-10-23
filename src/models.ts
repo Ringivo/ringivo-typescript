@@ -740,8 +740,10 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
  * timeout, an address we do not send to). A test that cannot reach your
  * server is a result here, not an error of the request that sent it.
  *
- * `endpointId` comes from the `endpoint` relationship's linkage, and it is
- * null when the server answered that relationship with `links` alone.
+ * `endpointId` is the id of the endpoint the test was sent to, read from the
+ * `endpoint` relationship's linkage. The API sends that linkage on every
+ * answer about a test — the 202, `get()` and `list()` — so it is always
+ * there; it reads null only for a body that does not carry it.
  */
 export interface WebhookTestDelivery {
   readonly id: string;

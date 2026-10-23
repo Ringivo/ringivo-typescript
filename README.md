@@ -455,7 +455,7 @@ We send **one** test event to that endpoint and to no other, through the same
 path as a real delivery: the same signature, the same headers, the same
 addresses. It is sent once and never retried. `type` is a type the endpoint
 may receive, or `webhook.test` for a plain ping; leave it out and the endpoint's
-first type is sent.
+first type is sent. An empty or blank `type` is refused before any request.
 
 **The body is the published example for its type**, with a new `eventId`, the
 time of the test as `occurredAt`, and `test: true`. The delivery also carries
@@ -469,7 +469,10 @@ is already `failed` means the test could not be queued: send it again later.
 `pending`, for at most 150 seconds — longer than the 2 minutes after which the
 API marks a test with no result `failed`. Pass `{ intervalMs, timeoutMs }` to
 change either. Past `timeoutMs` it throws a `WebhookTestTimeoutError`, whose
-`delivery` is the last result read. `webhookTestDeliveries.get(id)` and
+`delivery` is the last result read. Its reads count against the API's rate
+limit: a 429 on a read with a `Retry-After` is waited out inside the deadline,
+and every other refused read is thrown. `endpointId` names the endpoint the
+test was sent to, on every result. `webhookTestDeliveries.get(id)` and
 `list({ endpoint?, ids? })` read results yourself; they are kept for 7 days.
 
 The refusals are `ApiError`s:
@@ -478,7 +481,7 @@ The refusals are `ApiError`s:
 |---|---|---|
 | 409 | The endpoint is disabled. Nothing is sent to it, a test included. | `false` |
 | 422 | `type` is not one the endpoint may receive. `source.pointer` is `/eventType`. | `false` |
-| 429 | More than 5 tests a minute to this endpoint, or 5 a minute from you. Wait `retryAfter` seconds. | `true` |
+| 429 | More than 5 tests a minute to this endpoint, or 5 a minute from you, or the API's own rate limit. Wait `retryAfter` seconds. | `true` |
 | 503 | The limit could not be checked, so nothing was sent. Wait `retryAfter` seconds. | `true` |
 
 `sendTest()` sends no `Idempotency-Key` and never sends a test again by itself:
@@ -1449,7 +1452,7 @@ try {
 | `client.webhookEndpoints.sendTest(webhookEndpointId, { type? })` | `webhooks:write` | Send one test event to that endpoint. Resolves to a `WebhookTestDelivery`, normally `pending`. Never sent again by itself. |
 | `client.webhookTestDeliveries.list({ endpoint?, ids?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookTestDeliveryPage`: the test results of the last 7 days. |
 | `client.webhookTestDeliveries.get(webhookTestDeliveryId)` | `webhooks:read` | One `WebhookTestDelivery`. |
-| `client.webhookTestDeliveries.wait(test \| id, { intervalMs?, timeoutMs? })` | `webhooks:read` | Reads the result again until it is not `pending`. Throws `WebhookTestTimeoutError` past `timeoutMs` (150 s by default). |
+| `client.webhookTestDeliveries.wait(test \| id, { intervalMs?, timeoutMs? })` | `webhooks:read` | Reads the result again until it is not `pending`, waiting out a 429's `Retry-After`. Throws `WebhookTestTimeoutError` past `timeoutMs` (150 s by default). |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
 | `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `ids` reads several customers by id in one request; `code` finds one customer. |

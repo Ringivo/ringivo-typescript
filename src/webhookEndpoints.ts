@@ -223,6 +223,10 @@ export interface SendWebhookTestOptions {
    * endpoint's first type. Any other type is a 422 whose `source.pointer` is
    * `/eventType`.
    *
+   * An empty or blank string is refused here, before any request: the API
+   * reads it as no type at all and would send the endpoint's first type.
+   * Leave `type` out to ask for that.
+   *
    * A `string` rather than a list of names, for the reason
    * `CreateWebhookEndpointOptions.events` is: a type the platform publishes
    * tomorrow must be testable today.
@@ -428,7 +432,8 @@ export class WebhookEndpoints {
    * - **422** — `type` is not one this endpoint may receive, and is not
    *   `webhook.test`. `source.pointer` is `/eventType`.
    * - **429** — more than 5 tests a minute to this endpoint, or 5 a minute
-   *   from your account. `retryAfter` says how many seconds to wait.
+   *   from your account, or the API's own rate limit for your credential.
+   *   `retryAfter` says how many seconds to wait.
    * - **503** — the API could not check that limit, so the test was not
    *   sent. `retryAfter` says how long to wait.
    *
@@ -443,10 +448,15 @@ export class WebhookEndpoints {
     webhookEndpointId: string,
     options: SendWebhookTestOptions = {},
   ): Promise<WebhookTestDelivery> {
-    // Always a JSON object, `{}` when no type was named: the body the API's
-    // own tests send for "the endpoint's first type".
+    // Always a JSON object, `{}` when no type was named: the spec's "an empty
+    // body sends the endpoint's first type".
     const body: SendTestBody = {};
     if (options.type !== undefined) {
+      if (options.type.trim() === "") {
+        throw new Error(
+          "type must name an event type; leave it out to send the endpoint's first type",
+        );
+      }
       body.eventType = options.type as SendTestBody["eventType"];
     }
 

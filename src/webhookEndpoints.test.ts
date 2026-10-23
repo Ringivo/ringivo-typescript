@@ -666,6 +666,26 @@ describe("sendTest", () => {
     expect(sent.eventType).toBe("webhook.test");
   });
 
+  it.each([[""], ["   "]])(
+    "refuses type %j before any request, rather than letting the API pick the first",
+    async (type) => {
+      // The API reads an empty or blank string as no type at all and sends
+      // the endpoint's first type with a 202 — a test of a type nobody named.
+      const calls = new Calls();
+      server.use(
+        http.post(TEST_URL, async ({ request }) => {
+          await calls.record(request);
+          return HttpResponse.json({ data: testResource() }, { status: 202 });
+        }),
+      );
+
+      await expect(client().webhookEndpoints.sendTest(ENDPOINT_ID, { type })).rejects.toThrow(
+        /type must name an event type/,
+      );
+      expect(calls.count).toBe(0);
+    },
+  );
+
   it("sends an empty object when no type was named, so the API picks the first", async () => {
     const calls = new Calls();
     server.use(
