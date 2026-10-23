@@ -33,7 +33,9 @@
  * the create hands back, add events to it, switch it off, rotate its secret —
  * and `client.webhookDeliveries` for what we could not deliver. Both need
  * `webhooks:read`/`webhooks:write`, and a `fax:*` token reaches the
- * `fax_account`-scoped endpoints alone.
+ * `fax_account`-scoped endpoints alone. `webhookEndpoints.sendTest()` sends
+ * one test event to an endpoint; `client.webhookTestDeliveries` reads its
+ * result, and `wait()` re-reads it until it is no longer `pending`.
  *
  * Your customers' phone systems are `client.pbx` — `pbx.callRecords` for the
  * call log, plus `pbx.callRecords.recordings()`/`.transcripts()` for what
@@ -66,7 +68,8 @@
  * again (no answer, 408, 429, 5xx, and a 409 `idempotency_key_in_use`);
  * `ApiError.retryAfter` says how long the server asked you to wait. The
  * client never retries by itself, apart from one resend with a fresh token
- * after a 401.
+ * after a 401, and `webhookTestDeliveries.wait()`, which sleeps through a 429
+ * with `Retry-After` while it polls.
  */
 export { Ringivo } from "./client.js";
 export type { RequestOptions, RingivoOptions } from "./client.js";
@@ -80,6 +83,7 @@ export {
   SignatureVerificationError,
   TranscriptRequestLimitedError,
   TranscriptionCappedError,
+  WebhookTestTimeoutError,
   isRetryable,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
@@ -156,6 +160,8 @@ export type {
   WebhookDeliveryPage,
   WebhookEndpoint,
   WebhookEndpointPage,
+  WebhookTestDelivery,
+  WebhookTestDeliveryPage,
 } from "./models.js";
 export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
 export type {
@@ -171,8 +177,14 @@ export { WebhookEndpoints } from "./webhookEndpoints.js";
 export type {
   CreateWebhookEndpointOptions,
   ListWebhookEndpointsOptions,
+  SendWebhookTestOptions,
   UpdateWebhookEndpointOptions,
 } from "./webhookEndpoints.js";
+export { WebhookTestDeliveries } from "./webhookTestDeliveries.js";
+export type {
+  ListWebhookTestDeliveriesOptions,
+  WaitForWebhookTestOptions,
+} from "./webhookTestDeliveries.js";
 export {
   DEFAULT_TOLERANCE_SECONDS,
   FAILURE_CAUSES,

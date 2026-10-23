@@ -36,6 +36,47 @@
   credential return only the messages sent to numbers assigned to that
   customer. Before, they returned every message of the reseller. This is a
   server change; this client needs no change for it.
+- **`webhookEndpoints.sendTest(id, { type? })` sends one test event to one
+  endpoint.** It goes through the same path as a real delivery — the same
+  signature, headers and addresses — once, with no retry. `type` is a type
+  the endpoint may receive, or `webhook.test` for a plain ping; left out,
+  the API sends the endpoint's first type; an empty or blank `type` is
+  refused before any request. It resolves to a
+  `WebhookTestDelivery`, normally `pending`. A 202 that is already `failed`
+  means the test could not be queued. The refusals are `ApiError`s: 409 for
+  a disabled endpoint, 422 for a type the endpoint may not receive
+  (`source.pointer` `/eventType`), 429 past 5 tests a minute to one endpoint
+  or from one account (or the API's own rate limit), and 503 when the API
+  could not check that limit.
+  The 429 and the 503 carry `retryAfter`, and `isRetryable()` is `true` for
+  them. The call sends no `Idempotency-Key` and never sends a test again by
+  itself: every send is a new test.
+- **`client.webhookTestDeliveries`**: `get(id)` reads one test's result and
+  `list({ endpoint?, ids?, after?, before?, pageSize? })` lists the results
+  of the last 7 days. `WebhookTestDelivery` carries `status` (`pending`,
+  `delivered` or `failed`), `statusCode`, `durationMs`, the first 1 KiB of
+  your server's answer as `responseBody`, `error`, `attemptedAt` and the
+  `endpointId`, which the API sends on every result.
+- **`webhookTestDeliveries.wait(test, { intervalMs?, timeoutMs? })`** reads
+  a result again until it is no longer `pending`, and resolves to it. A
+  result that is already not `pending` comes back at once, with no read.
+  It reads every 2 seconds for at most 150 seconds by default — longer than
+  the 2 minutes after which the API marks a test with no result `failed`.
+  Past `timeoutMs` it throws the new `WebhookTestTimeoutError`, whose
+  `delivery` is the last result read. A 429 on a read with a `Retry-After`
+  is waited out (never less than `intervalMs`) inside the deadline; any
+  other refused read is thrown. The
+  deadline is on the monotonic clock.
+- **`test` on every `MessageEvent` variant.** `parseMessageEvent()` reads
+  `test: true` when the body's `test` member is literally `true` — a test
+  event sent with `sendTest()` — and `false` otherwise, on all four message
+  variants and on `UnknownMessageEvent` (the `webhook.test` ping is one). A
+  test carries the published example body for its type, so every id in it
+  is illustrative: check `event.test` first and do not act on it. The parse
+  still never throws.
+- Migration for the test-event items above: none. Every name is new;
+  `MessageEvent` gains one member, so code that builds those objects itself
+  must add `test`.
 
 ## 0.24.0 (2026-10-23) — Added
 

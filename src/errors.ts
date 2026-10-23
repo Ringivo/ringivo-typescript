@@ -25,6 +25,7 @@
  * member to branch on wherever the refusal came from: `code` carries the
  * JSON:API error's `code` on one side and the OAuth `error` on the other.
  */
+import type { WebhookTestDelivery } from "./models.js";
 
 /**
  * Base class for everything this package throws deliberately.
@@ -169,6 +170,29 @@ const BY_CODE: Readonly<Record<string, typeof ApiError>> = Object.freeze({
  * say, and on not echoing them back to the sender.
  */
 export class SignatureVerificationError extends RingivoError {}
+
+/**
+ * `webhookTestDeliveries.wait()` ran out of time while the test was still
+ * `pending`.
+ *
+ * Not an `ApiError`: the API answered every read, and the answer was "not
+ * yet". `delivery` is the last result read, so its id is still there to read
+ * again later. `isRetryable()` is `false` for it, because there is nothing to
+ * send again — read the result later, or send another test.
+ *
+ * The default wait is longer than the 2 minutes after which the API marks a
+ * test with no result `failed`, so with the default this means the API did
+ * not do that in time either.
+ */
+export class WebhookTestTimeoutError extends RingivoError {
+  /** The last result read — still `pending`. */
+  readonly delivery: WebhookTestDelivery;
+
+  constructor(message: string, delivery: WebhookTestDelivery) {
+    super(message);
+    this.delivery = delivery;
+  }
+}
 
 function text(source: Record<string, unknown>, key: string): string | null {
   const value = source[key];
@@ -371,8 +395,9 @@ const KEY_IN_USE = "idempotency_key_in_use";
  * This decides WHETHER to retry, never WHEN. Wait at least
  * `error.retryAfter` seconds when it is set; otherwise use your own backoff.
  * The client never retries by itself, apart from one resend with a fresh
- * token after a 401: a retry belongs in your durable queue, not inside a call
- * that would block your worker.
+ * token after a 401, and `webhookTestDeliveries.wait()`, which sleeps through
+ * a 429 with `Retry-After` while it polls: a retry belongs in your durable
+ * queue, not inside a call that would block your worker.
  *
  * The Python client's `is_retryable()` is the same contract; the two are kept
  * the same on purpose.

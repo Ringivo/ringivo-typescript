@@ -58,6 +58,7 @@ interface Surface {
     faxAccountUsers: object;
     webhookEndpoints: object;
     webhookDeliveries: object;
+    webhookTestDeliveries: object;
     pbx: { callRecords: object; subscribers: object; devices: object };
     customers: object;
     messages: object;
@@ -195,7 +196,26 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.webhookEndpoints))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["create", "delete", "get", "list", "rotateSecret", "update"]);
+    ).toEqual(["create", "delete", "get", "list", "rotateSecret", "sendTest", "update"]);
+  });
+
+  it("exposes the whole webhook-test-delivery surface", async () => {
+    const { Ringivo } = await load(kind);
+
+    const client = new Ringivo({
+      baseUrl: "https://api.yourprovider.example",
+      clientId: "id",
+      clientSecret: "secret",
+      tenant: TENANT_ID,
+      scopes: ["webhooks:read"],
+    });
+
+    // Two reads and the wait for a pending result.
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.webhookTestDeliveries))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["get", "list", "wait"]);
   });
 
   it("exposes the whole webhook-delivery surface", async () => {

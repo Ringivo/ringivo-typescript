@@ -19,7 +19,7 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
-import { ApiError, Ringivo } from "./index.js";
+import { ApiError, Ringivo, isRetryable } from "./index.js";
 import type { CreateWebhookEndpointOptions, UpdateWebhookEndpointOptions } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
@@ -28,6 +28,8 @@ const ENDPOINTS_URL = `${BASE_URL}/v1/webhook-endpoints`;
 const ENDPOINT_ID = "0198c4a1-8192-73b4-e5b6-708192031425";
 const ENDPOINT_URL = `${ENDPOINTS_URL}/${ENDPOINT_ID}`;
 const ROTATE_URL = `${ENDPOINT_URL}/rotate-secret`;
+const TEST_URL = `${ENDPOINT_URL}/test`;
+const TEST_ID = "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6071";
 const ACCOUNT_ID = "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70";
 const HOOK_URL = "https://hooks.acme-vet.example/faxes";
 const SECRET = "whsec_Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5MGFiY2RlZmdo";
@@ -580,4 +582,290 @@ describe("rotateSecret", () => {
       /a webhook endpoint id is required/,
     );
   });
+});
+
+describe("sendTest", () => {
+  // The 202 the spec publishes: the test is on its way, and its result is
+  // pending. The resource is a `webhook-test-deliveries` one, whose id is also
+  // the `eventId` of the body sent to the endpoint.
+  function testResource(attributeOverrides: Record<string, unknown> = {}): object {
+    return {
+      type: "webhook-test-deliveries",
+      id: TEST_ID,
+      attributes: {
+        eventType: "fax.delivered",
+        status: "pending",
+        statusCode: null,
+        durationMs: null,
+        responseBody: null,
+        error: null,
+        attemptedAt: null,
+        createdAt: "2026-10-22T15:04:05.000000Z",
+        updatedAt: "2026-10-22T15:04:05.000000Z",
+        ...attributeOverrides,
+      },
+      relationships: {
+        endpoint: { data: { type: "webhook-endpoints", id: ENDPOINT_ID } },
+      },
+    };
+  }
+
+  function refusal(
+    status: number,
+    error: Record<string, unknown>,
+    headers: Record<string, string> = {},
+  ): Response {
+    return HttpResponse.json(
+      { errors: [{ status: String(status), ...error }] },
+      { status, headers: { "Content-Type": JSONAPI, ...headers } },
+    );
+  }
+
+  it("POSTs a flat JSON body naming the event type, not a JSON:API document", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json(
+          { data: testResource() },
+          { status: 202, headers: { "Content-Type": JSONAPI } },
+        );
+      }),
+    );
+
+    await client().webhookEndpoints.sendTest(ENDPOINT_ID, { type: "fax.delivered" });
+
+    expect(calls.count).toBe(1);
+    expect(calls.last.request.method).toBe("POST");
+    expect(calls.last.url.pathname).toBe(`/v1/webhook-endpoints/${ENDPOINT_ID}/test`);
+    // The spec's requestBody is `application/json`, and its schema is flat:
+    // `{"eventType": ...}` and nothing else — no `data`, no `type`.
+    expect(JSON.parse(calls.last.body)).toEqual({ eventType: "fax.delivered" });
+    expect(calls.last.request.headers.get("Content-Type")).toBe("application/json");
+    expect(calls.last.request.headers.get("Accept")).toBe(JSONAPI);
+    // Each send is a new test. The API reads no Idempotency-Key here, so none
+    // is sent.
+    expect(calls.last.request.headers.has("Idempotency-Key")).toBe(false);
+  });
+
+  it("sends the plain ping type as given", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json(
+          { data: testResource({ eventType: "webhook.test" }) },
+          { status: 202 },
+        );
+      }),
+    );
+
+    const sent = await client().webhookEndpoints.sendTest(ENDPOINT_ID, { type: "webhook.test" });
+
+    expect(JSON.parse(calls.last.body)).toEqual({ eventType: "webhook.test" });
+    expect(sent.eventType).toBe("webhook.test");
+  });
+
+  it.each([[""], ["   "]])(
+    "refuses type %j before any request, rather than letting the API pick the first",
+    async (type) => {
+      // The API reads an empty or blank string as no type at all and sends
+      // the endpoint's first type with a 202 — a test of a type nobody named.
+      const calls = new Calls();
+      server.use(
+        http.post(TEST_URL, async ({ request }) => {
+          await calls.record(request);
+          return HttpResponse.json({ data: testResource() }, { status: 202 });
+        }),
+      );
+
+      await expect(client().webhookEndpoints.sendTest(ENDPOINT_ID, { type })).rejects.toThrow(
+        /type must name an event type/,
+      );
+      expect(calls.count).toBe(0);
+    },
+  );
+
+  it("reads a plain-JavaScript type: null as no type, and sends an empty object", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: testResource() }, { status: 202 });
+      }),
+    );
+
+    await client().webhookEndpoints.sendTest(ENDPOINT_ID, { type: null as unknown as string });
+
+    expect(calls.count).toBe(1);
+    expect(calls.last.body).toBe("{}");
+  });
+
+  it("sends an empty object when no type was named, so the API picks the first", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: testResource() }, { status: 202 });
+      }),
+    );
+
+    await client().webhookEndpoints.sendTest(ENDPOINT_ID);
+    await client().webhookEndpoints.sendTest(ENDPOINT_ID, {});
+
+    expect(calls.count).toBe(2);
+    expect(calls.at(0).body).toBe("{}");
+    expect(calls.at(1).body).toBe("{}");
+  });
+
+  it("reads the 202 into a frozen WebhookTestDelivery", async () => {
+    server.use(
+      http.post(TEST_URL, () =>
+        HttpResponse.json(
+          { data: testResource() },
+          { status: 202, headers: { "Content-Type": JSONAPI } },
+        ),
+      ),
+    );
+
+    const sent = await client().webhookEndpoints.sendTest(ENDPOINT_ID, { type: "fax.delivered" });
+
+    expect(sent.id).toBe(TEST_ID);
+    expect(sent.endpointId).toBe(ENDPOINT_ID);
+    expect(sent.eventType).toBe("fax.delivered");
+    expect(sent.status).toBe("pending");
+    expect(sent.statusCode).toBeNull();
+    expect(sent.durationMs).toBeNull();
+    expect(sent.responseBody).toBeNull();
+    expect(sent.error).toBeNull();
+    expect(sent.attemptedAt).toBeNull();
+    expect(sent.createdAt?.toISOString()).toBe("2026-10-22T15:04:05.000Z");
+    expect(sent.updatedAt?.toISOString()).toBe("2026-10-22T15:04:05.000Z");
+    expect(Object.isFrozen(sent)).toBe(true);
+    expect(sent.raw).toMatchObject({ type: "webhook-test-deliveries", id: TEST_ID });
+  });
+
+  it("reads a 202 that is already failed, because the test could not be queued", async () => {
+    server.use(
+      http.post(TEST_URL, () =>
+        HttpResponse.json(
+          {
+            data: testResource({
+              status: "failed",
+              error: "The test could not be queued. Send it again later.",
+            }),
+          },
+          { status: 202 },
+        ),
+      ),
+    );
+
+    const sent = await client().webhookEndpoints.sendTest(ENDPOINT_ID);
+
+    expect(sent.status).toBe("failed");
+    expect(sent.error).toBe("The test could not be queued. Send it again later.");
+  });
+
+  it("keeps an endpoint id inside its own path segment", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(`${BASE_URL}/v1/*`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: testResource() }, { status: 202 });
+      }),
+    );
+
+    await client().webhookEndpoints.sendTest("../faxes/secret");
+
+    expect(calls.last.url.pathname).toBe("/v1/webhook-endpoints/..%2Ffaxes%2Fsecret/test");
+  });
+
+  it("refuses an empty endpoint id rather than collapsing the path", async () => {
+    await expect(client().webhookEndpoints.sendTest("")).rejects.toThrow(
+      /a webhook endpoint id is required/,
+    );
+  });
+
+  it("surfaces the 409 for a disabled endpoint as a refusal not to retry", async () => {
+    server.use(
+      http.post(TEST_URL, () =>
+        refusal(409, {
+          title: "Endpoint disabled",
+          detail:
+            "This endpoint is disabled, so nothing is sent to it — a test included. Enable it, then send the test.",
+        }),
+      ),
+    );
+
+    const error = await client()
+      .webhookEndpoints.sendTest(ENDPOINT_ID)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ statusCode: 409, code: null, retryAfter: undefined });
+    expect((error as ApiError).errors[0]?.title).toBe("Endpoint disabled");
+    expect(isRetryable(error)).toBe(false);
+  });
+
+  it("surfaces the 422 for a type the endpoint may not receive, with its pointer", async () => {
+    server.use(
+      http.post(TEST_URL, () =>
+        refusal(422, {
+          title: "Unprocessable Entity",
+          detail:
+            "This endpoint cannot be sent a test of port_order.status_changed. Send one of: fax.received, fax.delivered, webhook.test.",
+          source: { pointer: "/eventType" },
+        }),
+      ),
+    );
+
+    const error = await client()
+      .webhookEndpoints.sendTest(ENDPOINT_ID, { type: "port_order.status_changed" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ statusCode: 422 });
+    expect((error as ApiError).errors[0]?.source).toEqual({ pointer: "/eventType" });
+    expect(isRetryable(error)).toBe(false);
+  });
+
+  it.each([
+    [
+      429,
+      "42",
+      42,
+      "Too many test events",
+      "At most 5 test events a minute may be sent to one endpoint, and 5 a minute by one account. Try again in 42 seconds.",
+    ],
+    [
+      503,
+      "60",
+      60,
+      "Test events unavailable",
+      "Test events cannot be sent right now. Try again in a minute.",
+    ],
+  ])(
+    "surfaces the %i with its Retry-After, and does not send the test again by itself",
+    async (status, header, seconds, title, detail) => {
+      const calls = new Calls();
+      server.use(
+        http.post(TEST_URL, async ({ request }) => {
+          await calls.record(request);
+          return refusal(status, { title, detail }, { "Retry-After": header });
+        }),
+      );
+
+      const error = await client()
+        .webhookEndpoints.sendTest(ENDPOINT_ID)
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ statusCode: status, retryAfter: seconds });
+      expect((error as ApiError).errors[0]?.title).toBe(title);
+      // The caller may send another test after `retryAfter`; the client does
+      // not do it for them.
+      expect(isRetryable(error)).toBe(true);
+      expect(calls.count).toBe(1);
+    },
+  );
 });

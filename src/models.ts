@@ -719,6 +719,90 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
 }
 
 /**
+ * The result of one test event — `webhookEndpoints.sendTest()` and every
+ * `webhookTestDeliveries` call.
+ *
+ * `id` is also the `eventId` of the body sent to your endpoint, so a receiver
+ * that logs `eventId` can find this result from its own log.
+ *
+ * `status` is `pending` until the one attempt is made — normally a few
+ * seconds — then `delivered` (your server answered 2XX) or `failed` (any
+ * other answer, or none). The API marks a test that has had no result for 2
+ * minutes `failed`, with an `error` that says so. A 202 that is ALREADY
+ * `failed` means the test could not be queued: send it again later. It is a
+ * `string` rather than a union of the three, like `WebhookDelivery.status`,
+ * so a value the API adds later arrives as itself.
+ *
+ * `statusCode`, `durationMs` and `responseBody` are what your server
+ * answered, how long it took, and the first 1 KiB of the answer as text. All
+ * three are null while pending, and `statusCode` stays null when we never
+ * reached your server — `error` then says why (a TLS or connection error, a
+ * timeout, an address we do not send to). A test that cannot reach your
+ * server is a result here, not an error of the request that sent it.
+ *
+ * `endpointId` is the id of the endpoint the test was sent to, read from the
+ * `endpoint` relationship's linkage. The API sends that linkage on every
+ * answer about a test — the 202, `get()` and `list()` — so it is always
+ * there; it reads null only for a body that does not carry it.
+ */
+export interface WebhookTestDelivery {
+  readonly id: string;
+  readonly endpointId: string | null;
+  readonly eventType: string | null;
+  readonly status: string | null;
+  readonly statusCode: number | null;
+  readonly durationMs: number | null;
+  readonly responseBody: string | null;
+  readonly error: string | null;
+  readonly attemptedAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `webhookTestDeliveries.list()`, newest first. */
+export interface WebhookTestDeliveryPage {
+  readonly deliveries: readonly WebhookTestDelivery[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — every test-event call. */
+export function webhookTestDeliveryFromResource(resource: RawJson): WebhookTestDelivery {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    endpointId: relationshipId(resource, "endpoint"),
+    eventType: text(attributes, "eventType"),
+    status: text(attributes, "status"),
+    statusCode: integer(attributes, "statusCode"),
+    durationMs: integer(attributes, "durationMs"),
+    responseBody: text(attributes, "responseBody"),
+    error: text(attributes, "error"),
+    attemptedAt: instant(attributes.attemptedAt),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function webhookTestDeliveryPageFromDocument(document: RawJson): WebhookTestDeliveryPage {
+  const data = document.data;
+  const deliveries = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map(webhookTestDeliveryFromResource);
+
+  return Object.freeze({
+    deliveries: Object.freeze(deliveries),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/**
  * One subscriber on a customer's phone system — a person or a machine.
  *
  * -- `kind` SAYS WHAT THIS ROW IS -------------------------------------------
@@ -1812,6 +1896,17 @@ interface MessageEventEnvelope {
   readonly eventId: string | null;
   readonly occurredAt: Date | null;
   /**
+   * `true` on a TEST event — one sent with `webhookEndpoints.sendTest()` —
+   * and `false` on a real one. **Check it first, and do not act on a test**:
+   * its `message` is the published example for its type, so every id in it
+   * is illustrative and names nothing of yours. Answer 2XX and stop.
+   *
+   * `true` only when the body's `test` member is literally `true`, which is
+   * the one value the API sends; absent, or any other value, reads `false`.
+   * A test also carries the header `Ringivo-Webhook-Test: true`.
+   */
+  readonly test: boolean;
+  /**
    * The whole decoded body, exactly as it was handed to the parser — or `{}`
    * when what was handed over was not a JSON object (null, a string, an
    * array, a number).
@@ -1845,7 +1940,8 @@ export interface MessageFailedEvent extends MessageEventEnvelope {
 
 /**
  * A body that is not one of the four message events: another event type, a
- * type this release does not know yet, or no JSON object at all.
+ * type this release does not know yet, or no JSON object at all. The
+ * `webhook.test` ping is one of these, with `test: true`.
  *
  * `type` is `null` so that `switch (event.type)` narrows the four known
  * variants cleanly; the type that arrived, if any, is `raw.type`. It carries
@@ -2033,6 +2129,7 @@ export function messageEventFromJson(payload: unknown): MessageEvent {
   const envelope = {
     eventId: text(source, "eventId"),
     occurredAt: instant(source.occurredAt),
+    test: source.test === true,
     raw: source,
   };
   const data = nested(source, "data") ?? {};

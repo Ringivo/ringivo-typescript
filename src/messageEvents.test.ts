@@ -519,6 +519,96 @@ describe("anything else", () => {
   );
 });
 
+describe("test events", () => {
+  // A test sent with `webhookEndpoints.sendTest()` carries the published
+  // example body for its type plus `test: true`. Every id in it is
+  // illustrative, so a receiver must be able to tell it apart from a real
+  // event — on every variant, before it reads anything else.
+  it.each([MESSAGE_RECEIVED, MESSAGE_SENT, MESSAGE_DELIVERED, MESSAGE_FAILED])(
+    "reads test: true on $type",
+    (payload) => {
+      const event = parseMessageEvent({ ...payload, test: true });
+
+      expect(event.type).toBe(payload.type);
+      expect(event.test).toBe(true);
+    },
+  );
+
+  it.each([MESSAGE_RECEIVED, MESSAGE_SENT, MESSAGE_DELIVERED, MESSAGE_FAILED])(
+    "reads test: false on a real $type, which carries no test member",
+    (payload) => {
+      expect("test" in payload).toBe(false);
+
+      expect(parseMessageEvent(payload).test).toBe(false);
+    },
+  );
+
+  // Each case is wrapped in its own array: `it.each` spreads an array case
+  // into arguments, so a bare `[true]` would arrive as `true`.
+  it.each([[false], ["true"], [1], [null], [{}], [[true]]])(
+    "reads test %j as false: only the literal true marks a test",
+    (value) => {
+      expect(parseMessageEvent({ ...MESSAGE_SENT, test: value }).test).toBe(false);
+    },
+  );
+
+  it("reads the webhook.test ping as an unknown event that is a test", () => {
+    const ping = {
+      eventId: "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6071",
+      type: "webhook.test",
+      occurredAt: "2026-10-22T15:04:05+00:00",
+      test: true,
+      data: { endpointId: "0198c4a1-8192-73b4-e5b6-708192031425" },
+    };
+
+    const event = parseMessageEvent(ping);
+
+    expect(event.type).toBeNull();
+    expect(event.test).toBe(true);
+    expect(event.eventId).toBe(ping.eventId);
+  });
+
+  it.each([[null], [undefined], ["x"], [42], [[]], [[{ test: true }]]])(
+    "reads %j as not a test, and never throws",
+    (payload) => {
+      expect(parseMessageEvent(payload).test).toBe(false);
+    },
+  );
+
+  it("is a boolean on every variant, at compile time", () => {
+    // `MessageEvent["test"]` is the union of the variants' members, so this
+    // fails `npm run typecheck` if any variant lacks it or widens it.
+    const same: [MessageEvent["test"]] extends [boolean]
+      ? [boolean] extends [MessageEvent["test"]]
+        ? true
+        : false
+      : false = true;
+    expect(same).toBe(true);
+  });
+
+  it("reads the envelope member the spec publishes: optional, and only ever true", () => {
+    // The drift lock for the wire side: the parser reads `test === true`
+    // because the spec's envelope declares `test?: true`. It fails
+    // `npm run typecheck` the day that member is renamed, dropped or widened.
+    type Wire = components["schemas"]["WebhookEventEnvelope"]["test"];
+    const same: [Wire] extends [true | undefined]
+      ? [true | undefined] extends [Wire]
+        ? true
+        : false
+      : false = true;
+    expect(same).toBe(true);
+  });
+
+  it("is frozen with the rest of the event", () => {
+    const event = parseMessageEvent({ ...MESSAGE_SENT, test: true });
+
+    expect(Object.isFrozen(event)).toBe(true);
+    expect(() => {
+      (event as unknown as { test: boolean }).test = false;
+    }).toThrow(TypeError);
+  });
+});
+
 describe("narrowing on type", () => {
   /** What a receiver writes. It must compile with no cast. */
   function describeEvent(event: MessageEvent): string {

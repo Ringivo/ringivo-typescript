@@ -346,8 +346,8 @@ other way goes on reaching it.
 ## Webhook endpoints
 
 A webhook endpoint is a URL of yours plus what it hears about. Registering
-one, changing it, switching it off and rotating its secret is
-`client.webhookEndpoints`.
+one, changing it, switching it off, rotating its secret and sending it a test
+event is `client.webhookEndpoints`.
 
 Reads need `webhooks:read` and writes need `webhooks:write`. A `fax:*` token
 reaches the **fax-account-scoped** endpoints alone: `fax:write` may register
@@ -436,6 +436,59 @@ during that window a delivery carries two signatures and `verifyWebhook()`
 accepts either. So a rotation costs you no deliveries as long as your own copy
 is replaced before the deadline.
 
+### Sending a test event
+
+Check that your server receives and verifies our webhooks without waiting for
+a real event:
+
+```ts
+const test = await client.webhookEndpoints.sendTest(endpoint.id, { type: "fax.delivered" });
+const result = await client.webhookTestDeliveries.wait(test);
+
+result.status; // "delivered" (your server answered 2XX) or "failed"
+result.statusCode; // what your server answered, or null if we never reached it
+result.responseBody; // the first 1 KiB of that answer
+result.error; // why it failed, when it did
+```
+
+We send **one** test event to that endpoint and to no other, through the same
+path as a real delivery: the same signature, the same headers, the same
+addresses. It is sent once and never retried. `type` is a type the endpoint
+may receive, or `webhook.test` for a plain ping; leave it out and the endpoint's
+first type is sent. An empty or blank `type` is refused before any request.
+
+**The body is the published example for its type**, with a new `eventId`, the
+time of the test as `occurredAt`, and `test: true`. The delivery also carries
+the header `Ringivo-Webhook-Test: true`. Every id in a sample is illustrative,
+so a receiver must check `test` first and answer 2XX without doing the work —
+`parseMessageEvent()` reads it as `event.test` (see [Message events](#message-events)).
+
+`sendTest()` answers with the test's result, normally `pending`. A result that
+is already `failed` means the test could not be queued: send it again later.
+`wait()` reads the result again every 2 seconds until it is no longer
+`pending`, for at most 150 seconds — longer than the 2 minutes after which the
+API marks a test with no result `failed`. Pass `{ intervalMs, timeoutMs }` to
+change either. Past `timeoutMs` it throws a `WebhookTestTimeoutError`, whose
+`delivery` is the last result read. Its reads count against the API's rate
+limit: a 429 on a read with a `Retry-After` is waited out, for at least
+`intervalMs` and inside the deadline, and every other refused read is thrown. `endpointId` names the endpoint the
+test was sent to, on every result. `webhookTestDeliveries.get(id)` and
+`list({ endpoint?, ids? })` read results yourself; they are kept for 7 days.
+
+The refusals are `ApiError`s:
+
+| Status | Why | `isRetryable()` |
+|---|---|---|
+| 409 | The endpoint is disabled. Nothing is sent to it, a test included. | `false` |
+| 422 | `type` is not one the endpoint may receive. `source.pointer` is `/eventType`. | `false` |
+| 429 | More than 5 tests a minute to this endpoint, or 5 a minute from you, or the API's own rate limit. Wait `retryAfter` seconds. | `true` |
+| 503 | The limit could not be checked, so nothing was sent. Wait `retryAfter` seconds. | `true` |
+
+`sendTest()` sends no `Idempotency-Key` and never sends a test again by itself:
+every send is a new test, with a new id. It needs the scope a change to the
+endpoint needs — `webhooks:write`, or `fax:write` for a fax-account-scoped
+endpoint. Reading a result needs `webhooks:read`.
+
 ### What we could not deliver
 
 `client.webhookDeliveries` is evidence of what went wrong, not a history. A
@@ -519,7 +572,7 @@ verifies, so a rotation costs you no deliveries.
 `message.received` describes a text somebody sent TO one of your numbers.
 `message.sent`, `message.delivered` and `message.failed` describe a text
 sent FROM one of your numbers. Verify the raw body, decode it yourself, then
-parse it and branch on `event.type`:
+parse it, set test events aside, and branch on `event.type`:
 
 ```ts
 import { SIGNATURE_HEADER, SignatureVerificationError, parseMessageEvent, verifyWebhook } from "ringivo";
@@ -535,6 +588,10 @@ app.post("/hooks/messages", (request, response) => {
   }
 
   const event = parseMessageEvent(JSON.parse(request.rawBody.toString("utf8")));
+
+  if (event.test) {
+    return response.sendStatus(204); // a test event: its ids are samples, do not act on them
+  }
 
   switch (event.type) {
     case "message.received": // somebody texted one of your numbers
@@ -555,6 +612,12 @@ app.post("/hooks/messages", (request, response) => {
 });
 ```
 
+- **Check `event.test` first.** It is `true` on a test event sent with
+  `webhookEndpoints.sendTest()` — on every variant, the `webhook.test` ping
+  (an `UnknownMessageEvent`) included — and `false` on a real event. A test
+  carries the published example body for its type, so every id in it is
+  illustrative and names nothing of yours: answer 2XX and do nothing else.
+  It is `true` only when the body's `test` member is literally `true`.
 - **One variant per event type.** `event.type` tells them apart, and each
   variant carries only its own members: a received message has `receivedAt`
   and no provider ids; the three sent-message events share
@@ -1311,9 +1374,10 @@ standard allows are handled for you, a count of seconds and an absolute date,
 and you get seconds either way.
 
 **This client does not retry for you.** It replaces an expired token and
-retries once on a 401, and that is the only retry it performs — a 429 is
-handed to you to back off from, because how long a fax send may sit is your
-decision and not a library's.
+retries once on a 401, and `webhookTestDeliveries.wait()` sleeps through a 429
+with `Retry-After` while it polls; those are the only retries it performs. Any
+other 429 is handed to you to back off from, because how long a fax send may
+sit is your decision and not a library's.
 
 ### Retrying from a queue
 
@@ -1386,6 +1450,10 @@ try {
 | `client.webhookEndpoints.update(webhookEndpointId, { url?, events?, active? })` | `webhooks:write` | A sparse PATCH: only what you pass. The event list replaces the old one and must name at least one type. |
 | `client.webhookEndpoints.delete(webhookEndpointId)` | `webhooks:write` | Remove it. The fan-out stops; the deliveries survive. |
 | `client.webhookEndpoints.rotateSecret(webhookEndpointId)` | `webhooks:write` | Mint a new secret. The old one signs for 24 more hours. |
+| `client.webhookEndpoints.sendTest(webhookEndpointId, { type? })` | `webhooks:write` | Send one test event to that endpoint. Resolves to a `WebhookTestDelivery`, normally `pending`. Never sent again by itself. |
+| `client.webhookTestDeliveries.list({ endpoint?, ids?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookTestDeliveryPage`: the test results of the last 7 days. |
+| `client.webhookTestDeliveries.get(webhookTestDeliveryId)` | `webhooks:read` | One `WebhookTestDelivery`. |
+| `client.webhookTestDeliveries.wait(test \| id, { intervalMs?, timeoutMs? })` | `webhooks:read` | Reads the result again until it is not `pending`, waiting out a 429's `Retry-After`. Throws `WebhookTestTimeoutError` past `timeoutMs` (150 s by default). |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
 | `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `ids` reads several customers by id in one request; `code` finds one customer. |
@@ -1421,8 +1489,8 @@ try {
 (each of its variants), `MessageSender`, `OutboundMessage`,
 `OutboundMessageMediaItem`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
-`Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint` and
-`WebhookEndpointPage` are frozen plain objects, and each keeps the JSON it was
+`Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint`,
+`WebhookEndpointPage`, `WebhookTestDelivery` and `WebhookTestDeliveryPage` are frozen plain objects, and each keeps the JSON it was
 built from in `.raw` — so a member the API adds after this release reaches
 you without a new SDK. A member the API did not send reads `null`.
 
