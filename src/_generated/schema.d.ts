@@ -4938,10 +4938,15 @@ export interface components {
             attributes?: components["schemas"]["WebhookTestDeliveryAttributes"];
             relationships?: {
                 /**
-                 * @description The endpoint the test was sent to. `data` is always present, also on a plain read
-                 *     that included nothing, and there are no `links`.
+                 * @description The endpoint the test was sent to — an identifier, and nothing else. It does NOT
+                 *     follow the usual `RelationshipToOne` shape, and the difference is deliberate: this
+                 *     API serves no `endpoint` sub-resource of a test result, so the `self` and `related`
+                 *     URLs that shape carries would both answer 404. In exchange `data` is ALWAYS present,
+                 *     also on a plain read that included nothing.
                  */
-                endpoint?: components["schemas"]["RelationshipToOne"];
+                endpoint?: {
+                    data: components["schemas"]["ResourceIdentifier"];
+                };
             };
             links?: components["schemas"]["ResourceLinks"];
             meta?: components["schemas"]["ResourceMeta"];
