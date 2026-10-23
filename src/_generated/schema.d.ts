@@ -1564,10 +1564,16 @@ export interface paths {
          *     `receivedAt` is when the message was SENT, and `createdAt` is when we stored it — they differ
          *     by however long a redelivery took. Filter on the first; page on the second.
          *
-         *     **Media is described, never carried.** An MMS lists each media item's content type, filename
-         *     and size. There is no URL to fetch a media item: we do not serve the bytes. For a number
-         *     connected to your phone system we keep them only to deliver them there. If you need the
-         *     file, ask your messaging provider.
+         *     **Media items, and a link to download the ones we hold.** An MMS lists each media item's
+         *     content type, filename and size. For a number connected to your phone system we keep the
+         *     files, and each item we hold carries a `contentUrl`: a link that downloads the file, valid
+         *     until `expiresAt` (five minutes). Every read makes new links, so read the message again for
+         *     a fresh one. For any other number we never kept the files: `contentUrl` and `expiresAt` are
+         *     null, and your messaging provider has the file. They are null too for an item we did not
+         *     keep (larger than 10 MB, for example) and for the message's own text part.
+         *
+         *     **A customer-scoped credential** (or a customer-level user) reads only the messages sent to
+         *     numbers assigned to its customer now, and gets links only for files kept for that customer.
          */
         get: operations["listInboundMessages"];
         put?: never;
@@ -1587,10 +1593,44 @@ export interface paths {
         };
         /**
          * Read one received message
-         * @description One message, exactly as the list serves it. A message addressed to a number you do not carry
-         *     text messaging for is not yours and answers 404.
+         * @description One message, exactly as the list serves it, with new media links (see the list). A message
+         *     addressed to a number you do not carry text messaging for is not yours and answers 404.
          */
         get: operations["getInboundMessage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/inbound-messages/{message}/media/{part}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download a media item of a received message (the URL a media item names)
+         * @description **You do not build this URL — you follow it.** Each media item of
+         *     `GET /v1/inbound-messages` that we hold the file of carries a `contentUrl`, and this is
+         *     where it points. Treat it as opaque: the signature covers the whole address, so editing the
+         *     path, the host or any query parameter invalidates it.
+         *
+         *     Send **no `Authorization` header**. The signature is the authorization here, which is why
+         *     this operation publishes no security scheme — the entitlement was checked when the link was
+         *     made, by the request that held your token. The link stops working at the `expiresAt` the
+         *     message reported.
+         *
+         *     The file comes back with `Content-Type` set to the media type the item named as
+         *     `contentType` (any type a phone can send: an image, a video, audio, a vCard, a PDF), as an attachment
+         *     (`Content-Disposition: attachment`), with `X-Content-Type-Options: nosniff` and a sandboxing
+         *     `Content-Security-Policy`. The file name in `Content-Disposition` is not the sender's; use
+         *     the item's `filename` if you want it.
+         */
+        get: operations["downloadInboundMessageMedia"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3077,11 +3117,12 @@ export interface webhooks {
          *     `GET /v1/inbound-messages` — `data.id` is that collection's id, so refetch the message there
          *     when you want it back.
          *
-         *     **Media is described, never carried.** Each media item names its content type, its filename
-         *     when it had one, and its size in bytes. There is no URL: we do not serve the bytes. For a
-         *     number connected to your phone system we keep them only to deliver them there. Ask your
-         *     messaging provider for the file. An SMS carries an empty `media` list rather than an absent
-         *     key.
+         *     **Media is described here, with no link.** Each media item names its content type, its
+         *     filename when it had one, and its size in bytes. A webhook body has no download link: it
+         *     can reach your logs, and a retry can arrive hours after we built it. To download a file,
+         *     read the message with `GET /v1/inbound-messages/{data.id}` and your own credential. Its
+         *     media items carry a `contentUrl` for each file we hold (for a number connected to your
+         *     phone system). An SMS carries an empty `media` list rather than an absent key.
          *
          *     **Scope: `tenant` and `customer`** — which is every scope there is, so the only endpoint
          *     that does not hear a message is one that did not ask for the type. A message belongs to a
@@ -4838,8 +4879,9 @@ export interface components {
          *     but the rule is the one every event on this channel follows: a retry six hours later carries
          *     the values the event was built with.
          *
-         *     **No media bytes and no URL.** The media items are described and nothing more — we do not
-         *     serve the bytes, so there is nothing here to fetch them with.
+         *     **No media bytes and no URL.** The media items are described and nothing more. To download
+         *     a file we hold, read the message with `GET /v1/inbound-messages/{id}`: its media items
+         *     carry a five-minute `contentUrl`.
          */
         MessageReceivedEventData: {
             /**
@@ -5817,9 +5859,9 @@ export interface components {
          */
         InboundMessageKind: "sms" | "mms";
         /**
-         * @description One media item of an MMS sent to your number, DESCRIBED — in `GET /v1/inbound-messages` and
-         *     in the `message.received` webhook alike. There are no bytes and no URL: we do not serve the
-         *     bytes. If you need the file, ask your messaging provider.
+         * @description One media item of an MMS sent to your number, DESCRIBED, as the `message.received` webhook
+         *     carries it. There is no link here; `GET /v1/inbound-messages/{id}` gives one for each file
+         *     we hold (`InboundMessageMediaWithLink`).
          */
         InboundMessageMediaItem: {
             /** @example image/jpeg */
@@ -5835,6 +5877,41 @@ export interface components {
              */
             size: number;
         };
+        /**
+         * @description One media item of an MMS sent to your number, as `GET /v1/inbound-messages` serves it: the
+         *     description, and a download link when we hold the file.
+         */
+        InboundMessageMediaWithLink: {
+            /** @example image/jpeg */
+            contentType: string;
+            /**
+             * @description The filename the sender's carrier gave the item. Null when it gave none.
+             * @example photo.jpg
+             */
+            filename: string | null;
+            /**
+             * @description The media item's size, in bytes.
+             * @example 40213
+             */
+            size: number;
+            /**
+             * Format: uri
+             * @description A link that downloads the file, with no `Authorization` header. It is valid until
+             *     `expiresAt`. Null when we do not hold the file: the number is not connected to your phone
+             *     system, the item is the message's text, or we did not keep it (for example, it is larger
+             *     than 10 MB). Null too, for a customer-scoped credential, when the file was kept for
+             *     another customer or for your pool (the number moved since). Do not change the link: the
+             *     signature covers all of it.
+             * @example https://api.yourprovider.example/v1/inbound-messages/0198c4a1-8f70-7081-b283-4d5e6f708301/media/0198c4a1-9a10-7c2d-8e3f-405162738495/content?expires=1787057037&signature=...
+             */
+            contentUrl: string | null;
+            /**
+             * Format: date-time
+             * @description When `contentUrl` stops working — five minutes after the read. Null when `contentUrl` is null.
+             * @example 2026-08-18T12:43:57+00:00
+             */
+            expiresAt: string | null;
+        };
         InboundMessageAttributes: {
             kind?: components["schemas"]["InboundMessageKind"];
             /**
@@ -5849,8 +5926,8 @@ export interface components {
             to?: string;
             /** @description The text. Null for an MMS with no caption. */
             body?: string | null;
-            /** @description The media items of an MMS, described. Empty for an SMS. */
-            media?: components["schemas"]["InboundMessageMediaItem"][];
+            /** @description The media items of an MMS, each with a download link when we hold the file. Empty for an SMS. */
+            media?: components["schemas"]["InboundMessageMediaWithLink"][];
             /**
              * Format: date-time
              * @description When the message was SENT — filter on this one.
@@ -12280,6 +12357,64 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    downloadInboundMessageMedia: {
+        parameters: {
+            query: {
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                expires: number;
+                /** @description Part of the signature, minted for you. Do not edit it. */
+                signature: string;
+            };
+            header?: never;
+            path: {
+                /** @description The received message's id. */
+                message: components["parameters"]["InboundMessageId"];
+                /** @description The stored file's id, minted for you. Do not edit it. */
+                part: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /**
+             * @description The signature did not verify, or the link has expired (`Invalid signature.`). Read the
+             *     message again for a fresh link — a link cannot be repaired or extended.
+             */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description There is no such file to serve (`code: not_found`). Every miss answers the same way on
+             *     purpose, because this route takes no credential: an unknown file and one we no longer
+             *     hold (its customer was deleted) are not told apart. Read the message again; an item
+             *     with a null `contentUrl` is one we do not hold, or, for a customer-scoped credential,
+             *     one that was kept for another customer or for your pool.
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
         };
     };
