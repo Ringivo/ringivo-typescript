@@ -592,7 +592,10 @@ app.post("/hooks/messages", (request, response) => {
   `client.inboundMessages.get()` takes, and `receivedAt` is when it was sent.
 - **Media items are described, never linked.** On `message.received`,
   `media` holds `InboundMessageMediaItem`s (`contentType`, `filename`,
-  `size`). On the three outbound events it holds
+  `size`). To download a file, read the message with
+  `client.inboundMessages.get(message.id)`: its items carry a link (see
+  "Downloading the media of a received MMS" below). On the three outbound
+  events it holds
   `OutboundMessageMediaItem`s (`contentType`, `size`), with no filename.
   `size` is in bytes.
 - **A redelivery carries the values its event was built with.** An event
@@ -1182,12 +1185,68 @@ if (first) {
   `pageSize`, as on every list here.
 - **`receivedAt` is when the message was sent**, and the date filters match
   it. `createdAt` is when the platform stored it.
-- **Media is described, never carried**: `media` holds
-  `InboundMessageMediaItem`s (`contentType`, `filename`, `size`) and no
-  bytes or URL. `size` is in bytes; `filename` is the name the sender's
-  carrier gave the item, or `null`. The platform does not serve the bytes,
-  so ask your messaging provider for the file. `body` is `null` for an MMS
-  with no caption.
+- **Media is described**: `media` holds `InboundMessageMediaWithLink`s
+  (`contentType`, `filename`, `size`, `contentUrl`, `expiresAt`). `size` is
+  in bytes; `filename` is the name the sender's carrier gave the item, or
+  `null`. `body` is `null` for an MMS with no caption.
+
+### Downloading the media of a received MMS
+
+When the platform holds a media item's file, the item has a `contentUrl`: a
+signed link on your API host. It works until `expiresAt`, five minutes after
+the read. `downloadMedia()` follows the link and gives you the bytes:
+
+```ts
+import { writeFile } from "node:fs/promises";
+
+// Your own extensions, for the types you accept.
+const EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "video/mp4": ".mp4",
+};
+
+const message = await client.inboundMessages.get(messageId);
+for (const [index, item] of message.media.entries()) {
+  if (item.contentUrl === null) {
+    continue; // the platform does not hold this file
+  }
+  const bytes = await client.inboundMessages.downloadMedia(item); // a Uint8Array
+  // A name you build, never a path the sender chose.
+  const extension = EXTENSIONS[item.contentType ?? ""] ?? "";
+  await writeFile(`media-${message.id}-${index}${extension}`, bytes);
+}
+```
+
+- **The download sends no bearer token.** The signature is the
+  authorization. `downloadMedia()` uses the same path as `faxes.media()`, so
+  your credential never goes with the link. Do not change the link: the
+  signature covers all of it.
+- **`filename` is sender input.** The sender's carrier chose it. Show it to
+  people, but clean it before you use it as a file path (at least
+  `path.basename()`, and your own allowlist).
+- **`contentUrl` and `expiresAt` are `null` when the platform holds no
+  file**: the number is not connected to your phone system, the item is the
+  message's text, or the platform did not keep the file (for example, it is
+  larger than 10 MB). For a customer-scoped
+  credential they are also `null` when the file was kept for another
+  customer or for your pool. Your messaging provider has those files.
+  `downloadMedia()` refuses such an item with an `Error`, before any request.
+- **Every read makes new links.** A link past `expiresAt`, or a changed link,
+  is an `ApiError` with status 403: read the message again for a fresh link.
+  A file the platform no longer holds is a 404 `not_found`.
+- **Downloads count against the API rate limit**: 60 requests a minute from
+  one client address. For a client credential, that limit is shared with
+  your other API calls. Above that you get a 429 with `retryAfter`
+  (`isRetryable()` is `true`). Read a page you can download in five minutes
+  (`pageSize`), or read the message again for fresh links.
+- **The file name the download answers with is not the sender's.** To show
+  the sender's name, use the item's `filename`, and never as a path without
+  cleaning it.
+- **The `message.received` webhook has no links.** Its media items are
+  `InboundMessageMediaItem`s, with no `contentUrl`. To download a file, read
+  the message with `client.inboundMessages.get(event.message.id)`.
 
 ## When something is refused
 
@@ -1345,6 +1404,7 @@ try {
 | `client.messages.record({ from, to, senderLabel, providerMessageId, providerPartIds, sentAt, body?, mediaUrls?, markConversationRead? })` | `messages:record` | Record a text you already sent. Resolves to an `OutboundMessage`; `replayed` is `true` on a repeat. |
 | `client.inboundMessages.list({ number?, from?, kind?, receivedAfter?, receivedBefore?, ids?, after?, before?, pageSize? })` | `numbers:read` or `numbers:messaging` | An `InboundMessagePage`: `messages` plus `nextCursor`. |
 | `client.inboundMessages.get(inboundMessageId)` | `numbers:read` or `numbers:messaging` | One `InboundMessage`. |
+| `client.inboundMessages.downloadMedia(item)` | — (the link is signed) | The bytes of one media item, as a `Uint8Array`. Follows `item.contentUrl` with no bearer token; refuses an item whose `contentUrl` is `null`. |
 | `client.request(request, { timeoutMs? })` | — | Any endpoint this client does not wrap yet, with your credential. `timeoutMs` replaces the client's for this one request. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 | `parseMessageEvent(payload)` | — | A decoded `message.*` body as its own `MessageEvent` variant, told apart by `type`. Never throws. |
@@ -1356,7 +1416,8 @@ try {
 `CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `InboundMessage`,
-`InboundMessageMediaItem`, `InboundMessagePage`, `MediaLink`, `MessageEvent`
+`InboundMessageMediaItem`, `InboundMessageMediaWithLink`,
+`InboundMessagePage`, `MediaLink`, `MessageEvent`
 (each of its variants), `MessageSender`, `OutboundMessage`,
 `OutboundMessageMediaItem`, `PbxCall`,
 `PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,

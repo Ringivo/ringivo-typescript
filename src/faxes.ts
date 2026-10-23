@@ -35,9 +35,8 @@
  * fax that arrives without its tags.
  */
 import type { paths } from "./_generated/schema.js";
-import { USER_AGENT } from "./auth.js";
 import { JSON_MEDIA_TYPE, JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
-import { throwForResponse } from "./errors.js";
+import { downloadUnauthenticated } from "./download.js";
 import {
   type Fax,
   type FaxPage,
@@ -379,30 +378,6 @@ export class Faxes {
     const link = await this.mediaLink(faxId, options);
     return downloadUnauthenticated(link.url, this.client.timeoutMs);
   }
-}
-
-/**
- * Follow a pre-signed URL and return the bytes behind it.
- *
- * Deliberately NOT through `client.request()`: that path carries our bearer
- * token, and this URL — though it lives on the tenant's own API host, behind
- * a branded media proxy — is already authorized by its own signature.
- * Sending the bearer token with it would hand out a credential that reads
- * every fax this client can reach, for no reason: the signature already
- * grants the read.
- *
- * It drops the token and nothing else — the User-Agent stays, because the
- * download is still this SDK asking and an operator reading the media
- * proxy's access log should see which client fetched the document.
- */
-async function downloadUnauthenticated(url: string, timeoutMs: number): Promise<Uint8Array> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
-    redirect: "follow",
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  await throwForResponse(response);
-  return new Uint8Array(await response.arrayBuffer());
 }
 
 /**

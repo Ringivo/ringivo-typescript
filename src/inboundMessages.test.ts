@@ -11,14 +11,20 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
-import { ApiError, Ringivo } from "./index.js";
+import type { components } from "./_generated/schema.js";
+import { ApiError, Ringivo, VERSION, isRetryable } from "./index.js";
+import type { InboundMessage, InboundMessageMediaWithLink } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
 const MESSAGES_URL = `${BASE_URL}/v1/inbound-messages`;
 const MESSAGE_ID = "0198c4a1-8f70-7081-b283-4d5e6f708301";
 const SECOND_MESSAGE_ID = "0198c4a1-8f70-7081-b283-4d5e6f708302";
+const PART_ID = "0198c4a1-9a10-7c2d-8e3f-405162738495";
 const JSONAPI = "application/vnd.api+json";
+/** The signed link a media item names: the spec's own example, on the API host. */
+const CONTENT_PATH_URL = `${MESSAGES_URL}/${MESSAGE_ID}/media/${PART_ID}/content`;
+const CONTENT_URL = `${CONTENT_PATH_URL}?expires=1787057037&signature=abc123`;
 
 const server = mockServer();
 
@@ -193,6 +199,8 @@ describe("get", () => {
       contentType: "image/jpeg",
       filename: "photo.jpg",
       size: 40213,
+      contentUrl: null,
+      expiresAt: null,
       raw: { contentType: "image/jpeg", filename: "photo.jpg", size: 40213 },
     });
     // A member of the wrong type reads null; the value is still in raw.
@@ -200,6 +208,43 @@ describe("get", () => {
     expect(message.media[1]?.size).toBeNull();
     expect(message.media[1]?.raw.size).toBe("large");
     expect(Object.isFrozen(message.media)).toBe(true);
+  });
+
+  it("reads each media item's download link and when it dies", async () => {
+    server.use(
+      http.get(`${MESSAGES_URL}/${MESSAGE_ID}`, () =>
+        HttpResponse.json({
+          data: messageResource({
+            kind: "mms",
+            media: [
+              {
+                contentType: "image/jpeg",
+                filename: "photo.jpg",
+                size: 40213,
+                contentUrl: CONTENT_URL,
+                expiresAt: "2026-08-18T12:43:57+00:00",
+              },
+              {
+                contentType: "text/plain",
+                filename: null,
+                size: 12,
+                contentUrl: null,
+                expiresAt: null,
+              },
+            ],
+          }),
+        }),
+      ),
+    );
+
+    const message = await client().inboundMessages.get(MESSAGE_ID);
+
+    expect(message.media[0]?.contentUrl).toBe(CONTENT_URL);
+    expect(message.media[0]?.expiresAt?.toISOString()).toBe("2026-08-18T12:43:57.000Z");
+    // Null when the platform holds no bytes: the text part here.
+    expect(message.media[1]?.contentUrl).toBeNull();
+    expect(message.media[1]?.expiresAt).toBeNull();
+    expect(Object.isFrozen(message.media[0])).toBe(true);
   });
 
   it("keeps an id inside its own path segment", async () => {
@@ -235,5 +280,231 @@ describe("get", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect((error as ApiError).statusCode).toBe(404);
+  });
+});
+
+describe("list reads media links", () => {
+  it("reads contentUrl and expiresAt on every row of a page", async () => {
+    listing({
+      data: [
+        messageResource({
+          kind: "mms",
+          media: [
+            {
+              contentType: "image/png",
+              filename: "a.png",
+              size: 9,
+              contentUrl: CONTENT_URL,
+              expiresAt: "2026-08-18T12:43:57Z",
+            },
+          ],
+        }),
+      ],
+    });
+
+    const page = await client().inboundMessages.list();
+
+    expect(page.messages[0]?.media[0]).toEqual({
+      contentType: "image/png",
+      filename: "a.png",
+      size: 9,
+      contentUrl: CONTENT_URL,
+      expiresAt: new Date("2026-08-18T12:43:57Z"),
+      raw: {
+        contentType: "image/png",
+        filename: "a.png",
+        size: 9,
+        contentUrl: CONTENT_URL,
+        expiresAt: "2026-08-18T12:43:57Z",
+      },
+    });
+  });
+
+  it("reads a link member of the wrong type as null", async () => {
+    listing({
+      data: [
+        messageResource({
+          media: [
+            { contentType: "image/png", filename: null, size: 9, contentUrl: 7, expiresAt: "soon" },
+          ],
+        }),
+      ],
+    });
+
+    const page = await client().inboundMessages.list();
+
+    expect(page.messages[0]?.media[0]?.contentUrl).toBeNull();
+    expect(page.messages[0]?.media[0]?.expiresAt).toBeNull();
+  });
+});
+
+describe("downloadMedia", () => {
+  function withLink(contentUrl: string | null): InboundMessageMediaWithLink {
+    return Object.freeze({
+      contentType: "image/jpeg",
+      filename: "photo.jpg",
+      size: 23,
+      contentUrl,
+      expiresAt: contentUrl === null ? null : new Date("2026-08-18T12:43:57Z"),
+      raw: {},
+    });
+  }
+
+  it("reads the message with the bearer, then downloads WITHOUT it", async () => {
+    // The link is signed: the signature is the authorization. Sending our
+    // bearer token with it would hand a credential that reads every message
+    // to a URL that never needed one.
+    const read = new Calls();
+    const download = new Calls();
+    server.use(
+      http.get(`${MESSAGES_URL}/${MESSAGE_ID}`, async ({ request }) => {
+        await read.record(request);
+        return HttpResponse.json({
+          data: messageResource({
+            kind: "mms",
+            media: [
+              {
+                contentType: "image/jpeg",
+                filename: "photo.jpg",
+                size: 23,
+                contentUrl: CONTENT_URL,
+                expiresAt: "2026-08-18T12:43:57+00:00",
+              },
+            ],
+          }),
+        });
+      }),
+      http.get(CONTENT_PATH_URL, async ({ request }) => {
+        await download.record(request);
+        return HttpResponse.text("\xff\xd8 the real photo", {
+          headers: { "Content-Type": "image/jpeg" },
+        });
+      }),
+    );
+
+    const ringivo = client();
+    const message = await ringivo.inboundMessages.get(MESSAGE_ID);
+    const item = message.media[0];
+    if (!item) {
+      throw new Error("expected one media item");
+    }
+    const content = await ringivo.inboundMessages.downloadMedia(item);
+
+    expect(content).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(content)).toContain("the real photo");
+    expect(read.last.request.headers.get("authorization")).toBe("Bearer tok");
+    expect(download.count).toBe(1);
+    expect(download.last.request.headers.get("authorization")).toBeNull();
+    // It drops the token and nothing else: the User-Agent stays.
+    expect(download.last.request.headers.get("user-agent")).toBe(`Ringivo/TS ${VERSION}`);
+    // The link is followed exactly as given: the signature covers all of it.
+    expect(download.last.url.toString()).toBe(CONTENT_URL);
+  });
+
+  it("refuses an item with no link, before any request", async () => {
+    // No handler is registered: a request would fail the test on its own.
+    const error = await client()
+      .inboundMessages.downloadMedia(withLink(null))
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ApiError);
+    expect((error as Error).message).toMatch(/no contentUrl/);
+    expect((error as Error).message).toMatch(/messaging provider/);
+  });
+
+  it("refuses an empty contentUrl, before any request", async () => {
+    // No handler is registered: a request would fail the test on its own.
+    await expect(client().inboundMessages.downloadMedia(withLink(""))).rejects.toThrow(
+      /no contentUrl/,
+    );
+  });
+
+  it("refuses a webhook media item, which never has a link", async () => {
+    const webhookItem = { contentType: "image/jpeg", filename: "photo.jpg", size: 23, raw: {} };
+
+    await expect(
+      // @ts-expect-error — a webhook item has no contentUrl; read the message for one.
+      client().inboundMessages.downloadMedia(webhookItem),
+    ).rejects.toThrow(/inboundMessages\.get\(\)/);
+  });
+
+  it("throws an expired or altered link's 403 as an ApiError", async () => {
+    server.use(
+      http.get(CONTENT_PATH_URL, () =>
+        HttpResponse.json(
+          { errors: [{ status: "403", title: "Forbidden", detail: "Invalid signature." }] },
+          { status: 403, headers: { "Content-Type": JSONAPI } },
+        ),
+      ),
+    );
+
+    const error = (await client()
+      .inboundMessages.downloadMedia(withLink(CONTENT_URL))
+      .catch((caught: unknown) => caught)) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.statusCode).toBe(403);
+    expect(error.errors[0]?.detail).toBe("Invalid signature.");
+  });
+
+  it("throws a file the platform no longer holds as a 404 not_found", async () => {
+    server.use(
+      http.get(CONTENT_PATH_URL, () =>
+        HttpResponse.json(
+          { errors: [{ status: "404", code: "not_found", title: "Not found" }] },
+          { status: 404, headers: { "Content-Type": JSONAPI } },
+        ),
+      ),
+    );
+
+    const error = (await client()
+      .inboundMessages.downloadMedia(withLink(CONTENT_URL))
+      .catch((caught: unknown) => caught)) as ApiError;
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.statusCode).toBe(404);
+    expect(error.code).toBe("not_found");
+  });
+
+  it("throws a 429 with its Retry-After, retryable", async () => {
+    server.use(
+      http.get(CONTENT_PATH_URL, () =>
+        HttpResponse.json(
+          { errors: [{ status: "429", code: "rate_limited", title: "Too Many Requests" }] },
+          { status: 429, headers: { "Content-Type": JSONAPI, "Retry-After": "12" } },
+        ),
+      ),
+    );
+
+    const error = (await client()
+      .inboundMessages.downloadMedia(withLink(CONTENT_URL))
+      .catch((caught: unknown) => caught)) as ApiError;
+
+    expect(error.statusCode).toBe(429);
+    expect(error.retryAfter).toBe(12);
+    expect(isRetryable(error)).toBe(true);
+  });
+});
+
+describe("the API media item shape", () => {
+  // The drift lock, in both directions, as messageEvents.test.ts has for the
+  // webhook item: every member the generated schema declares is a member of
+  // the model, and the model has no member besides those and `raw`.
+  type SameKeys<Model, Wire> = [Exclude<keyof Model, "raw">] extends [keyof Wire]
+    ? [keyof Wire] extends [Exclude<keyof Model, "raw">]
+      ? true
+      : false
+    : false;
+
+  it("is the spec's InboundMessageMediaWithLink", () => {
+    const withLink: SameKeys<
+      InboundMessageMediaWithLink,
+      components["schemas"]["InboundMessageMediaWithLink"]
+    > = true;
+    const message: InboundMessage["media"][number] extends InboundMessageMediaWithLink
+      ? true
+      : false = true;
+    expect([withLink, message]).toEqual([true, true]);
   });
 });

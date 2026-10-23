@@ -291,7 +291,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.inboundMessages))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["get", "list"]);
+    ).toEqual(["downloadMedia", "get", "list"]);
   });
 
   it("parses a message event, routes it, and makes a label", async () => {

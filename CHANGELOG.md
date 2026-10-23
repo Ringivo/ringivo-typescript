@@ -1,5 +1,42 @@
 # Release notes
 
+## Unreleased — Added
+
+- **Download the media of a received MMS.** Each media item of
+  `inboundMessages.list()` and `get()` now has `contentUrl` (a string or
+  `null`) and `expiresAt` (a `Date` or `null`). `contentUrl` is a signed
+  link on your API host that downloads the file with no `Authorization`
+  header, until `expiresAt` (five minutes). Every read makes new links. Both
+  are `null` when the platform holds no file: the number is not connected to
+  your phone system, the item is the message's text, the platform did not
+  keep the file (for example, it is larger than 10 MB), or, for a
+  customer-scoped credential, the file was kept for another customer or for
+  your pool. `filename` is sender input: clean it before you use it as a
+  file path.
+- **`inboundMessages.downloadMedia(item)`** follows `contentUrl` and
+  resolves to the bytes as a `Uint8Array`. It uses the same path as
+  `faxes.media()`, so it never sends the bearer token. An item whose
+  `contentUrl` is `null` is refused with an `Error` before any request. An
+  expired or changed link is an `ApiError` with status 403 (read the message
+  again for a fresh link), a file the platform no longer holds is a 404
+  `not_found`, and too many downloads is a 429 with `retryAfter`. Downloads
+  count against the API rate limit, 60 requests a minute from one client
+  address; for a client credential, that limit is shared with your other
+  API calls.
+- **New type `InboundMessageMediaWithLink`**: the API's media item.
+  `InboundMessage.media` now holds these. It extends
+  `InboundMessageMediaItem`, which stays the `message.received` webhook's
+  item, with no link. Code typed against `InboundMessageMediaItem` reads the
+  new items unchanged. Migration: none, unless you build `InboundMessage`
+  objects yourself; add `contentUrl: null, expiresAt: null` to each media
+  item. The webhook's items do not change: to download a file, read the
+  message with `inboundMessages.get(event.message.id)`.
+- **The API now narrows a customer-scoped credential's reads.** In the same
+  API release, `inboundMessages.list()` and `get()` with a customer-scoped
+  credential return only the messages sent to numbers assigned to that
+  customer. Before, they returned every message of the reseller. This is a
+  server change; this client needs no change for it.
+
 ## 0.24.0 (2026-10-23) — Added
 
 - **`pbx.subscribers.call()` sends an `Idempotency-Key`.** The API is about

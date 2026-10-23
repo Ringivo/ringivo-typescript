@@ -19,10 +19,13 @@
  * platform stored it; they differ by however long a redelivery took. The
  * date filters match `receivedAt`, and the cursor walks `createdAt`.
  *
- * -- MEDIA IS DESCRIBED, NEVER CARRIED --------------------------------------
- * Each media item names its content type, filename and size. There are no
- * bytes and no URL: the platform does not serve the bytes, so ask your
- * messaging provider for the file.
+ * -- MEDIA: DESCRIBED, AND LINKED WHEN HELD ---------------------------------
+ * Each media item names its content type, filename and size, and — when the
+ * platform holds the file — a signed `contentUrl` that works until
+ * `expiresAt` (five minutes). `downloadMedia(item)` follows it with NO
+ * bearer token, through the same path as `faxes.media()` (download.ts). An
+ * item with a null link is one the platform does not hold: ask your
+ * messaging provider for that file. The webhook's items carry no link.
  *
  * -- WHAT IS SPEC-TYPED -----------------------------------------------------
  * Both reads go through the `openapi-fetch` client in client.ts, so
@@ -33,8 +36,10 @@
  */
 import type { Ringivo } from "./client.js";
 import { transportOf } from "./client.js";
+import { downloadUnauthenticated } from "./download.js";
 import {
   type InboundMessage,
+  type InboundMessageMediaWithLink,
   type InboundMessagePage,
   type RawJson,
   inboundMessageFromResource,
@@ -120,6 +125,37 @@ export class InboundMessages {
     });
 
     return inboundMessageFromResource(dataObject(data));
+  }
+
+  /**
+   * The file behind one media item of a message you read with `list()` or
+   * `get()`: follow its `contentUrl`.
+   *
+   * The download goes out UNAUTHENTICATED, through the same path as
+   * `faxes.media()`: the link is signed, and the signature is the
+   * authorization, so this client's bearer token is never sent with it. The
+   * link is followed exactly as given — the signature covers all of it.
+   *
+   * An item whose `contentUrl` is null is refused before any request: the
+   * platform does not hold that file (ask your messaging provider for it). A
+   * `message.received` webhook item has no link either; read the message
+   * with `get()` first. A link past its `expiresAt` (five minutes after the
+   * read), or one that was changed, is an `ApiError` with status 403 — read
+   * the message again for a fresh link. A file the platform no longer holds
+   * is a 404 `not_found`; too many downloads is a 429 with `retryAfter`.
+   */
+  async downloadMedia(item: InboundMessageMediaWithLink): Promise<Uint8Array> {
+    const contentUrl: unknown = item.contentUrl;
+    if (typeof contentUrl !== "string" || contentUrl === "") {
+      throw new Error(
+        "this media item has no contentUrl, so there is nothing to download. Either the " +
+          "platform does not hold the file (ask your messaging provider for it), or the item " +
+          "came from a message.received webhook, which carries no link: read the message " +
+          "with inboundMessages.get() for one.",
+      );
+    }
+
+    return downloadUnauthenticated(contentUrl, this.client.timeoutMs);
   }
 }
 
