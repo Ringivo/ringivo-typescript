@@ -3301,7 +3301,9 @@ export interface webhooks {
          *     It fires for a message you recorded too: its delivery reports join it like any other.
          *
          *     The body is the `message.sent` body with `status: delivered`. Status only moves forward, so a
-         *     late or repeated report never raises a second event.
+         *     late or repeated report never raises a second `message.delivered`. It is not always the last
+         *     word: a later carrier report that the message (or one part of it) did not arrive moves it on
+         *     to `message.failed` — see that event.
          *
          *     `occurredAt` is the instant we recorded the delivery, and never the moment we reached you.
          */
@@ -3344,6 +3346,12 @@ export interface webhooks {
          *
          *     A message that never left raises this event with no `message.sent` before it, and with null
          *     `sentAt`, `providerMessageId` and `providerPartIds`.
+         *
+         *     **It can follow `message.delivered`.** When a later carrier report says that the message, or
+         *     one part of a multi-part text, did not arrive, the message moves from `delivered` to
+         *     `undelivered` and this event fires with cause `undelivered`. Each move has its own stable
+         *     `eventId` (a retry or a repeat carries the same one), and the two events can reach you in
+         *     either order. When you hold both for one message, the failure wins.
          *
          *     `occurredAt` is the instant we recorded the failure, and never the moment we reached you.
          */
