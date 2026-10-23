@@ -246,6 +246,41 @@ describe("get", () => {
     expect(message.media[1]?.expiresAt).toBeNull();
     expect(Object.isFrozen(message.media[0])).toBe(true);
   });
+
+  it("keeps an id inside its own path segment", async () => {
+    const calls = new Calls();
+    server.use(
+      http.get(`${MESSAGES_URL}/:id`, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: messageResource() });
+      }),
+    );
+
+    await client().inboundMessages.get("../faxes/secret");
+
+    expect(calls.last.url.pathname).toBe("/v1/inbound-messages/..%2Ffaxes%2Fsecret");
+  });
+
+  it("refuses an empty id before any request", async () => {
+    await expect(client().inboundMessages.get("")).rejects.toThrow(
+      "an inbound message id is required",
+    );
+  });
+
+  it("throws a 404 as an ApiError", async () => {
+    server.use(
+      http.get(`${MESSAGES_URL}/${MESSAGE_ID}`, () =>
+        HttpResponse.json({ errors: [{ status: "404", title: "Not Found" }] }, { status: 404 }),
+      ),
+    );
+
+    const error = await client()
+      .inboundMessages.get(MESSAGE_ID)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).statusCode).toBe(404);
+  });
 });
 
 describe("list reads media links", () => {
@@ -378,6 +413,13 @@ describe("downloadMedia", () => {
     expect((error as Error).message).toMatch(/messaging provider/);
   });
 
+  it("refuses an empty contentUrl, before any request", async () => {
+    // No handler is registered: a request would fail the test on its own.
+    await expect(client().inboundMessages.downloadMedia(withLink(""))).rejects.toThrow(
+      /no contentUrl/,
+    );
+  });
+
   it("refuses a webhook media item, which never has a link", async () => {
     const webhookItem = { contentType: "image/jpeg", filename: "photo.jpg", size: 23, raw: {} };
 
@@ -464,40 +506,5 @@ describe("the API media item shape", () => {
       ? true
       : false = true;
     expect([withLink, message]).toEqual([true, true]);
-  });
-
-  it("keeps an id inside its own path segment", async () => {
-    const calls = new Calls();
-    server.use(
-      http.get(`${MESSAGES_URL}/:id`, async ({ request }) => {
-        await calls.record(request);
-        return HttpResponse.json({ data: messageResource() });
-      }),
-    );
-
-    await client().inboundMessages.get("../faxes/secret");
-
-    expect(calls.last.url.pathname).toBe("/v1/inbound-messages/..%2Ffaxes%2Fsecret");
-  });
-
-  it("refuses an empty id before any request", async () => {
-    await expect(client().inboundMessages.get("")).rejects.toThrow(
-      "an inbound message id is required",
-    );
-  });
-
-  it("throws a 404 as an ApiError", async () => {
-    server.use(
-      http.get(`${MESSAGES_URL}/${MESSAGE_ID}`, () =>
-        HttpResponse.json({ errors: [{ status: "404", title: "Not Found" }] }, { status: 404 }),
-      ),
-    );
-
-    const error = await client()
-      .inboundMessages.get(MESSAGE_ID)
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(ApiError);
-    expect((error as ApiError).statusCode).toBe(404);
   });
 });

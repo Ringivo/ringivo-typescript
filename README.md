@@ -1199,13 +1199,23 @@ the read. `downloadMedia()` follows the link and gives you the bytes:
 ```ts
 import { writeFile } from "node:fs/promises";
 
+// Your own extensions, for the types you accept.
+const EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "video/mp4": ".mp4",
+};
+
 const message = await client.inboundMessages.get(messageId);
 for (const [index, item] of message.media.entries()) {
   if (item.contentUrl === null) {
     continue; // the platform does not hold this file
   }
   const bytes = await client.inboundMessages.downloadMedia(item); // a Uint8Array
-  await writeFile(item.filename ?? `media-${index}`, bytes);
+  // A name you build, never a path the sender chose.
+  const extension = EXTENSIONS[item.contentType ?? ""] ?? "";
+  await writeFile(`media-${message.id}-${index}${extension}`, bytes);
 }
 ```
 
@@ -1213,9 +1223,13 @@ for (const [index, item] of message.media.entries()) {
   authorization. `downloadMedia()` uses the same path as `faxes.media()`, so
   your credential never goes with the link. Do not change the link: the
   signature covers all of it.
+- **`filename` is sender input.** The sender's carrier chose it. Show it to
+  people, but clean it before you use it as a file path (at least
+  `path.basename()`, and your own allowlist).
 - **`contentUrl` and `expiresAt` are `null` when the platform holds no
   file**: the number is not connected to your phone system, the item is the
-  message's text, or the file is larger than 10 MB. For a customer-scoped
+  message's text, or the platform did not keep the file (for example, it is
+  larger than 10 MB). For a customer-scoped
   credential they are also `null` when the file was kept for another
   customer or for your pool. Your messaging provider has those files.
   `downloadMedia()` refuses such an item with an `Error`, before any request.
@@ -1223,11 +1237,13 @@ for (const [index, item] of message.media.entries()) {
   is an `ApiError` with status 403: read the message again for a fresh link.
   A file the platform no longer holds is a 404 `not_found`.
 - **Downloads count against the API rate limit**: 60 requests a minute from
-  one client address. Above that you get a 429 with `retryAfter`
+  one client address. For a client credential, that limit is shared with
+  your other API calls. Above that you get a 429 with `retryAfter`
   (`isRetryable()` is `true`). Read a page you can download in five minutes
   (`pageSize`), or read the message again for fresh links.
-- **The file name the download answers with is not the sender's.** Use the
-  item's `filename`.
+- **The file name the download answers with is not the sender's.** To show
+  the sender's name, use the item's `filename`, and never as a path without
+  cleaning it.
 - **The `message.received` webhook has no links.** Its media items are
   `InboundMessageMediaItem`s, with no `contentUrl`. To download a file, read
   the message with `client.inboundMessages.get(event.message.id)`.

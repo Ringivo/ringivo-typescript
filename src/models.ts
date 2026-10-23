@@ -1612,10 +1612,13 @@ export interface InboundMessageMediaItem {
  * the link: the signature covers all of it.
  *
  * Both are null when the platform holds no bytes: the number is not
- * connected to your phone system, the item is the message's text, the file
- * is larger than 10 MB, or — for a customer-scoped credential — it was kept
- * for another customer or for your pool. Your messaging provider has those
- * files.
+ * connected to your phone system, the item is the message's text, the
+ * platform did not keep the file (for example, it is larger than 10 MB), or
+ * — for a customer-scoped credential — it was kept for another customer or
+ * for your pool. Your messaging provider has those files.
+ *
+ * `filename` is sender input: show it, but clean it before using it as a
+ * file path.
  *
  * It is an `InboundMessageMediaItem` too, so code written against the
  * webhook's item reads this one unchanged.

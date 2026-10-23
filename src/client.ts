@@ -23,7 +23,7 @@
  * a supported escape hatch rather than a way around the client.
  *
  * Pre-signed media downloads are the deliberate exception: they go out
- * UNAUTHENTICATED (see `downloadUnauthenticated` in faxes.ts). The download
+ * UNAUTHENTICATED (see `downloadUnauthenticated` in download.ts). The download
  * URL sits on the tenant's own API host, behind a branded media proxy, but
  * it must still never receive our bearer token: the signature in the URL is
  * what authorizes the read, and handing over a credential good for the
