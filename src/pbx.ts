@@ -259,6 +259,29 @@ export interface PlaceCallOptions {
    * it and the platform chooses.
    */
   device?: string;
+  /**
+   * Your key for this call, sent as the `Idempotency-Key` header: 1 to 255
+   * printable ASCII characters, such as a UUID or your own reference
+   * (`crm-task-8812-dial`). **A fresh UUID is generated when you do not pass
+   * one**, which makes a single call safe; pass your own — and reuse it — if
+   * you intend to retry a call whose answer you never saw. The same key with
+   * the same request replays the first call instead of dialling again.
+   *
+   * The key belongs to this endpoint and to the customer or tenant your
+   * credential acts for, and the API keeps it for at least 24 hours. The same
+   * key with a different request (another destination, another subscriber) is
+   * a **422** `idempotency_key_reused`; the same key while the first request
+   * still runs is a **409** `idempotency_key_in_use`, whose `retryAfter` says
+   * when to send it again, with the same key (`isRetryable()` is `true` for
+   * it). Spaces around the key are trimmed (by `Headers`, and again by the
+   * API). A key that is blank after that, `""` included, is sent as given and
+   * refused with a **400** `idempotency_key_required` — it is never replaced
+   * with a fresh one. A key longer than 255 characters, or with a character
+   * that is not printable ASCII, is a **400** `idempotency_key_invalid`; a
+   * character above U+00FF never leaves this client, because `Headers`
+   * throws a `TypeError` first. Nothing is dialled on any of these refusals.
+   */
+  idempotencyKey?: string;
 }
 
 /**
@@ -540,12 +563,24 @@ export class PbxSubscribers {
    * **This is not undoable.** There is no cancel: once the request is
    * accepted, the call is out of your hands.
    *
-   * **DO NOT RETRY THIS BLINDLY — there is no idempotency key, and a retry
-   * is a second phone call to a real person.** Unlike `faxes.send()`, which
-   * carries an `Idempotency-Key` and replays rather than resends, nothing
-   * here deduplicates: a request you send twice because you never saw the
-   * first response is two calls. The **502** below is the exception the API
-   * names — nothing was dialled, so that one may be retried.
+   * **RETRY ONLY WITH THE SAME KEY.** Every request carries an
+   * `Idempotency-Key`, which the API requires here: a request without one is
+   * refused with a **400** `idempotency_key_required`. This method makes a
+   * fresh key for each call when you pass no `idempotencyKey`, and sends the
+   * same key again on the one retry it makes by itself (after a 401). That
+   * makes ONE call safe, but a second `call()` with no key is a second phone
+   * call to a real person. To retry a call whose answer you never saw — a
+   * timeout, a dropped connection — pass your own `idempotencyKey` and send
+   * the same request with it again: the API returns the first call's 202,
+   * with the same id, and dials nothing. `PbxCall.idempotentReplay` is `true`
+   * on that answer. Only a 202 is kept against a key, so after a refusal the
+   * same key may be sent again.
+   *
+   * **A refused retry does not prove that nothing rang.** The API checks the
+   * subscriber (404), your scope (403) and that the phone can be called (422
+   * `Not Callable`) BEFORE it looks at the key, so a retry after the phone
+   * went offline gets that 422 even when the first request placed the call. The **502** below says by itself that nothing
+   * was dialled.
    *
    * A subscriber outside your customers' domains answers **404**, not 403.
    * A `device` that is not this subscriber's own is a **422** pointing at
@@ -583,15 +618,26 @@ export class PbxSubscribers {
     const response = await this.client.request(
       new Request(`${this.client.baseUrl}/v1/pbx/subscribers/${encodeURIComponent(id)}/calls`, {
         method: "POST",
+        // THE KEY IS MADE HERE, ONCE PER `call()`, before the request exists.
+        // So the one request this client repeats by itself — the 401 retry in
+        // client.ts, which resends a clone of this request — carries the same
+        // key, and the API reads it as a retry of this call rather than a
+        // second call. A key made per attempt would be the double dial the
+        // key exists to prevent.
         headers: new Headers({
           Accept: JSONAPI_MEDIA_TYPE,
           "Content-Type": JSONAPI_MEDIA_TYPE,
+          "Idempotency-Key": options.idempotencyKey ?? globalThis.crypto.randomUUID(),
         }),
         body: JSON.stringify(document),
       }),
     );
 
-    return pbxCallFromResource(dataObject(await response.json()));
+    // `Idempotent-Replay: true` is the ONLY thing that tells a replay from a
+    // fresh accept — the body is the first call's 202 either way.
+    return pbxCallFromResource(dataObject(await response.json()), {
+      idempotentReplay: response.headers.get("Idempotent-Replay") === "true",
+    });
   }
 }
 

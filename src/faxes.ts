@@ -116,7 +116,14 @@ export interface SendFaxOptions {
    * Your key for this send. **A fresh UUID is generated when you do not pass
    * one**, which makes a single call safe; pass your own — and reuse it — if
    * you intend to retry a send whose response you never saw. Reusing a key
-   * replays the first fax instead of sending a second.
+   * with the same request replays the first fax instead of sending a second.
+   * Reusing it with a different request (other pages, another number) is a
+   * **422** `idempotency_key_reused`, and nothing is sent. Sending it again
+   * while the first send still runs is a **409** `idempotency_key_in_use`:
+   * send it again after `retryAfter` with the same key (`isRetryable()` is
+   * `true` for it). A key is 1 to 255 printable ASCII characters; a blank one,
+   * `""` included, is sent as given and refused with a **400**
+   * `idempotency_key_required`, never replaced with a fresh one.
    */
   idempotencyKey?: string;
 }
@@ -197,6 +204,8 @@ export class Faxes {
 
     const headers = new Headers({
       Accept: JSONAPI_MEDIA_TYPE,
+      // Only `undefined` gets a fresh key: a blank key is the caller's, and the
+      // API refuses it rather than reading it as "no key" (see pbx.ts `call()`).
       "Idempotency-Key": options.idempotencyKey ?? globalThis.crypto.randomUUID(),
     });
 

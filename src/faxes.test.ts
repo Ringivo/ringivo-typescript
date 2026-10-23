@@ -188,6 +188,34 @@ describe("send", () => {
     expect(keys[2]).toBe("chart-4471-attempt-1");
   });
 
+  it("sends an empty key as given rather than replacing it", async () => {
+    // AN EMPTY KEY IS SENT AS GIVEN, not swapped for a fresh one. The API
+    // reads a blank key as a refusal (400 `idempotency_key_required`), never
+    // as "no key"; a retry key that came out blank — a column defaulting to
+    // "" — must fail loudly, not turn into a new key that does the act again.
+    // The Python client does the same.
+    const sends = new Calls();
+    server.use(
+      http.post(FAXES_URL, async ({ request }) => {
+        await sends.record(request);
+        return HttpResponse.json(
+          { errors: [{ status: "400", code: "idempotency_key_required" }] },
+          { status: 400 },
+        );
+      }),
+    );
+
+    await expect(
+      client().faxes.send({
+        faxAccount: ACCOUNT_ID,
+        to: "+1302",
+        file: new Uint8Array([97]),
+        idempotencyKey: "",
+      }),
+    ).rejects.toMatchObject({ statusCode: 400, code: "idempotency_key_required" });
+    expect(sends.last.request.headers.get("idempotency-key")).toBe("");
+  });
+
   it("reports whether the server replayed an earlier send", async () => {
     // `Idempotent-Replay: true` is the ONLY thing that tells a replay from a
     // fresh accept — the body is the same fax either way — so it would be

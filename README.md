@@ -137,7 +137,13 @@ Every send carries an `Idempotency-Key`, and the client invents one when you
 do not pass it. If you intend to **retry** a send whose response you never
 saw — a timeout, a dropped connection — pass your own key and reuse it. The
 server replays the first fax instead of sending a second, and tells you it
-did:
+did. The same key with a different request (other pages, another number) is
+refused with a 422 `idempotency_key_reused`, and nothing is sent. The same
+key while the first send still runs is refused with a 409
+`idempotency_key_in_use`; send it again after `error.retryAfter` seconds,
+with the same key. A key is 1 to 255 printable ASCII characters. An empty
+key is sent as given and refused with a 400 `idempotency_key_required`; only
+an omitted key gets a fresh one:
 
 ```ts
 const fax = await client.faxes.send({
@@ -951,8 +957,46 @@ and it finds the call record once the call has ended — see
 **There is no cancel, and this is not undoable.** Once the request is
 accepted, the call is out of your hands.
 
-**Do not retry this blindly — there is no idempotency key, and a retry is a
-second phone call to a real person.**
+**Retry only with the same key.** Every call carries an `Idempotency-Key`,
+and the API requires it (a request without one is refused with a 400
+`idempotency_key_required`). The client makes a fresh key for each call when
+you do not pass one, and sends the same key again on the one retry it makes by
+itself (after a 401). A second `call()` with no key is a second phone call to a
+real person. If you intend to **retry** a call whose answer you never saw — a
+timeout, a dropped connection — pass your own key and reuse it. The API returns
+the first call's 202, with the same id, dials nothing, and tells you it did:
+
+```ts
+const call = await client.pbx.subscribers.call(personId, {
+  destination: "+13025556789",
+  idempotencyKey: "crm-task-8812-dial",
+});
+
+if (call.idempotentReplay) {
+  console.log("this call was already placed");
+}
+```
+
+A key is 1 to 255 printable ASCII characters, and it belongs to this endpoint
+and to the customer or tenant your credential acts for. The API keeps it for
+at least 24 hours. The same key with a different request (another destination,
+another subscriber) is refused with a 422 `idempotency_key_reused`. The same
+key while the first request still runs is refused with a 409
+`idempotency_key_in_use`; send it again after `error.retryAfter` seconds,
+with the same key — `isRetryable()` is `true` for it (see
+[Retrying from a queue](#retrying-from-a-queue)). An empty key is sent as given
+and refused with a 400 `idempotency_key_required`; only an omitted key gets a
+fresh one. A key with a character above U+00FF never leaves the client
+(`Headers` throws a `TypeError`), and one with another character that is not
+printable ASCII, or longer than 255, is a 400 `idempotency_key_invalid`.
+Nothing is dialled on these refusals, and only a 202 is kept against a key, so
+after a refusal the same key may be sent again.
+
+**A refused retry does not prove that nothing rang.** The API checks the
+subscriber (404), your scope (403) and that the phone can be called (422
+`Not Callable`) before it looks at the key. So if the first request placed the
+call and the phone then went offline, the same-key retry gets the 422, not the
+replay. Look at the call records before you conclude that no call was made.
 
 The device must be that subscriber's own — one that is not is refused with a
 422, whether it belongs to somebody else or does not exist, and nothing is
@@ -1216,15 +1260,24 @@ decision and not a library's.
 
 `isRetryable(error)` is the API's retry contract — `true` for no answer
 (Node's `fetch` timed out, or got no response: a refused connection, a reset,
-a DNS or TLS failure) and for 408, 429 and every 5xx. `false` for every other
-refusal (400, 401, 403, 404, 409, 422): the same request gets the same answer
-until something changes first. `false` too for a `fetch` failure this client
+a DNS or TLS failure), for 408, 429 and every 5xx, and for a 409 whose `code`
+is `idempotency_key_in_use`. `false` for every other refusal (400, 401, 403,
+404, every other 409, 422): the same request gets the same answer until
+something changes first. `false` too for a `fetch` failure this client
 caused (an unknown URL scheme, a forbidden port, a URL that does not parse),
 and for anything this package did not throw for the API — a refusal before
-any request included. Fix the request for a 400, 409 or 422 — never retry
-those unchanged. A 401, 403 or 404 can be an account setting that is fixed
-later, such as a missing scope. A queue may retry those slowly, after the
-change.
+any request included. Fix the request for a 400, another 409 or a 422 — never
+retry those unchanged. A 401, 403 or 404 can be an account setting that is
+fixed later, such as a missing scope. A queue may retry those slowly, after
+the change.
+
+**Retry with the same `Idempotency-Key`.** For `faxes.send()` and
+`pbx.subscribers.call()`, a retry is safe only when it sends the key the first
+attempt sent: pass your own `idempotencyKey` and keep it with the queued job.
+A 409 `idempotency_key_in_use` means the first request with that key still
+runs. Send the same request with the same key after `retryAfter`, and you get
+the first request's answer. A new key can send the fax or ring the phone a
+second time.
 
 ```ts
 import { ApiError, isRetryable } from "ringivo";
@@ -1233,6 +1286,7 @@ try {
   await client.messages.record({ ... });
 } catch (error) {
   if (isRetryable(error)) {
+    // Unchanged means the same idempotency key too, for a send or a call.
     const wait = error instanceof ApiError ? error.retryAfter : undefined; // seconds, or undefined
     queue.retryLater(wait ?? yourBackoff(attempt));
   } else if (error instanceof ApiError && [401, 403, 404].includes(error.statusCode)) {
@@ -1240,7 +1294,7 @@ try {
     // alert someone to fix it.
     queue.retryLater(yourSlowBackoff(attempt));
   } else {
-    queue.giveUp(); // 400, 409, 422, or refused before sending: fix the call
+    queue.giveUp(); // 400, 422, any other 409, or refused before sending: fix the call
   }
 }
 ```
@@ -1285,7 +1339,7 @@ try {
 | `client.pbx.callRecords.requestTranscript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:write` | Ask for one capture's transcript. Resolves to the `pending` (202) or `ready` (200) `Transcript`. Safe to repeat. |
 | `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxSubscriberPage`: `subscribers` plus `nextCursor`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
 | `client.pbx.subscribers.get(subscriberId)` | `pbx-users:read` | One `PbxSubscriber`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
-| `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
+| `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device?, idempotencyKey? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. Sends an `Idempotency-Key` on every request (yours, or a fresh UUID); `idempotentReplay` says when the answer replays an earlier call. |
 | `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `subscriber` is a subscribers id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.messages.record({ from, to, senderLabel, providerMessageId, providerPartIds, sentAt, body?, mediaUrls?, markConversationRead? })` | `messages:record` | Record a text you already sent. Resolves to an `OutboundMessage`; `replayed` is `true` on a repeat. |

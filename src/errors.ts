@@ -337,12 +337,23 @@ export async function throwForResponse(response: Response): Promise<void> {
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([408, 429]);
 
 /**
+ * The one 409 the API says to send again unchanged: the first request with
+ * this `Idempotency-Key` still runs. Matched by code, because every other 409
+ * (a suspended account, a fax that cannot be cancelled, missing audio)
+ * answers the same however often it is sent.
+ */
+const KEY_IN_USE = "idempotency_key_in_use";
+
+/**
  * Whether the API's contract says to try this call again, unchanged.
  *
- * `true` for NO ANSWER and for an `ApiError` whose status is 408, 429 or any
- * 5xx. `false` for every other `ApiError` (400, 401, 403, 404, 409, 422): the
- * same request gets the same answer until something changes first — the
- * request itself, or the account. A 401, 403 or 404 can be a setting that is
+ * `true` for NO ANSWER, for an `ApiError` whose status is 408, 429 or any
+ * 5xx, and for a 409 whose code is `idempotency_key_in_use`. That 409 says the
+ * first request with this `Idempotency-Key` still runs: send the same request
+ * WITH THE SAME KEY after `retryAfter` to get its answer. A new key could do
+ * the act a second time. `false` for every other `ApiError` (400, 401, 403,
+ * 404, every other 409, 422): the same request gets the same answer until
+ * something changes first — the request itself, or the account. A 401, 403 or 404 can be a setting that is
  * fixed later; for example `messages.record()` answers 404 while recording
  * texts is not turned on for the platform yet. Retry those only after the
  * change, or slowly. `false` for anything else, because this package did not
@@ -359,14 +370,18 @@ const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([408, 429]);
  *
  * This decides WHETHER to retry, never WHEN. Wait at least
  * `error.retryAfter` seconds when it is set; otherwise use your own backoff.
- * The client never retries by itself: a retry belongs in your durable queue,
- * not inside a call that would block your worker.
+ * The client never retries by itself, apart from one resend with a fresh
+ * token after a 401: a retry belongs in your durable queue, not inside a call
+ * that would block your worker.
  *
  * The Python client's `is_retryable()` is the same contract; the two are kept
  * the same on purpose.
  */
 export function isRetryable(error: unknown): boolean {
   if (error instanceof ApiError) {
+    if (error.statusCode === 409) {
+      return error.code === KEY_IN_USE;
+    }
     return RETRYABLE_STATUSES.has(error.statusCode) || error.statusCode >= 500;
   }
   return isNoAnswer(error);
