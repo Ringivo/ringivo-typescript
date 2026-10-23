@@ -1824,6 +1824,128 @@ describe("subscribers.call", () => {
     expect(call.device).toBeNull();
   });
 
+  it("always carries an idempotency key and honours the one given", async () => {
+    // The header is REQUIRED on this endpoint — a request without one is
+    // refused with a 400 `idempotency_key_required` — and it is what lets a
+    // retry of a call whose answer was never seen return the first call
+    // instead of ringing a real person a second time. A caller who passes no
+    // key still gets one, fresh per call; a caller who means to retry passes
+    // their own and reuses it.
+    const calls = new Calls();
+    server.use(
+      http.post(PLACE_CALL_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json(accepted(), { status: 202 });
+      }),
+    );
+
+    const ringivo = client();
+    await ringivo.pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
+    await ringivo.pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
+    await ringivo.pbx.subscribers.call(PBX_USER_ID, {
+      destination: "+13025556789",
+      idempotencyKey: "crm-task-8812-dial",
+    });
+
+    const keys = calls.all.map((call) => call.request.headers.get("idempotency-key"));
+
+    expect(keys.every((key) => typeof key === "string" && key.length > 0)).toBe(true);
+    expect(keys[0], "a generated key must not repeat across calls").not.toBe(keys[1]);
+    expect(keys[2]).toBe("crm-task-8812-dial");
+    // The key travels in the header only: the document is the spec's
+    // `PbxCallRequest`, which has no member for it.
+    expect(calls.last.body).not.toContain("idempotencyKey");
+  });
+
+  it("sends the same key again on the 401 retry", async () => {
+    // The 401 retry in client.ts is the ONE request this client ever repeats
+    // by itself. It must repeat the call with the SAME key: a fresh key there
+    // would make the server read the retry as a second call, which is the
+    // double dial the key exists to prevent.
+    const calls = new Calls();
+    server.use(
+      http.post(PLACE_CALL_URL, async ({ request }) => {
+        await calls.record(request);
+        return calls.count === 1
+          ? HttpResponse.json({ errors: [{ status: "401", title: "Unauthorized" }] }, { status: 401 })
+          : HttpResponse.json(accepted(), { status: 202 });
+      }),
+    );
+
+    const call = await client().pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
+
+    const keys = calls.all.map((recorded) => recorded.request.headers.get("idempotency-key"));
+
+    expect(calls.count).toBe(2);
+    expect(keys[0]).toBeTruthy();
+    expect(keys[1]).toBe(keys[0]);
+    expect(call.id).toBe(CALL_ID);
+  });
+
+  it("reports whether the server replayed an earlier call", async () => {
+    // `Idempotent-Replay: true` is the ONLY thing that tells a replay from a
+    // fresh accept — the body is the first call's 202 either way, same id and
+    // same `requestedAt` — so it would be unrecoverable if this client
+    // dropped it.
+    let answered = 0;
+    server.use(
+      http.post(PLACE_CALL_URL, () => {
+        answered += 1;
+        return HttpResponse.json(accepted(), {
+          status: 202,
+          ...(answered === 1 ? { headers: { "Idempotent-Replay": "true" } } : {}),
+        });
+      }),
+    );
+
+    const ringivo = client();
+    const replayed = await ringivo.pbx.subscribers.call(PBX_USER_ID, {
+      destination: "+13025556789",
+      idempotencyKey: "crm-task-8812-dial",
+    });
+    const fresh = await ringivo.pbx.subscribers.call(PBX_USER_ID, { destination: "+13025556789" });
+
+    expect(replayed.idempotentReplay).toBe(true);
+    expect(replayed.id).toBe(CALL_ID);
+    expect(fresh.idempotentReplay).toBe(false);
+  });
+
+  it("raises a typed 422 naming the header for a key reused on another call", async () => {
+    // Same key, different request (another destination, another subscriber):
+    // the server refuses it rather than replaying a call that was not asked
+    // for, and nothing is dialled. The refusal points at the HEADER, not at
+    // the document.
+    server.use(
+      http.post(PLACE_CALL_URL, () =>
+        HttpResponse.json(
+          {
+            errors: [
+              {
+                status: "422",
+                code: "idempotency_key_reused",
+                title: "Idempotency-Key reused",
+                detail: "This Idempotency-Key was already used with a different request.",
+                source: { header: "Idempotency-Key" },
+              },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    const refusal = await client()
+      .pbx.subscribers.call(PBX_USER_ID, {
+        destination: "+13025550000",
+        idempotencyKey: "crm-task-8812-dial",
+      })
+      .catch((error: unknown) => error);
+
+    expect(refusal).toBeInstanceOf(ApiError);
+    expect(refusal).toMatchObject({ statusCode: 422, code: "idempotency_key_reused" });
+    expect((refusal as ApiError).errors[0]?.source).toEqual({ header: "Idempotency-Key" });
+  });
+
   it("raises a typed 422 pointing at the device that is not this user's", async () => {
     server.use(
       http.post(PLACE_CALL_URL, () =>

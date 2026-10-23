@@ -1142,9 +1142,15 @@ export interface TranscriptSegment {
  * A `CallRecord`'s own id is computed from the vendor row it was read out of,
  * so it never equals this one.
  *
- * **There is no idempotency key on the way in.** Asking twice is two calls
- * to a real person, so a `PbxCall` you never received is not a request to
- * repeat blindly.
+ * **A retry is safe only with the same `Idempotency-Key`.** Every
+ * `call()` sends one — yours, or a fresh UUID — and the same key with the
+ * same request returns the first call's 202 instead of dialling again. A
+ * second `call()` with no key is a second call to a real person, so a
+ * `PbxCall` you never received is repeated with the key you sent, never
+ * without one. `idempotentReplay` is `true` when this answer replays an
+ * earlier call (nothing was dialled this time) and `false` for a call the
+ * API accepted now; the body is the same either way, so it is the only
+ * thing that tells the two apart.
  *
  * **These values are what was SENT to the phone system, not what you typed.**
  * `callerId` is the clearest case: the platform stores caller IDs as E.164
@@ -1168,6 +1174,12 @@ export interface PbxCall {
   readonly device: string | null;
   readonly status: string | null;
   readonly requestedAt: Date | null;
+  /**
+   * `true` when the API said this 202 replays an earlier call sent with the
+   * same `Idempotency-Key`, `false` for a call it accepted now. `null` only
+   * on a `PbxCall` built by hand from a resource.
+   */
+  readonly idempotentReplay: boolean | null;
   readonly raw: RawJson;
 }
 
@@ -1423,7 +1435,10 @@ export function transcriptsFromDocument(document: RawJson): readonly Transcript[
 }
 
 /** Build from the JSON:API resource the 202 carries — `pbx.subscribers.call()`. */
-export function pbxCallFromResource(resource: RawJson): PbxCall {
+export function pbxCallFromResource(
+  resource: RawJson,
+  options: { idempotentReplay?: boolean } = {},
+): PbxCall {
   const attributes = nested(resource, "attributes") ?? {};
 
   return Object.freeze({
@@ -1434,6 +1449,7 @@ export function pbxCallFromResource(resource: RawJson): PbxCall {
     device: text(attributes, "device"),
     status: text(attributes, "status"),
     requestedAt: instant(attributes.requestedAt),
+    idempotentReplay: options.idempotentReplay ?? null,
     raw: resource,
   });
 }

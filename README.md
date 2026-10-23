@@ -951,8 +951,34 @@ and it finds the call record once the call has ended — see
 **There is no cancel, and this is not undoable.** Once the request is
 accepted, the call is out of your hands.
 
-**Do not retry this blindly — there is no idempotency key, and a retry is a
-second phone call to a real person.**
+**Retry only with the same key.** Every call carries an `Idempotency-Key`,
+and the API requires it (a request without one is refused with a 400
+`idempotency_key_required`). The client makes a fresh key for each call when
+you do not pass one, and sends the same key again on the one retry it makes by
+itself (after a 401). A second `call()` with no key is a second phone call to a
+real person. If you intend to **retry** a call whose answer you never saw — a
+timeout, a dropped connection — pass your own key and reuse it. The API returns
+the first call's 202, with the same id, dials nothing, and tells you it did:
+
+```ts
+const call = await client.pbx.subscribers.call(personId, {
+  destination: "+13025556789",
+  idempotencyKey: "crm-task-8812-dial",
+});
+
+if (call.idempotentReplay) {
+  console.log("this call was already placed");
+}
+```
+
+A key is 1 to 255 printable ASCII characters, and it belongs to this endpoint
+and to the customer or tenant your credential acts for. The API keeps it for
+at least 24 hours. The same key with a different request (another destination,
+another subscriber) is refused with a 422 `idempotency_key_reused`. The same
+key while the first request still runs is refused with a 409
+`idempotency_key_in_use`; send it again after `error.retryAfter` seconds.
+Nothing is dialled on these refusals, and only a 202 is kept against a key, so
+after a refusal the same key may be sent again.
 
 The device must be that subscriber's own — one that is not is refused with a
 422, whether it belongs to somebody else or does not exist, and nothing is
@@ -1285,7 +1311,7 @@ try {
 | `client.pbx.callRecords.requestTranscript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:write` | Ask for one capture's transcript. Resolves to the `pending` (202) or `ready` (200) `Transcript`. Safe to repeat. |
 | `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxSubscriberPage`: `subscribers` plus `nextCursor`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
 | `client.pbx.subscribers.get(subscriberId)` | `pbx-users:read` | One `PbxSubscriber`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
-| `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. No idempotency key. |
+| `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device?, idempotencyKey? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. Sends an `Idempotency-Key` on every request (yours, or a fresh UUID); `idempotentReplay` says when the answer replays an earlier call. |
 | `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `subscriber` is a subscribers id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.messages.record({ from, to, senderLabel, providerMessageId, providerPartIds, sentAt, body?, mediaUrls?, markConversationRead? })` | `messages:record` | Record a text you already sent. Resolves to an `OutboundMessage`; `replayed` is `true` on a repeat. |
