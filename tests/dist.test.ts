@@ -117,7 +117,9 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
     expect(client.baseUrl).toBe("https://api.yourprovider.example");
     expect(typeof client.request).toBe("function");
     expect(VERSION).toMatch(/^\d+\.\d+\.\d+$/);
-  });
+    // The first test to load the built bundle pays the cold import of dist/, which took over the
+    // default 5 s on a loaded Node 20 host (seen 2026-10-23); later tests reuse the module cache.
+  }, 30_000);
 
   it("exposes the whole fax surface", async () => {
     const { Ringivo } = await load(kind);

@@ -9,8 +9,10 @@
 # package.json carries an `overrides` entry for esbuild (tsup 8 allows only esbuild ^0.27,
 # which has an advisory). When a version-update PR moves tsup to 9, drop that override in it.
 #
-# Policy: weekly on Monday 06:00 UTC (off-hours), ALL version updates (major too) grouped per
-# ecosystem so each ecosystem is one PR per week, at most 2 open PRs per entry, and a 14-day
+# Policy: weekly on Monday 06:00 UTC (off-hours), ALL version updates (major too). npm majors get
+# their OWN grouped PR (`npm-major`): a major such as vitest 5 or tsup 9 can need Node 22 and fail
+# the test-node20 job, and in one group with the minors and patches it would hold all of them red.
+# github-actions is one grouped PR per week. Every entry: at most 2 open PRs, and a 14-day
 # cooldown on version updates so a release has time to be yanked before it lands here.
 # SECURITY UPDATES are a repo setting (Settings > Code security), not a key in this file. They
 # use this file's security groups and labels; `cooldown` does not hold them back.
@@ -38,6 +40,11 @@ updates:
       npm:
         applies-to: version-updates
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      npm-major:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
