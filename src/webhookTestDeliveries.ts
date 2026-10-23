@@ -86,8 +86,10 @@ export interface WaitForWebhookTestOptions {
    * Milliseconds to wait in all before giving up with a
    * `WebhookTestTimeoutError`. 150 seconds by default — longer than the
    * API's 2-minute cut-off, after which it marks a test with no result
-   * `failed`. Must be a finite number, zero or more. The last sleep is cut
-   * to what is left, and one last read is made at the deadline.
+   * `failed`. Must be a finite number, zero or more. A sleep that would
+   * pass the deadline is cut to what is left, and the read after it is the
+   * last one. With `0`, a pending result is not read at all: the timeout is
+   * thrown at once (an id is still read once).
    */
   timeoutMs?: number;
 }

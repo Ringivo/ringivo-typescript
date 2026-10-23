@@ -686,6 +686,21 @@ describe("sendTest", () => {
     },
   );
 
+  it("reads a plain-JavaScript type: null as no type, and sends an empty object", async () => {
+    const calls = new Calls();
+    server.use(
+      http.post(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: testResource() }, { status: 202 });
+      }),
+    );
+
+    await client().webhookEndpoints.sendTest(ENDPOINT_ID, { type: null as unknown as string });
+
+    expect(calls.count).toBe(1);
+    expect(calls.last.body).toBe("{}");
+  });
+
   it("sends an empty object when no type was named, so the API picks the first", async () => {
     const calls = new Calls();
     server.use(

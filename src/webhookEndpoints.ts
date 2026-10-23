@@ -225,7 +225,8 @@ export interface SendWebhookTestOptions {
    *
    * An empty or blank string is refused here, before any request: the API
    * reads it as no type at all and would send the endpoint's first type.
-   * Leave `type` out to ask for that.
+   * Leave `type` out to ask for that; a plain-JavaScript `null` reads the
+   * same as leaving it out.
    *
    * A `string` rather than a list of names, for the reason
    * `CreateWebhookEndpointOptions.events` is: a type the platform publishes
@@ -450,8 +451,10 @@ export class WebhookEndpoints {
   ): Promise<WebhookTestDelivery> {
     // Always a JSON object, `{}` when no type was named: the spec's "an empty
     // body sends the endpoint's first type".
+    // `!= null`: a plain-JavaScript `null` is read as no type, like
+    // `undefined`, rather than failing on `.trim()`.
     const body: SendTestBody = {};
-    if (options.type !== undefined) {
+    if (options.type != null) {
       if (options.type.trim() === "") {
         throw new Error(
           "type must name an event type; leave it out to send the endpoint's first type",

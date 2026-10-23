@@ -652,7 +652,43 @@ describe("wait", () => {
     },
   );
 
-  it.each([-1, Number.NaN])("refuses a timeoutMs of %s before any read", async (timeoutMs) => {
+  it("never hands a timer more than 2^31 - 1 ms, whatever Retry-After and timeoutMs allow", async () => {
+    // A longer delay fires after 1 ms in Node (and in the fake timers here),
+    // which would read again at once. Reachable only when both Retry-After
+    // and the time left are above about 24.8 days.
+    const calls = new Calls();
+    server.use(
+      http.get(TEST_URL, async ({ request }) => {
+        await calls.record(request);
+        return calls.count === 1 ? rateLimited("3000000") : HttpResponse.json({ data: testResource() });
+      }),
+    );
+    const pending = await sent();
+
+    const waiting = track(
+      client().webhookTestDeliveries.wait(pending, { intervalMs: 1_000, timeoutMs: 2 ** 33 }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(calls.count).toBe(1);
+    await vi.advanceTimersByTimeAsync(2 ** 31 - 1 - 10);
+    expect(calls.count).toBe(2);
+    expect((await waiting.result).status).toBe("delivered");
+  });
+
+  it("makes no read of a pending result when timeoutMs is 0", async () => {
+    const calls = answering("delivered");
+    const pending = await sent();
+
+    await expect(
+      client().webhookTestDeliveries.wait(pending, { timeoutMs: 0 }),
+    ).rejects.toBeInstanceOf(WebhookTestTimeoutError);
+    expect(calls.count).toBe(0);
+  });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])("refuses a timeoutMs of %s before any read", async (timeoutMs) => {
     const calls = answering("pending");
 
     await expect(
