@@ -1087,6 +1087,106 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/webhook-endpoints/{webhookEndpoint}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The webhook endpoint's id. */
+                webhookEndpoint: components["parameters"]["WebhookEndpointId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send one test event to this endpoint
+         * @description We send ONE test event to this endpoint, and to no other, through the same path as a real
+         *     delivery: the same signature, the same headers, the same addresses and the same 10-second
+         *     timeout. It is sent once and never retried. The answer is **202** with the test's result
+         *     resource, normally `status: pending`. Read `GET /v1/webhook-test-deliveries/{id}` for the
+         *     outcome — it is normally there within a few seconds. When we could not queue the test, the
+         *     202 already holds `status: failed`, with `error` saying why; send the test again later.
+         *
+         *     **What is sent.** `eventType` is optional, and is one of the types this endpoint may
+         *     receive — the types in its `events`, or every type its scope can reach when `events` is
+         *     empty — or `webhook.test`, a plain ping. Without it, the first of those types is sent. The
+         *     body is the example this reference publishes for that type under Webhooks, with a new
+         *     `eventId` (which is also the result's `id`), the time of the test as `occurredAt`, and
+         *     `test: true`. The delivery carries the header `Ringivo-Webhook-Test: true`. Every id in the
+         *     sample is illustrative: a receiver must not act on it.
+         *
+         *     **What the result holds.** The HTTP status your server answered, how long it took, and the
+         *     first 1 KiB of what it answered. If no answer came, `error` says why — for example a TLS
+         *     error, a timeout, or an address we do not send to. A test that cannot reach your server
+         *     is a result, not an error of this request.
+         *
+         *     **Limits.** A disabled endpoint receives nothing, a test included: enable it first (409). An
+         *     endpoint may be sent at most 5 tests a minute, and you may send at most 5 a minute across
+         *     all your endpoints (429, with `Retry-After`). When the limit cannot be checked, the test is
+         *     refused with a 503; try again in a minute. A result is kept for 7 days.
+         *
+         *     **Scope:** the same as for changing the endpoint — `webhooks:write`, or `fax:write` for an
+         *     endpoint its own credential reaches.
+         */
+        post: operations["sendWebhookEndpointTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhook-test-deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the results of test events
+         * @description The test events sent in the last 7 days to the endpoints you can read, newest first, each
+         *     with its result. `filter[endpoint]` narrows to one endpoint. Older results are removed.
+         *
+         *     **Scope:** a test borrows its endpoint's reach, as a delivery does.
+         */
+        get: operations["listWebhookTestDeliveries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/webhook-test-deliveries/{webhookTestDelivery}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The test's id — the same value as the `eventId` of the body we sent. */
+                webhookTestDelivery: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the result of one test event
+         * @description `status` is `pending` until the attempt is made — normally a few seconds — then
+         *     `delivered` (your server answered 2XX) or `failed` (any other answer, or none). Ask again
+         *     while it is `pending`. A test with no result after 2 minutes reads `failed`, with an `error`
+         *     that says so; send another. A result that arrives after that replaces it.
+         *
+         *     **Scope:** a test borrows its endpoint's reach, as a delivery does.
+         */
+        get: operations["getWebhookTestDelivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/webhook-deliveries": {
         parameters: {
             query?: never;
@@ -3563,6 +3663,33 @@ export interface webhooks {
         patch?: never;
         trace?: never;
     };
+    "webhook.test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A plain test ping, sent only when you ask for one
+         * @description Sent once, to one endpoint, when you send a test event of type `webhook.test` — with
+         *     `POST /v1/webhook-endpoints/{id}/test` or with "Send test event" on the endpoint's page. It
+         *     is never sent on its own, and no endpoint can subscribe to it.
+         *
+         *     A test of any OTHER type carries the example body documented here for that type, with a new
+         *     `eventId`, the time of the test as `occurredAt`, and `test: true`. Every test, this one
+         *     included, also carries the header `Ringivo-Webhook-Test: true`, and is signed like a real
+         *     delivery. Answer 2XX and do nothing else.
+         */
+        post: operations["onWebhookTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "pbx_change.confirmed": {
         parameters: {
             query?: never;
@@ -4759,6 +4886,82 @@ export interface components {
             meta?: components["schemas"]["DocumentMeta"];
         };
         /**
+         * @description A type a test may carry: an event type the endpoint may receive, or `webhook.test`, the
+         *     plain ping.
+         */
+        WebhookTestEventType: components["schemas"]["WebhookEventType"] | "webhook.test";
+        /** @description Flat JSON. Every member is optional; an empty body sends the endpoint's first type. */
+        WebhookTestRequest: {
+            eventType?: components["schemas"]["WebhookTestEventType"];
+        };
+        /**
+         * @description Derived, not stored. `pending` until the attempt is made; then `delivered` when your server
+         *     answered 2XX, and `failed` for any other answer or none — or when no result came within 2
+         *     minutes.
+         * @enum {string}
+         */
+        WebhookTestDeliveryStatus: "pending" | "delivered" | "failed";
+        WebhookTestDeliveryAttributes: {
+            eventType?: components["schemas"]["WebhookTestEventType"];
+            status?: components["schemas"]["WebhookTestDeliveryStatus"];
+            /** @description What your server answered. Null while pending, and when we never reached it. */
+            statusCode?: number | null;
+            /** @description How long the attempt took, connection through answer. */
+            durationMs?: number | null;
+            /**
+             * @description The first 1 KiB of what your server answered, as text. A byte that is not valid UTF-8
+             *     reads as U+FFFD, and a NUL byte is removed.
+             */
+            responseBody?: string | null;
+            /**
+             * @description Why the test did not land: the status your server answered, or why no answer came — a
+             *     TLS or connection error, a timeout, an address we do not send to, a delivery service
+             *     too busy with other tests, a test we could not hand to the delivery service (nothing
+             *     was sent), or no result within 2 minutes. Null on a 2XX.
+             */
+            error?: string | null;
+            /** Format: date-time */
+            attemptedAt?: string | null;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        WebhookTestDeliveryResource: {
+            /** @enum {string} */
+            type: "webhook-test-deliveries";
+            /**
+             * Format: uuid
+             * @description Also the `eventId` of the body we sent.
+             */
+            id: string;
+            attributes?: components["schemas"]["WebhookTestDeliveryAttributes"];
+            relationships?: {
+                /**
+                 * @description The endpoint the test was sent to — an identifier, and nothing else. It does NOT
+                 *     follow the usual `RelationshipToOne` shape, and the difference is deliberate: this
+                 *     API serves no `endpoint` sub-resource of a test result, so the `self` and `related`
+                 *     URLs that shape carries would both answer 404. In exchange `data` is ALWAYS present,
+                 *     also on a plain read that included nothing.
+                 */
+                endpoint?: {
+                    data: components["schemas"]["ResourceIdentifier"];
+                };
+            };
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        WebhookTestDeliveryDocumentResponse: {
+            data: components["schemas"]["WebhookTestDeliveryResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        WebhookTestDeliveryCollectionDocument: {
+            data: components["schemas"]["WebhookTestDeliveryResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        /**
          * @description A SNAPSHOT of the fax, frozen when the transition happened — not a fresh read. A retry six
          *     hours later carries the same values, so a `fax.sending` event never says `delivered`.
          *
@@ -4853,6 +5056,18 @@ export interface components {
          *     event back on a ladder while later ones keep going, so a `fax.sending` that failed once can
          *     land after the `fax.delivered` that followed it. Dedupe on `eventId`, order by
          *     `occurredAt`, or refetch the resource and trust what it answers.
+         *
+         *     ## Test events
+         *
+         *     A test event — sent with `POST /v1/webhook-endpoints/{id}/test`, or with "Send test event"
+         *     on the endpoint's page — carries `test: true` in the body and a
+         *     `Ringivo-Webhook-Test: true` header. A real event carries neither. It is signed exactly like
+         *     a real delivery and sent from the same addresses, once, with no retry.
+         *
+         *     **Do not act on a test event.** Its `data` is the published example for its type, so every
+         *     id in it is illustrative and names nothing of yours. Check `test` (or the header) first, and
+         *     answer 2XX without doing the work. Its `eventId` is new for each test, so it is never deduped
+         *     against a real event or another test.
          */
         WebhookEventEnvelope: {
             /**
@@ -4867,6 +5082,12 @@ export interface components {
              *     not claim the fax was delivered when we finally reached you.
              */
             occurredAt: string;
+            /**
+             * @description Present, and `true`, on a test event only. A real event never carries this member. See
+             *     "Test events" above.
+             * @constant
+             */
+            test?: true;
         };
         FaxEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["FaxEventData"];
@@ -5111,6 +5332,31 @@ export interface components {
         };
         WebhookHeartbeatEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["WebhookHeartbeatEventData"];
+        };
+        /** @description The body of a plain test ping. It names the endpoint it was sent to and nothing else. */
+        WebhookTestPingEvent: {
+            /**
+             * Format: uuid
+             * @description New for each test. It is also the id of the test's `webhook-test-deliveries` result.
+             */
+            eventId: string;
+            /** @constant */
+            type: "webhook.test";
+            /**
+             * Format: date-time
+             * @description When the test was requested.
+             */
+            occurredAt: string;
+            /** @constant */
+            test: true;
+            data: components["schemas"]["WebhookTestPingEventData"];
+        };
+        WebhookTestPingEventData: {
+            /**
+             * Format: uuid
+             * @description The endpoint this test was sent to.
+             */
+            endpointId: string;
         };
         CallTranscriptAvailableEvent: components["schemas"]["WebhookEventEnvelope"] & {
             data: components["schemas"]["CallTranscriptAvailableEventData"];
@@ -11112,6 +11358,302 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    sendWebhookEndpointTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The webhook endpoint's id. */
+                webhookEndpoint: components["parameters"]["WebhookEndpointId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "eventType": "fax.delivered"
+                 *     }
+                 */
+                "application/json": components["schemas"]["WebhookTestRequest"];
+            };
+        };
+        responses: {
+            /** @description The test is on its way, and its result is pending — or, when it could not be queued, already `failed`. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "webhook-test-deliveries",
+                     *         "id": "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6071",
+                     *         "attributes": {
+                     *           "eventType": "fax.delivered",
+                     *           "status": "pending",
+                     *           "statusCode": null,
+                     *           "durationMs": null,
+                     *           "responseBody": null,
+                     *           "error": null,
+                     *           "attemptedAt": null,
+                     *           "createdAt": "2026-10-22T15:04:05.000000Z",
+                     *           "updatedAt": "2026-10-22T15:04:05.000000Z"
+                     *         },
+                     *         "relationships": {
+                     *           "endpoint": {
+                     *             "data": {
+                     *               "type": "webhook-endpoints",
+                     *               "id": "0198c4a1-8192-73b4-e5b6-708192031425"
+                     *             }
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["WebhookTestDeliveryDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The endpoint is disabled, so nothing is sent to it — a test included. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Endpoint disabled",
+                     *           "detail": "This endpoint is disabled, so nothing is sent to it — a test included. Enable it, then send the test."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description `eventType` is not a type this endpoint may receive, and is not `webhook.test`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "This endpoint cannot be sent a test of port_order.status_changed. Send one of: fax.received, fax.delivered, webhook.test.",
+                     *           "source": {
+                     *             "pointer": "/eventType"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description More than 5 tests a minute for this endpoint, more than 5 a minute from you, or the API's
+             *     own rate limit. `Retry-After` says how many seconds to wait.
+             */
+            429: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "429",
+                     *           "title": "Too many test events",
+                     *           "detail": "At most 5 test events a minute may be sent to one endpoint, and 5 a minute by one account. Try again in 42 seconds."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description The limit on test events could not be checked, so the test was refused. Try again in a minute. */
+            503: {
+                headers: {
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "503",
+                     *           "title": "Test events unavailable",
+                     *           "detail": "Test events cannot be sent right now. Try again in a minute."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+        };
+    };
+    listWebhookTestDeliveries: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 *
+                 *     The whitelist is short by design. A sortable field is a component of the cursor key, so it
+                 *     must be indexed — or the walk re-sorts the whole set on every page — and immutable, or the
+                 *     boundary moves under a walker and a row is served twice or skipped.
+                 * @example -createdAt
+                 */
+                sort?: components["parameters"]["Sort"];
+                "filter[endpoint]"?: string;
+                /**
+                 * @description One or more test ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. Sent without the brackets it is refused
+                 *     with a 400.
+                 */
+                "filter[id][]"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of test results. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "type": "webhook-test-deliveries",
+                     *           "id": "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6071",
+                     *           "attributes": {
+                     *             "eventType": "fax.delivered",
+                     *             "status": "failed",
+                     *             "statusCode": 401,
+                     *             "durationMs": 143,
+                     *             "responseBody": "{\"error\":\"signature mismatch\"}",
+                     *             "error": "The endpoint answered 401.",
+                     *             "attemptedAt": "2026-10-22T15:04:06.000000Z",
+                     *             "createdAt": "2026-10-22T15:04:05.000000Z",
+                     *             "updatedAt": "2026-10-22T15:04:06.000000Z"
+                     *           },
+                     *           "relationships": {
+                     *             "endpoint": {
+                     *               "data": {
+                     *                 "type": "webhook-endpoints",
+                     *                 "id": "0198c4a1-8192-73b4-e5b6-708192031425"
+                     *               }
+                     *             }
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["WebhookTestDeliveryCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getWebhookTestDelivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The test's id — the same value as the `eventId` of the body we sent. */
+                webhookTestDelivery: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The test's result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "webhook-test-deliveries",
+                     *         "id": "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6071",
+                     *         "attributes": {
+                     *           "eventType": "fax.delivered",
+                     *           "status": "delivered",
+                     *           "statusCode": 200,
+                     *           "durationMs": 87,
+                     *           "responseBody": "{\"received\":true}",
+                     *           "error": null,
+                     *           "attemptedAt": "2026-10-22T15:04:06.000000Z",
+                     *           "createdAt": "2026-10-22T15:04:05.000000Z",
+                     *           "updatedAt": "2026-10-22T15:04:06.000000Z"
+                     *         },
+                     *         "relationships": {
+                     *           "endpoint": {
+                     *             "data": {
+                     *               "type": "webhook-endpoints",
+                     *               "id": "0198c4a1-8192-73b4-e5b6-708192031425"
+                     *             }
+                     *           }
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["WebhookTestDeliveryDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     listWebhookDeliveries: {
         parameters: {
             query?: {
@@ -16458,6 +17000,42 @@ export interface operations {
         };
         responses: {
             /** @description Any 2XX means you accepted it. */
+            "2XX": {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    onWebhookTest: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Always `true` on a test event. A real event never carries this header. */
+                "Ringivo-Webhook-Test": "true";
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "eventId": "019a0b3c-5d6e-7f80-9a1b-2c3d4e5f6071",
+                 *       "type": "webhook.test",
+                 *       "occurredAt": "2026-10-22T15:04:05+00:00",
+                 *       "test": true,
+                 *       "data": {
+                 *         "endpointId": "0198c4a1-8192-73b4-e5b6-708192031425"
+                 *       }
+                 *     }
+                 */
+                "application/json": components["schemas"]["WebhookTestPingEvent"];
+            };
+        };
+        responses: {
+            /** @description Any 2XX means you received it. What you answer is shown with the test's result. */
             "2XX": {
                 headers: {
                     [name: string]: unknown;
