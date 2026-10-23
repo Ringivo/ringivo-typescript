@@ -68,7 +68,8 @@
  * again (no answer, 408, 429, 5xx, and a 409 `idempotency_key_in_use`);
  * `ApiError.retryAfter` says how long the server asked you to wait. The
  * client never retries by itself, apart from one resend with a fresh token
- * after a 401.
+ * after a 401, and `webhookTestDeliveries.wait()`, which sleeps through a 429
+ * with `Retry-After` while it polls.
  */
 export { Ringivo } from "./client.js";
 export type { RequestOptions, RingivoOptions } from "./client.js";

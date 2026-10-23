@@ -1374,9 +1374,10 @@ standard allows are handled for you, a count of seconds and an absolute date,
 and you get seconds either way.
 
 **This client does not retry for you.** It replaces an expired token and
-retries once on a 401, and that is the only retry it performs — a 429 is
-handed to you to back off from, because how long a fax send may sit is your
-decision and not a library's.
+retries once on a 401, and `webhookTestDeliveries.wait()` sleeps through a 429
+with `Retry-After` while it polls; those are the only retries it performs. Any
+other 429 is handed to you to back off from, because how long a fax send may
+sit is your decision and not a library's.
 
 ### Retrying from a queue
 

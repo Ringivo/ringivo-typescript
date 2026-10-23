@@ -395,8 +395,9 @@ const KEY_IN_USE = "idempotency_key_in_use";
  * This decides WHETHER to retry, never WHEN. Wait at least
  * `error.retryAfter` seconds when it is set; otherwise use your own backoff.
  * The client never retries by itself, apart from one resend with a fresh
- * token after a 401: a retry belongs in your durable queue, not inside a call
- * that would block your worker.
+ * token after a 401, and `webhookTestDeliveries.wait()`, which sleeps through
+ * a 429 with `Retry-After` while it polls: a retry belongs in your durable
+ * queue, not inside a call that would block your worker.
  *
  * The Python client's `is_retryable()` is the same contract; the two are kept
  * the same on purpose.
