@@ -264,6 +264,34 @@ describe("message.received", () => {
     expect(Object.isFrozen(event.message)).toBe(true);
   });
 
+  it("keeps its media items without a download link", () => {
+    // `message.received` is unchanged by the API's 2026-10-23 links: a
+    // webhook body can reach logs and a retry can arrive hours later, so
+    // only `inboundMessages.get()` hands out a link. Even a body that did
+    // carry one does not surface it; it stays in `raw`.
+    const linked = {
+      contentType: "image/jpeg",
+      filename: "photo.jpg",
+      size: 40213,
+      contentUrl: "https://api.yourprovider.example/v1/inbound-messages/x/media/y/content",
+      expiresAt: "2026-08-16T11:19:07+00:00",
+    };
+    const event = parseMessageEvent({
+      ...MESSAGE_RECEIVED,
+      data: { ...MESSAGE_RECEIVED.data, media: [linked] },
+    });
+    if (event.type !== "message.received") {
+      throw new Error("expected message.received");
+    }
+
+    const item = event.message.media[0];
+    expect("contentUrl" in (item ?? {})).toBe(false);
+    expect("expiresAt" in (item ?? {})).toBe(false);
+    expect(item?.raw).toEqual(linked);
+    // @ts-expect-error — a webhook media item has no link.
+    void item?.contentUrl;
+  });
+
   it("carries none of the members only a sent message has", () => {
     const event = parseMessageEvent(MESSAGE_RECEIVED);
     if (event.type !== "message.received") {

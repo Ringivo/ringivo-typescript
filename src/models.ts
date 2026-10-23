@@ -1585,8 +1585,10 @@ export interface OutboundMessageMediaItem {
 }
 
 /**
- * One media item of an MMS sent to your number, DESCRIBED: there are no bytes
- * and no URL. Ask your messaging provider for the file.
+ * One media item of an MMS sent to your number, DESCRIBED, as the
+ * `message.received` webhook carries it: there are no bytes and no link. To
+ * download the file, read the message with `inboundMessages.get(message.id)`
+ * — its items are `InboundMessageMediaWithLink`s.
  *
  * `size` is its size in bytes. `filename` is the name the sender's carrier
  * gave the item, and null when it gave none.
@@ -1596,6 +1598,31 @@ export interface InboundMessageMediaItem {
   readonly filename: string | null;
   readonly size: number | null;
   readonly raw: RawJson;
+}
+
+/**
+ * One media item of an MMS sent to your number, as `inboundMessages.list()`
+ * and `get()` serve it: the description, and a download link when the
+ * platform holds the file.
+ *
+ * `contentUrl` is a signed link on your API host that downloads the file with
+ * NO `Authorization` header — `inboundMessages.downloadMedia(item)` follows
+ * it. It works until `expiresAt`, five minutes after the read; every read
+ * makes new links, so read the message again for a fresh one. Do not change
+ * the link: the signature covers all of it.
+ *
+ * Both are null when the platform holds no bytes: the number is not
+ * connected to your phone system, the item is the message's text, the file
+ * is larger than 10 MB, or — for a customer-scoped credential — it was kept
+ * for another customer or for your pool. Your messaging provider has those
+ * files.
+ *
+ * It is an `InboundMessageMediaItem` too, so code written against the
+ * webhook's item reads this one unchanged.
+ */
+export interface InboundMessageMediaWithLink extends InboundMessageMediaItem {
+  readonly contentUrl: string | null;
+  readonly expiresAt: Date | null;
 }
 
 /**
@@ -1639,9 +1666,9 @@ export interface OutboundMessage {
  * both arrive with a body and no media item. `body` is null for an MMS with
  * no caption.
  *
- * `media` DESCRIBES each media item — content type, filename and size — and
- * carries no bytes and no URL: the platform does not serve the bytes. Ask
- * your messaging provider for the file.
+ * `media` describes each media item — content type, filename and size — and
+ * names a short-lived download link (`contentUrl`, until `expiresAt`) when
+ * the platform holds the file. See `InboundMessageMediaWithLink`.
  *
  * `receivedAt` is when the message was SENT, and is what the date filters
  * match; `createdAt` is when the platform stored it. They differ by however
@@ -1653,7 +1680,7 @@ export interface InboundMessage {
   readonly from: string | null;
   readonly to: string | null;
   readonly body: string | null;
-  readonly media: readonly InboundMessageMediaItem[];
+  readonly media: readonly InboundMessageMediaWithLink[];
   readonly receivedAt: Date | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
@@ -1867,6 +1894,26 @@ function inboundMedia(source: RawJson): readonly InboundMessageMediaItem[] {
 }
 
 /**
+ * The API's media items: the webhook's members plus the download link. A
+ * separate builder rather than a flag, so the webhook's items cannot grow a
+ * link by accident — `message.received` never carries one.
+ */
+function inboundMediaWithLink(source: RawJson): readonly InboundMessageMediaWithLink[] {
+  return Object.freeze(
+    mediaItems(source).map((item) =>
+      Object.freeze({
+        contentType: text(item, "contentType"),
+        filename: text(item, "filename"),
+        size: integer(item, "size"),
+        contentUrl: text(item, "contentUrl"),
+        expiresAt: instant(item.expiresAt),
+        raw: item,
+      }),
+    ),
+  );
+}
+
+/**
  * Build from an `outbound-messages` JSON:API resource object —
  * `messages.record()`. `replayed` comes from the status code, which only the
  * caller has.
@@ -1908,7 +1955,7 @@ export function inboundMessageFromResource(resource: RawJson): InboundMessage {
     from: text(attributes, "from"),
     to: text(attributes, "to"),
     body: text(attributes, "body"),
-    media: inboundMedia(attributes),
+    media: inboundMediaWithLink(attributes),
     receivedAt: instant(attributes.receivedAt),
     createdAt: instant(attributes.createdAt),
     updatedAt: instant(attributes.updatedAt),

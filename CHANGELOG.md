@@ -1,5 +1,31 @@
 # Release notes
 
+## Unreleased — Added
+
+- **Download the media of a received MMS.** Each media item of
+  `inboundMessages.list()` and `get()` now has `contentUrl` (a string or
+  `null`) and `expiresAt` (a `Date` or `null`). `contentUrl` is a signed
+  link on your API host that downloads the file with no `Authorization`
+  header, until `expiresAt` (five minutes). Every read makes new links. Both
+  are `null` when the platform holds no file: the number is not connected to
+  your phone system, the item is the message's text, the file is larger
+  than 10 MB, or, for a customer-scoped credential, the file was kept for
+  another customer or for your pool.
+- **`inboundMessages.downloadMedia(item)`** follows `contentUrl` and
+  resolves to the bytes as a `Uint8Array`. It uses the same path as
+  `faxes.media()`, so it never sends the bearer token. An item whose
+  `contentUrl` is `null` is refused with an `Error` before any request. An
+  expired or changed link is an `ApiError` with status 403 (read the message
+  again for a fresh link), a file the platform no longer holds is a 404
+  `not_found`, and too many downloads is a 429 with `retryAfter`.
+- **New type `InboundMessageMediaWithLink`**: the API's media item.
+  `InboundMessage.media` now holds these. It extends
+  `InboundMessageMediaItem`, which stays the `message.received` webhook's
+  item, with no link. Migration: none; code typed against
+  `InboundMessageMediaItem` reads the new items unchanged. The webhook's
+  items do not change: to download a file, read the message with
+  `inboundMessages.get(event.message.id)`.
+
 ## 0.24.0 (2026-10-23) — Added
 
 - **`pbx.subscribers.call()` sends an `Idempotency-Key`.** The API is about

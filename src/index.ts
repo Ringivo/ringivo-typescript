@@ -128,6 +128,7 @@ export type {
   FaxPage,
   InboundMessage,
   InboundMessageMediaItem,
+  InboundMessageMediaWithLink,
   InboundMessagePage,
   MediaLink,
   MessageDeliveredEvent,
