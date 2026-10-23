@@ -74,8 +74,9 @@
   test carries the published example body for its type, so every id in it
   is illustrative: check `event.test` first and do not act on it. The parse
   still never throws.
-- Migration: none. Every name is new; `MessageEvent` gains one member, so
-  code that builds those objects itself must add `test`.
+- Migration for the test-event items above: none. Every name is new;
+  `MessageEvent` gains one member, so code that builds those objects itself
+  must add `test`.
 
 ## 0.24.0 (2026-10-23) — Added
 
