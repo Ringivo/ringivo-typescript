@@ -21,7 +21,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -103,6 +103,13 @@ describe("the built type declarations", () => {
 });
 
 describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
+  // Pay the cold import of dist/ once, here, with its own budget: on a loaded host it took over the
+  // default 5 s test timeout (seen 2026-10-23). Each test below then reuses the module cache and
+  // times only its own work, whichever test runs first (`-t`, `.only` or a new test).
+  beforeAll(async () => {
+    await load(kind);
+  }, 30_000);
+
   it("constructs a client", async () => {
     const { Ringivo, VERSION } = await load(kind);
 
@@ -117,9 +124,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
     expect(client.baseUrl).toBe("https://api.yourprovider.example");
     expect(typeof client.request).toBe("function");
     expect(VERSION).toMatch(/^\d+\.\d+\.\d+$/);
-    // The first test to load the built bundle pays the cold import of dist/, which took over the
-    // default 5 s on a loaded Node 20 host (seen 2026-10-23); later tests reuse the module cache.
-  }, 30_000);
+  });
 
   it("exposes the whole fax surface", async () => {
     const { Ringivo } = await load(kind);
