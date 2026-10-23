@@ -1,6 +1,6 @@
 /**
  * Register a webhook endpoint, read one, list them, change one, remove one,
- * and rotate its signing secret.
+ * rotate its signing secret, and send it a test event.
  *
  * -- WHAT IS TYPED BY THE SPEC, AND WHAT IS HAND-BUILT ----------------------
  * `list`, `get`, `delete` and `rotateSecret` go through the `openapi-fetch`
@@ -9,6 +9,12 @@
  * `rotateSecret` is a POST with no body at all, which that transport sends
  * without inventing a `Content-Type` — so there is nothing here for a
  * hand-built request to add.
+ *
+ * `sendTest` goes through the same typed client. Its body is FLAT JSON —
+ * `{"eventType": ...}`, not a JSON:API document — and the spec publishes it
+ * as `application/json`, which is exactly the `Content-Type` that transport
+ * gives a JSON body. Its answer is a JSON:API `webhook-test-deliveries`
+ * resource, read by `webhookTestDeliveryFromResource`.
  *
  * `create` and `update` build their JSON:API document here and send it
  * through `client.request()` — the same public escape hatch, the same auth
@@ -54,9 +60,11 @@ import {
   type RawJson,
   type WebhookEndpoint,
   type WebhookEndpointPage,
+  type WebhookTestDelivery,
   isRecord,
   webhookEndpointFromResource,
   webhookEndpointPageFromDocument,
+  webhookTestDeliveryFromResource,
 } from "./models.js";
 import { pathSegment } from "./pathSegment.js";
 
@@ -108,6 +116,12 @@ type CreateAttributes = CreateRequest["data"]["attributes"];
  */
 type UpdateRequest = components["schemas"]["WebhookEndpointUpdateRequest"];
 type UpdateAttributes = UpdateRequest["data"]["attributes"];
+
+/**
+ * The flat body of `POST /v1/webhook-endpoints/{id}/test`, as the spec
+ * declares it. Local and unexported, like the request types above.
+ */
+type SendTestBody = components["schemas"]["WebhookTestRequest"];
 
 /** What `webhookEndpoints.list()` accepts. Every member narrows the list. */
 export interface ListWebhookEndpointsOptions {
@@ -199,6 +213,21 @@ export interface UpdateWebhookEndpointOptions {
    * secret and its delivery history.
    */
   active?: boolean;
+}
+
+/** What `webhookEndpoints.sendTest()` accepts. */
+export interface SendWebhookTestOptions {
+  /**
+   * The event type to send: one this endpoint may receive — a type in its
+   * `events` — or `webhook.test`, a plain ping. Left out, the API sends the
+   * endpoint's first type. Any other type is a 422 whose `source.pointer` is
+   * `/eventType`.
+   *
+   * A `string` rather than a list of names, for the reason
+   * `CreateWebhookEndpointOptions.events` is: a type the platform publishes
+   * tomorrow must be testable today.
+   */
+  type?: string;
 }
 
 /** The `client.webhookEndpoints` namespace. */
@@ -377,6 +406,58 @@ export class WebhookEndpoints {
     });
 
     return webhookEndpointFromResource(dataObject(data));
+  }
+
+  /**
+   * Send ONE test event to this endpoint, and to no other.
+   *
+   * It goes through the same path as a real delivery — the same signature,
+   * headers, addresses and 10-second timeout — once, with no retry. The body
+   * is the published example for its type, with a new `eventId`, the time of
+   * the test as `occurredAt`, and `test: true`; the delivery carries the
+   * header `Ringivo-Webhook-Test: true`. Every id in the sample is
+   * illustrative, so a receiver must check `test` and not act on it.
+   *
+   * Resolves to the 202's `WebhookTestDelivery`, normally `pending`: pass it
+   * to `webhookTestDeliveries.wait()` for the outcome. A 202 that is already
+   * `failed` means the test could not be queued; `error` says why.
+   *
+   * **Refusals are `ApiError`s**, with the status to branch on:
+   * - **409** — the endpoint is disabled; nothing is sent to it, a test
+   *   included. Enable it first.
+   * - **422** — `type` is not one this endpoint may receive, and is not
+   *   `webhook.test`. `source.pointer` is `/eventType`.
+   * - **429** — more than 5 tests a minute to this endpoint, or 5 a minute
+   *   from your account. `retryAfter` says how many seconds to wait.
+   * - **503** — the API could not check that limit, so the test was not
+   *   sent. `retryAfter` says how long to wait.
+   *
+   * `isRetryable()` is `true` for the 429 and the 503 and `false` for the
+   * 409 and the 422. **This call never sends a test again by itself**, and it
+   * sends no `Idempotency-Key`: every send is a new test, with a new id.
+   *
+   * Needs the scope a change to the endpoint needs: `webhooks:write`, or
+   * `fax:write` for a **fax-account-scoped** endpoint.
+   */
+  async sendTest(
+    webhookEndpointId: string,
+    options: SendWebhookTestOptions = {},
+  ): Promise<WebhookTestDelivery> {
+    // Always a JSON object, `{}` when no type was named: the body the API's
+    // own tests send for "the endpoint's first type".
+    const body: SendTestBody = {};
+    if (options.type !== undefined) {
+      body.eventType = options.type as SendTestBody["eventType"];
+    }
+
+    const { data } = await transportOf(this.client)[
+      "/v1/webhook-endpoints/{webhookEndpoint}/test"
+    ].POST({
+      params: { path: { webhookEndpoint: webhookEndpointIdParam(webhookEndpointId) } },
+      body,
+    });
+
+    return webhookTestDeliveryFromResource(dataObject(data));
   }
 }
 

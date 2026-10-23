@@ -4,7 +4,8 @@
  * `Ringivo` owns three things: the base URL (there is no default — see
  * below), one authenticated request path, and the resource namespaces hung
  * off it (`client.faxes`, `client.faxAccounts`, `client.faxAccountUsers`,
- * `client.webhookEndpoints`, `client.webhookDeliveries`, `client.pbx`,
+ * `client.webhookEndpoints`, `client.webhookDeliveries`,
+ * `client.webhookTestDeliveries`, `client.pbx`,
  * `client.customers`, `client.messages`, `client.inboundMessages`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
@@ -53,6 +54,7 @@ import { Pbx } from "./pbx.js";
 import { VERSION } from "./version.js";
 import { WebhookDeliveries } from "./webhookDeliveries.js";
 import { WebhookEndpoints } from "./webhookEndpoints.js";
+import { WebhookTestDeliveries } from "./webhookTestDeliveries.js";
 
 /** What the JSON:API resource endpoints send and accept. */
 export const JSONAPI_MEDIA_TYPE = "application/vnd.api+json";
@@ -169,12 +171,16 @@ export class Ringivo {
   readonly faxAccountUsers: FaxAccountUsers;
 
   /**
-   * Register a webhook endpoint, change one, remove one, rotate its secret.
+   * Register a webhook endpoint, change one, remove one, rotate its secret,
+   * send it a test event.
    */
   readonly webhookEndpoints: WebhookEndpoints;
 
   /** Read what we could not deliver to your endpoints. */
   readonly webhookDeliveries: WebhookDeliveries;
+
+  /** Read the results of test events, and wait for one. */
+  readonly webhookTestDeliveries: WebhookTestDeliveries;
 
   /**
    * Your customers' phone systems: `pbx.callRecords`, `pbx.subscribers`,
@@ -272,6 +278,7 @@ export class Ringivo {
     this.faxAccountUsers = new FaxAccountUsers(this);
     this.webhookEndpoints = new WebhookEndpoints(this);
     this.webhookDeliveries = new WebhookDeliveries(this);
+    this.webhookTestDeliveries = new WebhookTestDeliveries(this);
     this.pbx = new Pbx(this);
     this.customers = new Customers(this);
     this.messages = new Messages(this);

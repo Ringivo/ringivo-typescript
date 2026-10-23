@@ -719,6 +719,88 @@ export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliv
 }
 
 /**
+ * The result of one test event — `webhookEndpoints.sendTest()` and every
+ * `webhookTestDeliveries` call.
+ *
+ * `id` is also the `eventId` of the body sent to your endpoint, so a receiver
+ * that logs `eventId` can find this result from its own log.
+ *
+ * `status` is `pending` until the one attempt is made — normally a few
+ * seconds — then `delivered` (your server answered 2XX) or `failed` (any
+ * other answer, or none). The API marks a test that has had no result for 2
+ * minutes `failed`, with an `error` that says so. A 202 that is ALREADY
+ * `failed` means the test could not be queued: send it again later. It is a
+ * `string` rather than a union of the three, like `WebhookDelivery.status`,
+ * so a value the API adds later arrives as itself.
+ *
+ * `statusCode`, `durationMs` and `responseBody` are what your server
+ * answered, how long it took, and the first 1 KiB of the answer as text. All
+ * three are null while pending, and `statusCode` stays null when we never
+ * reached your server — `error` then says why (a TLS or connection error, a
+ * timeout, an address we do not send to). A test that cannot reach your
+ * server is a result here, not an error of the request that sent it.
+ *
+ * `endpointId` comes from the `endpoint` relationship's linkage, and it is
+ * null when the server answered that relationship with `links` alone.
+ */
+export interface WebhookTestDelivery {
+  readonly id: string;
+  readonly endpointId: string | null;
+  readonly eventType: string | null;
+  readonly status: string | null;
+  readonly statusCode: number | null;
+  readonly durationMs: number | null;
+  readonly responseBody: string | null;
+  readonly error: string | null;
+  readonly attemptedAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `webhookTestDeliveries.list()`, newest first. */
+export interface WebhookTestDeliveryPage {
+  readonly deliveries: readonly WebhookTestDelivery[];
+  readonly nextUrl: string | null;
+  readonly nextCursor: string | null;
+  readonly raw: RawJson;
+}
+
+/** Build from a JSON:API resource object — every test-event call. */
+export function webhookTestDeliveryFromResource(resource: RawJson): WebhookTestDelivery {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    endpointId: relationshipId(resource, "endpoint"),
+    eventType: text(attributes, "eventType"),
+    status: text(attributes, "status"),
+    statusCode: integer(attributes, "statusCode"),
+    durationMs: integer(attributes, "durationMs"),
+    responseBody: text(attributes, "responseBody"),
+    error: text(attributes, "error"),
+    attemptedAt: instant(attributes.attemptedAt),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function webhookTestDeliveryPageFromDocument(document: RawJson): WebhookTestDeliveryPage {
+  const data = document.data;
+  const deliveries = (Array.isArray(data) ? data : [])
+    .filter(isRecord)
+    .map(webhookTestDeliveryFromResource);
+
+  return Object.freeze({
+    deliveries: Object.freeze(deliveries),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  });
+}
+
+/**
  * One subscriber on a customer's phone system — a person or a machine.
  *
  * -- `kind` SAYS WHAT THIS ROW IS -------------------------------------------
