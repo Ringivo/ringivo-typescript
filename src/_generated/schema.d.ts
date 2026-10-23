@@ -285,10 +285,23 @@ export interface paths {
          *     unknown member was dropped in silence and the fax still went out without it, so a client that
          *     sends an extra field now gets a 400.
          *
-         *     **`Idempotency-Key` is mandatory.** A second POST carrying the same key replays the first
-         *     rather than sending a second fax, and the replay is marked with an `Idempotent-Replay: true`
-         *     response header. That header is the ONLY thing that tells the two apart: the body is the
-         *     same fax either way.
+         *     **`Idempotency-Key` is mandatory.** A second POST carrying the same key and the same body
+         *     replays the first rather than sending a second fax, and the replay is marked with an
+         *     `Idempotent-Replay: true` response header. That header is the ONLY thing that tells the two
+         *     apart: the body is the same fax either way.
+         *
+         *     - **No key** is a **400** `idempotency_key_required`; nothing is sent. (Before 2026-10-22 it
+         *       was a 422 `validation_failed`.)
+         *     - **The same key with a different body** — another number, other fields, or other document
+         *       bytes — is a **422** `idempotency_key_reused`; nothing is sent. Use a new key for a new fax.
+         *     - **The same key while the first send is still being accepted** waits up to 15 seconds, then
+         *       answers **409** `idempotency_key_in_use` with `Retry-After`. Retry with the SAME key.
+         *     - **A refused send stores nothing**, so the same key may be sent again once the request is
+         *       fixed.
+         *     - **Scope and retention:** a key belongs to one fax account, and it is kept on the fax for
+         *       the fax's life.
+         *     - **Regions:** the guarantee holds inside the region that serves your API host. A retry that
+         *       lands in another region during a regional failover can send a second fax.
          */
         post: operations["sendFax"];
         delete?: never;
@@ -1190,7 +1203,23 @@ export interface paths {
          *     It answers **202**: the numbers are yours and in your inventory at once, each `pending`, and
          *     the carrier activates them in the background. Read a number back at
          *     `GET /v1/phone-numbers/{phoneNumber}` to see it become `active`. Do not send the order again
-         *     to hurry it — a second order is a second purchase.
+         *     to hurry it.
+         *
+         *     **`Idempotency-Key` is required, since 2026-10-22,** because an order spends money. If you
+         *     did not get the answer, send the same request with the same key: you get the first answer
+         *     again, marked `Idempotent-Replay: true`, and nothing is bought twice.
+         *
+         *     - **No key** is a **400** `idempotency_key_required`; nothing is bought.
+         *     - **The same key with a different body** is a **422** `idempotency_key_reused`; nothing is
+         *       bought. Use a new key for a new order.
+         *     - **The same key while the first order still runs** waits up to 15 seconds, then answers
+         *       **409** `idempotency_key_in_use` with `Retry-After`. Retry with the SAME key.
+         *     - **Only a 202 is kept.** A refused order stores nothing, so the same key may be sent again.
+         *     - **Scope and retention:** a key belongs to your reseller account — or to one customer, for
+         *       a credential narrowed to that customer — on this endpoint. The first answer is kept for
+         *       at least 24 hours.
+         *     - **Regions:** the guarantee holds inside the region that serves your API host. A retry that
+         *       lands in another region during a regional failover can order again.
          */
         post: operations["orderNumbers"];
         delete?: never;
@@ -2574,6 +2603,25 @@ export interface paths {
          *     names nothing gives. A phone system that refuses or cannot be reached answers **502** with
          *     its own status in `errors[0].meta.vendor_status`; nothing was dialled and the request may be
          *     retried.
+         *
+         *     **`Idempotency-Key` is required, since 2026-10-22,** because a call cannot be taken back.
+         *     If you did not get the answer, send the same request with the same key: you get the first
+         *     202 again — the same call id and `requestedAt` — marked `Idempotent-Replay: true`, and
+         *     nothing is dialled.
+         *
+         *     - **No key** is a **400** `idempotency_key_required`; nothing is dialled. The key is asked
+         *       for after the 404, the 403 and the `Not Callable` 422 above, which answer as before.
+         *     - **The same key with a different body or another subscriber** is a **422**
+         *       `idempotency_key_reused`; nothing is dialled. Use a new key for a new call.
+         *     - **The same key while the first request still runs** waits up to 15 seconds, then answers
+         *       **409** `idempotency_key_in_use` with `Retry-After`. Retry with the SAME key.
+         *     - **Only a 202 is kept.** A refused request (a 422, a 502) stores nothing, so the same key
+         *       may be sent again.
+         *     - **Scope and retention:** a key belongs to your reseller account — or to one customer, for
+         *       a credential narrowed to that customer — on this endpoint. The first answer is kept for
+         *       at least 24 hours.
+         *     - **Regions:** the guarantee holds inside the region that serves your API host. A retry that
+         *       lands in another region during a regional failover can dial again.
          */
         post: operations["placePbxCall"];
         delete?: never;
@@ -3740,11 +3788,12 @@ export interface components {
         };
         /**
          * @description Where the problem is. A JSON:API document body gets a `pointer`; a flat form body or a query
-         *     parameter gets a `parameter`.
+         *     parameter gets a `parameter`; a request header gets a `header` (`Idempotency-Key`).
          */
         ErrorSource: {
             pointer?: string;
             parameter?: string;
+            header?: string;
         };
         /** @description One problem with one request. */
         Error: {
@@ -3770,7 +3819,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable" | "media_rejected" | "media_timeout" | "media_unreachable" | "media_store_unavailable";
+        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable" | "media_rejected" | "media_timeout" | "media_unreachable" | "media_store_unavailable" | "idempotency_key_required" | "idempotency_key_invalid" | "idempotency_key_reused" | "idempotency_key_in_use";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -8315,9 +8364,10 @@ export interface operations {
             query?: never;
             header: {
                 /**
-                 * @description Your own key for this send. Reusing one returns the original fax instead of sending a
-                 *     second copy — which is what makes a retry of a request whose response you never saw
-                 *     safe.
+                 * @description Your own key for this send: 1 to 255 printable ASCII characters, such as a UUID or your
+                 *     own reference. Reusing one with the same body returns the original fax instead of
+                 *     sending a second copy — which is what makes a retry of a request whose response you
+                 *     never saw safe. A different body on a used key is refused.
                  * @example chart-4471-attempt-1
                  */
                 "Idempotency-Key": string;
@@ -8402,9 +8452,12 @@ export interface operations {
                 };
             };
             /**
-             * @description The body has a member this endpoint does not know. Each unknown member is its own error:
-             *     `code` is `unknown_member`, `detail` reads `The field <name> is not a supported attribute.` and `source.parameter` is
-             *     the member (`coverPage.to_name` for one inside `coverPage`). Nothing is sent.
+             * @description The `Idempotency-Key` header is missing (`code: idempotency_key_required`) or is not 1 to
+             *     255 printable ASCII characters (`code: idempotency_key_invalid`); `source.header` names
+             *     it. Or the body has a member this endpoint does not know. Each unknown member is its own
+             *     error: `code` is `unknown_member`, `detail` reads `The field <name> is not a supported
+             *     attribute.` and `source.parameter` is the member (`coverPage.to_name` for one inside
+             *     `coverPage`). Nothing is sent.
              */
             400: {
                 headers: {
@@ -8457,9 +8510,16 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
-            /** @description The fax account is suspended, so it may receive but not send. */
+            /**
+             * @description The fax account is suspended, so it may receive but not send
+             *     (`code: fax_account_suspended`). Or the first send with this `Idempotency-Key` is still
+             *     being accepted after a 15-second wait (`code: idempotency_key_in_use`): retry after
+             *     `Retry-After` seconds with the same key to get its answer.
+             */
             409: {
                 headers: {
+                    /** @description Sent with `idempotency_key_in_use` only. Seconds to wait before the retry. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -8501,7 +8561,8 @@ export interface operations {
                 };
             };
             /**
-             * @description The request is malformed — a missing `Idempotency-Key`, a `to` that is not E.164, a
+             * @description The `Idempotency-Key` was used before with a different body
+             *     (`code: idempotency_key_reused`). Or the request is malformed — a `to` that is not E.164, a
              *     JSON:API document body, more than five documents, uploads and URLs mixed in one request,
              *     a document URL that is not `https` or points at a private address, a `faxAccount` id
              *     that names no account of yours, or — on a multipart send — a `tags` or `coverPage` part
@@ -11190,7 +11251,15 @@ export interface operations {
     orderNumbers: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /**
+                 * @description Your own key for this order: 1 to 255 printable ASCII characters, such as a UUID or your
+                 *     own reference. The same key and body return the first answer; a different body on a
+                 *     used key is refused.
+                 * @example 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                 */
+                "Idempotency-Key": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -11210,24 +11279,66 @@ export interface operations {
             /** @description The numbers bought, as `phone-numbers` resources. */
             202: {
                 headers: {
+                    /**
+                     * @description Present, with the value `true`, only when this answer replays an earlier order that
+                     *     carried the same `Idempotency-Key` and body. Absent on a fresh order.
+                     */
+                    "Idempotent-Replay"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["PhoneNumberCollectionDocument"];
                 };
             };
+            /**
+             * @description The `Idempotency-Key` header is missing (`code: idempotency_key_required`) or is not 1 to
+             *     255 printable ASCII characters (`code: idempotency_key_invalid`); `source.header` names
+             *     it. Nothing was bought.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "400",
+                     *           "code": "idempotency_key_required",
+                     *           "title": "Idempotency-Key required",
+                     *           "detail": "Send an Idempotency-Key header. It is what lets a retry of a request whose response you never saw return the original order instead of doing it a second time.",
+                     *           "source": {
+                     *             "header": "Idempotency-Key"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
-            /** @description A number on the order is no longer available. Nothing was bought. */
+            /**
+             * @description A number on the order is no longer available. Or the first order with this
+             *     `Idempotency-Key` still runs after a 15-second wait (`code: idempotency_key_in_use`):
+             *     retry after `Retry-After` seconds with the same key.
+             */
             409: {
                 headers: {
+                    /** @description Sent with `idempotency_key_in_use` only. Seconds to wait before the retry. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
-            /** @description The body is refused, or an offer token is not one we issued to you. */
+            /**
+             * @description The body is refused, or an offer token is not one we issued to you. Or the
+             *     `Idempotency-Key` was used before with a different body (`code: idempotency_key_reused`).
+             */
             422: {
                 headers: {
                     [name: string]: unknown;
@@ -14483,7 +14594,15 @@ export interface operations {
     placePbxCall: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /**
+                 * @description Your own key for this call: 1 to 255 printable ASCII characters, such as a UUID or your
+                 *     own reference. The same key and body return the first answer; a different body on a
+                 *     used key is refused.
+                 * @example 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                 */
+                "Idempotency-Key": string;
+            };
             path: {
                 /** @description The PBX subscriber's id. */
                 subscriber: components["parameters"]["PbxSubscriberId"];
@@ -14499,18 +14618,75 @@ export interface operations {
             /** @description The call was accepted by the phone system. It has not happened yet. */
             202: {
                 headers: {
+                    /**
+                     * @description Present, with the value `true`, only when this answer replays an earlier request that
+                     *     carried the same `Idempotency-Key` and body. Absent on a fresh call.
+                     */
+                    "Idempotent-Replay"?: "true";
                     [name: string]: unknown;
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["PbxCallDocumentResponse"];
                 };
             };
-            400: components["responses"]["BadQuery"];
+            /**
+             * @description The `Idempotency-Key` header is missing (`code: idempotency_key_required`) or is not 1 to
+             *     255 printable ASCII characters (`code: idempotency_key_invalid`); `source.header` names
+             *     it. Or the credential reaches no PBX at all. Nothing was dialled.
+             */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            422: components["responses"]["UnprocessableDocument"];
+            /**
+             * @description The first request with this `Idempotency-Key` still runs after a 15-second wait
+             *     (`code: idempotency_key_in_use`). Retry after `Retry-After` seconds with the same key to
+             *     get its answer. Nothing more was dialled.
+             */
+            409: {
+                headers: {
+                    /** @description Seconds to wait before the retry. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The document could not be applied: `Not Callable`, or a `destination`, `callerId` or
+             *     `device` that is refused, with `source.pointer` naming the member. Or the
+             *     `Idempotency-Key` was used before with a different body or subscriber
+             *     (`code: idempotency_key_reused`). Nothing was dialled.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             502: components["responses"]["PhoneSystemUnreachable"];
+            /**
+             * @description The phone system's records cannot be read in this region (`PBX Source Unavailable`).
+             *     Nothing was dialled. Retry later.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
         };
     };
     listPbxDevices: {
