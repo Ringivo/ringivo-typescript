@@ -1894,6 +1894,17 @@ interface MessageEventEnvelope {
   readonly eventId: string | null;
   readonly occurredAt: Date | null;
   /**
+   * `true` on a TEST event — one sent with `webhookEndpoints.sendTest()` —
+   * and `false` on a real one. **Check it first, and do not act on a test**:
+   * its `message` is the published example for its type, so every id in it
+   * is illustrative and names nothing of yours. Answer 2XX and stop.
+   *
+   * `true` only when the body's `test` member is literally `true`, which is
+   * the one value the API sends; absent, or any other value, reads `false`.
+   * A test also carries the header `Ringivo-Webhook-Test: true`.
+   */
+  readonly test: boolean;
+  /**
    * The whole decoded body, exactly as it was handed to the parser — or `{}`
    * when what was handed over was not a JSON object (null, a string, an
    * array, a number).
@@ -1927,7 +1938,8 @@ export interface MessageFailedEvent extends MessageEventEnvelope {
 
 /**
  * A body that is not one of the four message events: another event type, a
- * type this release does not know yet, or no JSON object at all.
+ * type this release does not know yet, or no JSON object at all. The
+ * `webhook.test` ping is one of these, with `test: true`.
  *
  * `type` is `null` so that `switch (event.type)` narrows the four known
  * variants cleanly; the type that arrived, if any, is `raw.type`. It carries
@@ -2115,6 +2127,7 @@ export function messageEventFromJson(payload: unknown): MessageEvent {
   const envelope = {
     eventId: text(source, "eventId"),
     occurredAt: instant(source.occurredAt),
+    test: source.test === true,
     raw: source,
   };
   const data = nested(source, "data") ?? {};

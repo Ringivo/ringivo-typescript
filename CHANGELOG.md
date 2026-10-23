@@ -62,7 +62,15 @@
   the 2 minutes after which the API marks a test with no result `failed`.
   Past `timeoutMs` it throws the new `WebhookTestTimeoutError`, whose
   `delivery` is the last result read.
-- Migration: none. Every name is new.
+- **`test` on every `MessageEvent` variant.** `parseMessageEvent()` reads
+  `test: true` when the body's `test` member is literally `true` — a test
+  event sent with `sendTest()` — and `false` otherwise, on all four message
+  variants and on `UnknownMessageEvent` (the `webhook.test` ping is one). A
+  test carries the published example body for its type, so every id in it
+  is illustrative: check `event.test` first and do not act on it. The parse
+  still never throws.
+- Migration: none. Every name is new; `MessageEvent` gains one member, so
+  code that builds those objects itself must add `test`.
 
 ## 0.24.0 (2026-10-23) — Added
 

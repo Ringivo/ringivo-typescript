@@ -56,6 +56,9 @@
  *
  *     verifyWebhook(rawBody, signature, WHSEC);
  *     const event = parseMessageEvent(JSON.parse(rawBody.toString("utf8")));
+ *     if (event.test) {
+ *       return; // a test event: answer 2XX and do nothing else
+ *     }
  *     switch (event.type) {
  *       case "message.received": // a text sent TO one of your numbers
  *         break;
@@ -65,6 +68,12 @@
  *         break;
  *       default: // not a message event: accept it and ignore it
  *     }
+ *
+ * ROUTE ON `event.test` FIRST. A test event — sent with
+ * `webhookEndpoints.sendTest()` — is signed like a real one and carries the
+ * published example body for its type, so every id in it is illustrative.
+ * `test` is `true` on every variant of such a body, the `webhook.test` ping
+ * included, and `false` on a real event.
  *
  * `parseMessageEvent()` reads defensively, like every model in this package:
  * a member that is missing or of the wrong type reads null and the whole body
@@ -119,7 +128,8 @@ export const FAILURE_CAUSES: readonly FailureCause[] = Object.freeze([
  *   `type` is none of the four — another event, a type this release does not
  *   know yet, or no JSON object at all — is an `UnknownMessageEvent`, whose
  *   `type` is `null`. Members that are missing or of the wrong type are
- *   `null`, and the whole body is on `raw`.
+ *   `null`, and the whole body is on `raw`. `test` is `true` only when the
+ *   body's `test` member is literally `true`: check it before you act.
  *
  *   NEVER THROWS. A receiver that answered a malformed delivery with a 500
  *   would only be sent it again.

@@ -460,7 +460,8 @@ first type is sent.
 **The body is the published example for its type**, with a new `eventId`, the
 time of the test as `occurredAt`, and `test: true`. The delivery also carries
 the header `Ringivo-Webhook-Test: true`. Every id in a sample is illustrative,
-so a receiver must check `test` first and answer 2XX without doing the work.
+so a receiver must check `test` first and answer 2XX without doing the work —
+`parseMessageEvent()` reads it as `event.test` (see [Message events](#message-events)).
 
 `sendTest()` answers with the test's result, normally `pending`. A result that
 is already `failed` means the test could not be queued: send it again later.
@@ -568,7 +569,7 @@ verifies, so a rotation costs you no deliveries.
 `message.received` describes a text somebody sent TO one of your numbers.
 `message.sent`, `message.delivered` and `message.failed` describe a text
 sent FROM one of your numbers. Verify the raw body, decode it yourself, then
-parse it and branch on `event.type`:
+parse it, set test events aside, and branch on `event.type`:
 
 ```ts
 import { SIGNATURE_HEADER, SignatureVerificationError, parseMessageEvent, verifyWebhook } from "ringivo";
@@ -584,6 +585,10 @@ app.post("/hooks/messages", (request, response) => {
   }
 
   const event = parseMessageEvent(JSON.parse(request.rawBody.toString("utf8")));
+
+  if (event.test) {
+    return response.sendStatus(204); // a test event: its ids are samples, do not act on them
+  }
 
   switch (event.type) {
     case "message.received": // somebody texted one of your numbers
@@ -604,6 +609,12 @@ app.post("/hooks/messages", (request, response) => {
 });
 ```
 
+- **Check `event.test` first.** It is `true` on a test event sent with
+  `webhookEndpoints.sendTest()` — on every variant, the `webhook.test` ping
+  (an `UnknownMessageEvent`) included — and `false` on a real event. A test
+  carries the published example body for its type, so every id in it is
+  illustrative and names nothing of yours: answer 2XX and do nothing else.
+  It is `true` only when the body's `test` member is literally `true`.
 - **One variant per event type.** `event.type` tells them apart, and each
   variant carries only its own members: a received message has `receivedAt`
   and no provider ids; the three sent-message events share
