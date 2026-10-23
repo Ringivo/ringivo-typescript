@@ -1,0 +1,61 @@
+# Dependabot for ringivo-typescript (the public `ringivo` npm SDK): npm and GitHub Actions.
+#
+# Dependabot is the only dependency bot in this repo (no Renovate), so it owns both surfaces:
+#   * npm at "/": package.json and package-lock.json. The one runtime dependency is
+#     openapi-fetch; everything else is a devDependency that never ships in the tarball.
+#   * github-actions at "/": the `uses:` refs in .github/workflows, pinned by tag
+#     (actions/checkout@v4). Dependabot moves the tag to the new release.
+#
+# package.json carries an `overrides` entry for esbuild (tsup 8 allows only esbuild ^0.27,
+# which has an advisory). When a version-update PR moves tsup to 9, drop that override in it.
+#
+# Policy: weekly on Monday 06:00 UTC (off-hours), ALL version updates (major too) grouped per
+# ecosystem so each ecosystem is one PR per week, at most 2 open PRs per entry, and a 14-day
+# cooldown on version updates so a release has time to be yanked before it lands here.
+# SECURITY UPDATES are a repo setting (Settings > Code security), not a key in this file. They
+# use this file's security groups and labels; `cooldown` does not hold them back.
+# A Dependabot PR gets Dependabot secrets only; the pull_request workflow (ci.yml) reads none.
+# A version or security PR never publishes: a release is a separate, deliberate version bump.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 2
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      npm:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Etc/UTC"
+    cooldown:
+      default-days: 14
+    open-pull-requests-limit: 2
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
