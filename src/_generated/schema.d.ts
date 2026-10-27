@@ -364,10 +364,10 @@ export interface paths {
         };
         /**
          * Mint a download URL for a fax's document
-         * @description Answers a small **plain-JSON composite**, not the bytes and not a JSON:API document: `url`
-         *     is a time-limited download URL **on your own API host**, and `expiresAt` says until when.
+         * @description Answers a `fax-documents` resource, not the bytes: `data.attributes.contentUrl` is a
+         *     time-limited download URL **on your own API host**, and `expiresAt` says until when.
          *
-         *     Follow `url` with a plain `GET` and **no `Authorization` header**. It carries its own
+         *     Follow `contentUrl` with a plain `GET` and **no `Authorization` header**. It carries its own
          *     signature, and that signature is the authorization — sending a bearer token is unnecessary
          *     and adds nothing. Treat the URL as opaque: the signature covers the whole address, so
          *     editing any part of it invalidates the link.
@@ -397,12 +397,12 @@ export interface paths {
         };
         /**
          * Mint a download URL for a fax's first-page preview
-         * @description The same composite as `GET /v1/faxes/{fax}/media`, one document kind over: the first-page
+         * @description The same `fax-documents` resource as `GET /v1/faxes/{fax}/media`, one document kind over: the first-page
          *     PNG generated at conversion. Its own path rather than a third `format` value, because a
          *     list screen asks for a preview from a different place in your code than the one that
          *     downloads a fax.
          *
-         *     Follow `contentUrl` (or `url`, in the deprecated body) the same way — a plain `GET`, no
+         *     Follow `contentUrl` the same way — a plain `GET`, no
          *     `Authorization` header.
          */
         get: operations["getFaxThumbnail"];
@@ -426,8 +426,8 @@ export interface paths {
         };
         /**
          * Download a fax's document (the URL the media link names)
-         * @description **You do not build this URL — you follow it.** `GET /v1/faxes/{fax}/media` answers a `url`,
-         *     and this is where it points. Treat it as opaque: the signature covers the whole address, so
+         * @description **You do not build this URL — you follow it.** `GET /v1/faxes/{fax}/media` answers a
+         *     `contentUrl`, and this is where it points. Treat it as opaque: the signature covers the whole address, so
          *     editing the path, the host or any query parameter invalidates it.
          *
          *     Send **no `Authorization` header**. The signature is the authorization here, which is why
@@ -461,7 +461,7 @@ export interface paths {
         /**
          * Download a fax's first-page preview (the URL the thumbnail link names)
          * @description The same contract as `GET /v1/faxes/{fax}/media/content`, one document kind over: the
-         *     first-page PNG. Follow the `url` from `GET /v1/faxes/{fax}/thumbnail`, send no
+         *     first-page PNG. Follow the `contentUrl` from `GET /v1/faxes/{fax}/thumbnail`, send no
          *     `Authorization` header, and treat the address as opaque. It carries no `format`.
          */
         get: operations["downloadFaxThumbnail"];
@@ -4261,35 +4261,6 @@ export interface components {
             documents: string[];
         };
         /**
-         * @description DEPRECATED (2026-10-01): the body answered to a caller that does not ask for
-         *     `application/vnd.api+json`. A flat acknowledgement, not a JSON:API document. Read the whole
-         *     fax at `GET /v1/faxes/{fax}`.
-         */
-        SendFaxAccepted: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                status?: components["schemas"]["FaxStatus"];
-                direction?: components["schemas"]["FaxDirection"];
-                from?: string | null;
-                to?: string | null;
-                clientReference?: string | null;
-                /** Format: date-time */
-                createdAt?: string | null;
-            };
-        };
-        /**
-         * @description DEPRECATED (2026-10-01): the body answered to a caller that does not ask for
-         *     `application/vnd.api+json`, which gets the `faxes` resource instead.
-         */
-        CancelFaxResult: {
-            data: {
-                /** Format: uuid */
-                id?: string;
-                status?: components["schemas"]["FaxStatus"];
-            };
-        };
-        /**
          * @description One stored document of a fax, with a freshly minted download link. The `id` is the stored
          *     document's own. There is no `self` link: the download URL expires, and every read mints a
          *     new one and is recorded in your audit trail.
@@ -4329,26 +4300,6 @@ export interface components {
         };
         FaxMediaDocumentResponse: {
             data: components["schemas"]["FaxMediaDocumentResource"];
-        };
-        /**
-         * @description DEPRECATED (2026-10-01): the body answered to a caller that does not ask for
-         *     `application/vnd.api+json`, which gets a `fax-documents` resource instead. A capability that
-         *     expires, plus the facts about what is behind it.
-         */
-        MediaLink: {
-            /**
-             * Format: uri
-             * @description A time-limited download URL on your own API host. Fetch it with a plain `GET` and no
-             *     `Authorization` header — the signature it carries is the authorization. Opaque: the
-             *     signature covers the whole address, so any edit invalidates it. Short-lived — do not
-             *     cache it past `expiresAt` or share it.
-             */
-            url: string;
-            /** Format: date-time */
-            expiresAt: string;
-            byteSize: number;
-            /** @description The digest of the bytes behind `url`, so you can verify what you downloaded. */
-            sha256: string;
         };
         FaxAccountAttributes: {
             name?: string;
@@ -8733,30 +8684,11 @@ export interface operations {
         };
         responses: {
             /**
-             * @description Accepted. The fax exists and is readable at `GET /v1/faxes/{fax}`.
-             *
-             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
-             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
-             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
-             *     change, announced first.
+             * @description Accepted. The fax exists and is readable at `GET /v1/faxes/{fax}`. The body is the
+             *     `faxes` resource, the same document `GET /v1/faxes/{fax}` answers.
              */
             202: {
                 headers: {
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
-                     *     moment that body became deprecated.
-                     */
-                    Deprecation?: string;
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
-                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
-                     */
-                    Sunset?: string;
-                    /**
-                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
-                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
-                     */
-                    Link?: string;
                     /**
                      * @description Present, with the value `true`, only when this response replays an earlier send that
                      *     carried the same `Idempotency-Key`. Absent on a fresh accept.
@@ -8766,20 +8698,6 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["FaxDocumentResponse"];
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                     *         "status": "queued",
-                     *         "direction": "outbound",
-                     *         "from": "+14075550100",
-                     *         "to": "+13025556789",
-                     *         "clientReference": "chart-4471",
-                     *         "createdAt": "2026-08-16T11:02:31+00:00"
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["SendFaxAccepted"];
                 };
             };
             /**
@@ -9088,29 +9006,9 @@ export interface operations {
             /**
              * @description A `fax-documents` resource: a download URL (`contentUrl`) and the facts about what is
              *     behind it. Its `id` is the stored document's.
-             *
-             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
-             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
-             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
-             *     change, announced first.
              */
             200: {
                 headers: {
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
-                     *     moment that body became deprecated.
-                     */
-                    Deprecation?: string;
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
-                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
-                     */
-                    Sunset?: string;
-                    /**
-                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
-                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
-                     */
-                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -9139,15 +9037,6 @@ export interface operations {
                      *     }
                      */
                     "application/vnd.api+json": components["schemas"]["FaxMediaDocumentResponse"];
-                    /**
-                     * @example {
-                     *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/media/content?format=pdf&expires=1787057037&signature=...",
-                     *       "expiresAt": "2026-08-16T11:07:31+00:00",
-                     *       "byteSize": 40960,
-                     *       "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["MediaLink"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -9189,44 +9078,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /**
-             * @description A `fax-documents` resource for the preview image (`kind: thumb`).
-             *
-             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
-             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
-             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
-             *     change, announced first.
-             */
+            /** @description A `fax-documents` resource for the preview image (`kind: thumb`). */
             200: {
                 headers: {
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
-                     *     moment that body became deprecated.
-                     */
-                    Deprecation?: string;
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
-                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
-                     */
-                    Sunset?: string;
-                    /**
-                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
-                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
-                     */
-                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["FaxMediaDocumentResponse"];
-                    /**
-                     * @example {
-                     *       "url": "https://api.yourprovider.example/v1/faxes/0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f/thumbnail/content?expires=1787057037&signature=...",
-                     *       "expiresAt": "2026-08-16T11:07:31+00:00",
-                     *       "byteSize": 128,
-                     *       "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-                     *     }
-                     */
-                    "application/json": components["schemas"]["MediaLink"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
@@ -9363,44 +9221,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /**
-             * @description Cancelled. The `faxes` resource, as it now stands.
-             *
-             *     **Send `Accept: application/vnd.api+json` to get the JSON:API document.** Any other `Accept`
-             *     gets the deprecated `application/json` body this endpoint answered before 2026-10-01,
-             *     with `Deprecation`, `Sunset` and `Link` headers. That body will be removed in a later
-             *     change, announced first.
-             */
+            /** @description Cancelled. The `faxes` resource, as it now stands. */
             200: {
                 headers: {
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: `@<unix time>` (RFC 9745), the
-                     *     moment that body became deprecated.
-                     */
-                    Deprecation?: string;
-                    /**
-                     * @description Sent only with the deprecated `application/json` body: the earliest date that body may
-                     *     stop being served (RFC 8594). Ask for `application/vnd.api+json` before then.
-                     */
-                    Sunset?: string;
-                    /**
-                     * @description Sent only with the deprecated body: this same URL, `rel="successor-version"`,
-                     *     `type="application/vnd.api+json"` — the new shape lives at the same address.
-                     */
-                    Link?: string;
                     [name: string]: unknown;
                 };
                 content: {
                     "application/vnd.api+json": components["schemas"]["FaxDocumentResponse"];
-                    /**
-                     * @example {
-                     *       "data": {
-                     *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
-                     *         "status": "cancelled"
-                     *       }
-                     *     }
-                     */
-                    "application/json": components["schemas"]["CancelFaxResult"];
                 };
             };
             401: components["responses"]["Unauthenticated"];
