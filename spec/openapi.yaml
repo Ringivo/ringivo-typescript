@@ -4624,8 +4624,12 @@ paths:
         null, and your messaging provider has the file. They are null too for an item we did not
         keep (larger than 10 MB, for example) and for the message's own text part.
 
-        **A customer-scoped credential** (or a customer-level user) reads only the messages sent to
-        numbers assigned to its customer now, and gets links only for files kept for that customer.
+        **A customer-scoped credential** (or a customer-level user) reads only its customer's
+        messages: those sent to a number while the number was assigned to that customer. When a
+        number moves to another customer, the messages it received before the move stay with the
+        old customer. A message from before 2026-10-23 that we could not date against the move is
+        read by the customer the number is assigned to now. A credential gets links only for files
+        kept for its own customer.
       security:
         - bearerAuth: [numbers:read]
         - bearerAuth: [numbers:messaging]
