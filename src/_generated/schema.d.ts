@@ -6923,9 +6923,12 @@ export interface components {
         CustomerAttributes: {
             name?: string;
             /**
-             * @description The short code the platform assigns a customer: five characters, lowercase letters and
-             *     digits. It never changes.
-             * @example jpz3k
+             * @description The customer's short code, which is also the first label of its phone system domain
+             *     (`{code}.signlar.com`). It is made from the customer name when the customer is created
+             *     (for example `acmeplumbing`), or a random five-character code when the name gives none.
+             *     You may choose another when you enable the phone system: send `domainLabel` to
+             *     `POST /v1/customers/{id}/pbx`. It cannot change after the phone system exists.
+             * @example acmeplumbing
              */
             code?: string | null;
             /**
