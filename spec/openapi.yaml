@@ -7099,10 +7099,10 @@ paths:
         its value, and the rules below are checked against the values the customer will have.
 
         **Everything else is fixed.** The service address, `code`, `dataResidencyCountry`,
-        `regionPreference` and `pbx` cannot change here, and `domainLabel` is refused. Sending one of
-        them with a DIFFERENT value is a **422** on that attribute; sending it with the value it
-        already has is accepted, so you can send back a document you read — if it has not changed
-        since. A stale `updatedAt` or `provisioningState` is a **422** too: read the customer again
+        `regionPreference` and `pbx` cannot change here. Sending one of them with a DIFFERENT value
+        is a **422** on that attribute; sending it with the value it already has is accepted, so you
+        can send back a document you read — if it has not changed since. `domainLabel` is refused
+        with any value: choose it on the enable. A stale `updatedAt` or `provisioningState` is a **422** too: read the customer again
         and resend, or send only the members you change. To add or remove the phone system, use
         `POST` or `DELETE /v1/customers/{customer}/pbx`.
 
@@ -7219,11 +7219,11 @@ paths:
 
         **`domainLabel` becomes the customer's `code`,** and the domain the customer's users sign in
         with. Use 3 to 32 lowercase letters, digits and hyphens, with no hyphen at either end. A label
-        that is badly formed, reserved, in use or still being removed is a **422** on `/domainLabel`.
-        A **409** (`title: Domain label unavailable`) means nothing was written, for one of two
-        reasons: the label was taken between our check and the write, or you sent no `domainLabel`
-        and the label chosen on an earlier enable is still being removed. Try again later, or send
-        a new label.
+        that is badly formed, reserved, in use, still being removed or could not be checked is a
+        **422** on `/domainLabel`. A **409** (`title: Domain label unavailable`) means nothing was
+        written: the label — the one you sent, or, with no `domainLabel`, the one chosen on an
+        earlier enable — is taken, is still being removed, or could not be checked just now.
+        `detail` says which. Try again later, or send a new label.
 
         A refused setting is a **422** whose `source.pointer` names the member, such as `/callLimit`.
 
