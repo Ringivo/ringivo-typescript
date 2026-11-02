@@ -384,16 +384,16 @@ export class Ringivo {
    * Send one request, authenticated, and hand back the response — or throw.
    *
    * Anything at or above 400 becomes a typed error here, so no caller has to
-   * check a status code — including the 401 that has already been retried
-   * once just below.
+   * check a status code — including the 401 that has already been sent once
+   * more with a fresh token.
    *
-   * This is also the ESCAPE HATCH, and it is public for that reason: this
-   * client wraps the fax surface, and an endpoint it does not wrap yet is
-   * still reachable with your credential, your timeout, your User-Agent and
-   * the same typed errors:
+   * This is also the ESCAPE HATCH, and it is public for that reason: an
+   * endpoint this client does not wrap yet is still reachable with your
+   * credential, your timeout, your retries, your User-Agent and the same
+   * typed errors:
    *
-   *     // Every SIP trunk your credential can reach. This client wraps the
-   *     // fax surface; trunks are not part of it.
+   *     // Every SIP trunk your credential can reach. This client does not
+   *     // wrap trunks yet.
    *     const response = await client.request(
    *       new Request(`${client.baseUrl}/v1/sip-trunks`, {
    *         headers: { Accept: "application/vnd.api+json" },
@@ -403,9 +403,11 @@ export class Ringivo {
    * What you get back is a plain `Response`, not one of this package's
    * frozen objects — you are past the boundary and the shape is the API's.
    *
-   * `options.timeoutMs` gives this one request its own timeout in place of
-   * the client's `timeoutMs`, for an endpoint known to take longer. The
-   * token request keeps the client's own.
+   * `options` changes this one request (`timeoutMs`, `maxRetries`, `signal`,
+   * `headers`); the token request keeps the client's own. It is RETRIED only
+   * when sending it twice is safe: a GET, HEAD, OPTIONS, PUT or DELETE, or a
+   * request that carries an `Idempotency-Key` header — set one only on an
+   * endpoint that honours it.
    */
   async request(outgoing: Request, options: RequestOptions = {}): Promise<Response> {
     return sendThrough(this, outgoing, options, false);
