@@ -209,7 +209,13 @@ export interface RingivoOptions {
    * looked up on every request.
    */
   fetch?: (input: Request) => Promise<Response>;
-  /** Headers sent with every request, under the ones this client sets itself. */
+  /**
+   * Headers sent with every API request. They fill in what a request does
+   * not set itself and never replace its `Accept` or `Content-Type`; one
+   * call's `headers` replace them. Not sent to a signed media link
+   * (`faxes.media()`, `inboundMessages.downloadMedia()`), which is followed
+   * with nothing but this package's User-Agent and that call's own `headers`.
+   */
   defaultHeaders?: HeadersLike;
 }
 
@@ -432,10 +438,10 @@ export function sendThrough(
     throw new Error("this Ringivo client was never constructed");
   }
 
-  // Lowest first: the client's defaults, this call's own, then the two
-  // headers this client always sets.
-  const headers = new Headers(own.defaultHeaders);
-  new Headers(options.headers).forEach((value, name) => headers.set(name, value));
+  // The client's defaults go UNDER the request's own headers (send() merges
+  // them), so they never replace the media type a method set; this call's
+  // own go over, and the User-Agent is always this package's.
+  const headers = new Headers(options.headers);
   headers.set("User-Agent", USER_AGENT);
 
   const maxRetries = options.maxRetries ?? client.maxRetries;
@@ -449,6 +455,7 @@ export function sendThrough(
     maxRetries,
     signal: options.signal,
     resendable,
+    defaultHeaders: own.defaultHeaders,
     headers,
     // ONE refresh after a 401, inside send(): a second 401 is answered by the
     // caller's error, not by another mint — a credential that has lost its

@@ -53,9 +53,9 @@ info:
 
     ## Set up a customer
 
-    A new customer with a phone system and a working number is six requests. Use a credential issued
-    for your whole account, with the scopes `customers:write`, `numbers:read`, `numbers:assign` and
-    `numbers:route`.
+    These requests create a customer, build its phone system, and send one of your numbers to it.
+    Use a credential issued for your whole account, with the scopes `customers:write`,
+    `numbers:read`, `numbers:assign` and `numbers:route`.
 
     1. **`GET /v1/regions`** — the values you may send for `dataResidencyCountry` and
        `regionPreference`.
@@ -64,12 +64,18 @@ info:
     3. **`POST /v1/customers/{customer}/pbx`** — send no body for the defaults, or a flat JSON body
        with `domainLabel` to choose the phone system domain. It answers 202.
     4. **`GET /v1/customers/{customer}`** — read it again until `provisioningState` is `active`. A
-       number can be routed to the phone system only after that.
-    5. **Find the number's `id`**: `GET /v1/phone-numbers?filter[e164]=%2B13025550100` for a number
-       you have, or buy one with `GET /v1/available-numbers` and `POST /v1/number-orders`.
+       number can be routed to the phone system only after that. If it is `failed`, contact support.
+    5. **Find the number's `id`** with `GET /v1/phone-numbers?filter[e164]=%2B13025550100`. Buy a
+       number in the portal, or with `GET /v1/available-numbers` and `POST /v1/number-orders`, which
+       take a console user's personal access token and not this credential.
     6. **`POST /v1/phone-numbers/{phoneNumber}/customer`** with `{"customerId": "<id>"}`, then
-       **`POST /v1/phone-numbers/{phoneNumber}/routing`** with no body. Calls to the number now go to
+       **`POST /v1/phone-numbers/{phoneNumber}/routing`** with no body. The number's calls now reach
        the customer's phone system.
+
+    **A call is answered only after two more steps, which this credential cannot make.** The
+    phone system must know the number: add it to the customer's phone system in the portal ("Add
+    to PBX"). Then point it at a user or an auto attendant in the phone system itself. Until both
+    are done, a call to the number reaches the phone system and is not answered.
 
     ## Pagination
 
@@ -5182,6 +5188,16 @@ paths:
           schema:
             type: string
             enum: [pending, active, failed, releasing]
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more number ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. Sent without the brackets it is refused
+            with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
         - $ref: '#/components/parameters/PhoneNumberInclude'
       responses:
         '200':
@@ -6939,8 +6955,8 @@ paths:
         `POST /v1/customers/{customer}/pbx`, and sending one of them here is a **422** that says so.
         Every other attribute a read returns is read-only, and is refused here too.
 
-        This request does not take an `Idempotency-Key`. If you did not get an answer, look for the
-        customer with `GET /v1/customers?filter[code]=…` or by name before you send it again.
+        This request does not take an `Idempotency-Key`. If you did not get an answer, list
+        `GET /v1/customers` (newest first) and look for the name before you send it again.
 
         Needs a credential issued for your whole account: a credential issued for one customer cannot
         hold `customers:write`.
@@ -7083,9 +7099,11 @@ paths:
         its value, and the rules below are checked against the values the customer will have.
 
         **Everything else is fixed.** The service address, `code`, `dataResidencyCountry`,
-        `regionPreference` and `pbx` cannot change here. Sending one of them with a DIFFERENT value
-        is a **422** on that attribute; sending it with the value it already has is accepted, so you
-        can send back a document you read. To add or remove the phone system, use
+        `regionPreference` and `pbx` cannot change here, and `domainLabel` is refused. Sending one of
+        them with a DIFFERENT value is a **422** on that attribute; sending it with the value it
+        already has is accepted, so you can send back a document you read — if it has not changed
+        since. A stale `updatedAt` or `provisioningState` is a **422** too: read the customer again
+        and resend, or send only the members you change. To add or remove the phone system, use
         `POST` or `DELETE /v1/customers/{customer}/pbx`.
 
         The phone system settings are refused with a **422** for a customer that has no phone
@@ -7130,7 +7148,7 @@ paths:
       description: |
         Deletes the customer and, when it has one, its phone system. It answers **202**: the customer
         is gone from this API when the call returns, and the phone system's domain is removed in the
-        background.
+        background. Numbers the customer held go back to your own pool.
 
         **It is refused, and nothing changes, while the phone system is in use.** Each refusal is a
         **409** whose `detail` says what to remove first:
@@ -7202,8 +7220,10 @@ paths:
         **`domainLabel` becomes the customer's `code`,** and the domain the customer's users sign in
         with. Use 3 to 32 lowercase letters, digits and hyphens, with no hyphen at either end. A label
         that is badly formed, reserved, in use or still being removed is a **422** on `/domainLabel`.
-        A label that was taken between our check and the write is a **409**
-        (`title: Domain label unavailable`), and nothing was written.
+        A **409** (`title: Domain label unavailable`) means nothing was written, for one of two
+        reasons: the label was taken between our check and the write, or you sent no `domainLabel`
+        and the label chosen on an earlier enable is still being removed. Try again later, or send
+        a new label.
 
         A refused setting is a **422** whose `source.pointer` names the member, such as `/callLimit`.
 
@@ -10867,6 +10887,11 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/PhoneNumberResource'
+        included:
+          type: array
+          description: The customer that holds the number, when you sent `include=customer` and one does.
+          items:
+            $ref: '#/components/schemas/CustomerResource'
         links:
           $ref: '#/components/schemas/ResourceLinks'
         meta:
@@ -10879,6 +10904,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PhoneNumberResource'
+        included:
+          type: array
+          description: The customers that hold these numbers, when you sent `include=customer`.
+          items:
+            $ref: '#/components/schemas/CustomerResource'
         links:
           $ref: '#/components/schemas/CollectionLinks'
         meta:

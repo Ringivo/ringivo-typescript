@@ -2669,8 +2669,8 @@ export interface paths {
          *     `POST /v1/customers/{customer}/pbx`, and sending one of them here is a **422** that says so.
          *     Every other attribute a read returns is read-only, and is refused here too.
          *
-         *     This request does not take an `Idempotency-Key`. If you did not get an answer, look for the
-         *     customer with `GET /v1/customers?filter[code]=…` or by name before you send it again.
+         *     This request does not take an `Idempotency-Key`. If you did not get an answer, list
+         *     `GET /v1/customers` (newest first) and look for the name before you send it again.
          *
          *     Needs a credential issued for your whole account: a credential issued for one customer cannot
          *     hold `customers:write`.
@@ -2704,7 +2704,7 @@ export interface paths {
          * Delete a customer
          * @description Deletes the customer and, when it has one, its phone system. It answers **202**: the customer
          *     is gone from this API when the call returns, and the phone system's domain is removed in the
-         *     background.
+         *     background. Numbers the customer held go back to your own pool.
          *
          *     **It is refused, and nothing changes, while the phone system is in use.** Each refusal is a
          *     **409** whose `detail` says what to remove first:
@@ -2732,9 +2732,11 @@ export interface paths {
          *     its value, and the rules below are checked against the values the customer will have.
          *
          *     **Everything else is fixed.** The service address, `code`, `dataResidencyCountry`,
-         *     `regionPreference` and `pbx` cannot change here. Sending one of them with a DIFFERENT value
-         *     is a **422** on that attribute; sending it with the value it already has is accepted, so you
-         *     can send back a document you read. To add or remove the phone system, use
+         *     `regionPreference` and `pbx` cannot change here, and `domainLabel` is refused. Sending one of
+         *     them with a DIFFERENT value is a **422** on that attribute; sending it with the value it
+         *     already has is accepted, so you can send back a document you read — if it has not changed
+         *     since. A stale `updatedAt` or `provisioningState` is a **422** too: read the customer again
+         *     and resend, or send only the members you change. To add or remove the phone system, use
          *     `POST` or `DELETE /v1/customers/{customer}/pbx`.
          *
          *     The phone system settings are refused with a **422** for a customer that has no phone
@@ -2778,8 +2780,10 @@ export interface paths {
          *     **`domainLabel` becomes the customer's `code`,** and the domain the customer's users sign in
          *     with. Use 3 to 32 lowercase letters, digits and hyphens, with no hyphen at either end. A label
          *     that is badly formed, reserved, in use or still being removed is a **422** on `/domainLabel`.
-         *     A label that was taken between our check and the write is a **409**
-         *     (`title: Domain label unavailable`), and nothing was written.
+         *     A **409** (`title: Domain label unavailable`) means nothing was written, for one of two
+         *     reasons: the label was taken between our check and the write, or you sent no `domainLabel`
+         *     and the label chosen on an earlier enable is still being removed. Try again later, or send
+         *     a new label.
          *
          *     A refused setting is a **422** whose `source.pointer` names the member, such as `/callLimit`.
          *
@@ -4755,11 +4759,15 @@ export interface components {
         };
         PhoneNumberDocumentResponse: {
             data: components["schemas"]["PhoneNumberResource"];
+            /** @description The customer that holds the number, when you sent `include=customer` and one does. */
+            included?: components["schemas"]["CustomerResource"][];
             links?: components["schemas"]["ResourceLinks"];
             meta?: components["schemas"]["DocumentMeta"];
         };
         PhoneNumberCollectionDocument: {
             data: components["schemas"]["PhoneNumberResource"][];
+            /** @description The customers that hold these numbers, when you sent `include=customer`. */
+            included?: components["schemas"]["CustomerResource"][];
             links?: components["schemas"]["CollectionLinks"];
             meta?: components["schemas"]["DocumentMeta"];
         };
@@ -13448,6 +13456,12 @@ export interface operations {
                 "filter[e164]"?: string;
                 /** @description The numbers in this state. */
                 "filter[status]"?: "pending" | "active" | "failed" | "releasing";
+                /**
+                 * @description One or more number ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`. Sent without the brackets it is refused
+                 *     with a 400.
+                 */
+                "filter[id][]"?: string[];
                 /**
                  * @description `customer` side-loads the customer that holds each number, and fills
                  *     `relationships.customer.data` (`null` for a number in your own pool).

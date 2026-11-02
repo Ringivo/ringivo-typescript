@@ -151,6 +151,11 @@ export interface ListCallRecordsOptions {
    * rows that arrived since your last read. Cannot be combined with `after`.
    */
   before?: string;
+  /**
+   * `-startedAt` (the default, newest first) or `startedAt`. A cursor belongs
+   * to the order that made it, so keep `sort` the same while you walk a list.
+   */
+  sort?: "-startedAt" | "startedAt";
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
@@ -193,6 +198,11 @@ export interface ListPbxSubscribersOptions {
    * rows that arrived since your last read. Cannot be combined with `after`.
    */
   before?: string;
+  /**
+   * `user` (the default) or `displayName`, either reversed with a leading
+   * `-`. Keep `sort` the same while you walk a list.
+   */
+  sort?: "user" | "-user" | "displayName" | "-displayName";
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
@@ -219,6 +229,8 @@ export interface ListPbxDevicesOptions {
    * rows that arrived since your last read. Cannot be combined with `after`.
    */
   before?: string;
+  /** `aor` (the default) or `-aor`. Keep `sort` the same while you walk a list. */
+  sort?: "aor" | "-aor";
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
@@ -327,6 +339,7 @@ export class CallRecords {
               "page[after]": after,
               "page[before]": options.before,
               "page[size]": options.pageSize,
+              sort: options.sort,
               "filter[customer]": options.customer,
               "filter[startedAfter]": options.startedAfter,
               "filter[startedBefore]": options.startedBefore,
@@ -531,6 +544,7 @@ export class PbxSubscribers {
               "page[after]": after,
               "page[before]": options.before,
               "page[size]": options.pageSize,
+              sort: options.sort,
               "filter[customer]": options.customer,
               "filter[user]": options.user,
               "filter[search]": options.search,
@@ -681,6 +695,7 @@ export class PbxDevices {
               "page[after]": after,
               "page[before]": options.before,
               "page[size]": options.pageSize,
+              sort: options.sort,
               "filter[customer]": options.customer,
               "filter[subscriber]": options.subscriber,
               "filter[registered]": options.registered,

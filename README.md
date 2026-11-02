@@ -202,6 +202,10 @@ for await (const each of page.iterPages()) {
 }
 ```
 
+Every list the API sorts takes `sort` (`sort: "-createdAt"`; each list's
+fields are in its API reference). Keep it the same while you walk a list: a
+cursor belongs to the order that made it.
+
 The next page is the same query with `after` set to the server's cursor —
 never one this client built. A list asked for with `before` (the polling read:
 "what arrived since this cursor") is one page, and `for await` over it stops
@@ -697,7 +701,7 @@ changes and deletes them, and gives one a phone system.
 
 ### Set up a customer, its phone system and a number
 
-Six calls, in this order. Use a credential issued for your whole account,
+These calls, in this order. Use a credential issued for your whole account,
 with `customers:read`, `customers:write`, `numbers:read`, `numbers:assign` and
 `numbers:route`. [`examples/create-customer.ts`](examples/create-customer.ts)
 is the same flow as a script you can run.
@@ -727,13 +731,18 @@ await client.customers.enablePbx(customer.id, { domainLabel: "acme-dental" });
 const ready = await client.customers.waitForPbx(customer.id);
 if (ready.provisioningState !== "active") throw new Error("the phone system was not built");
 
-// 5. A number you hold, by its E.164 form...
+// 5. A number you hold, by its E.164 form (buy numbers in the portal)...
 const [number] = (await client.phoneNumbers.list({ e164: "+13025550100" })).data;
 
 // 6. ...given to the customer, and pointed at its phone system.
 await client.phoneNumbers.assign(number.id, customer.id);
 await client.phoneNumbers.route(number.id);
 ```
+
+**After step 6 the number's calls reach the phone system; nobody answers them
+yet.** Two more steps, which this client's credential cannot make: add the
+number to the customer's phone system in the portal ("Add to PBX"), then point
+it at a user or an auto attendant in the phone system itself.
 
 **The service address is checked**, as one postal address, and the customer
 keeps the corrected spelling: read `addressLines` off the answer. An address
@@ -762,7 +771,7 @@ for await (const clinic of client.customers.list()) {
   console.log(clinic.name, clinic.code, clinic.pbx, clinic.effectiveRegion);
 }
 
-const found = await client.customers.list({ code: "acmedental" });
+const found = await client.customers.list({ code: "acme-dental" }); // the domainLabel chosen above
 const [clinic] = found.data;
 ```
 

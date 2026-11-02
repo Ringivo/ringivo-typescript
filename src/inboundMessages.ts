@@ -77,6 +77,14 @@ export interface ListInboundMessagesOptions {
   after?: string;
   /** Walk backward from a cursor you already hold. */
   before?: string;
+  /**
+   * The order of the list: a field name, or several separated by commas,
+   * with a leading `-` to reverse one (`-createdAt`). Newest first
+   * (`-createdAt,-id`) by default. Each list takes the fields its API
+   * reference names; any other is refused with a 400. A cursor belongs to the
+   * order that made it, so keep `sort` the same while you walk a list.
+   */
+  sort?: string;
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
@@ -102,6 +110,7 @@ export class InboundMessages {
               "page[after]": after,
               "page[before]": options.before,
               "page[size]": options.pageSize,
+              sort: options.sort,
               "filter[number]": options.number,
               "filter[from]": options.from,
               "filter[kind]": options.kind,

@@ -65,7 +65,7 @@ describe("phoneNumbers reads", () => {
       }),
     );
 
-    const page = await client().phoneNumbers.list({ e164: "+14075550111", status: "active" });
+    const page = await client().phoneNumbers.list({ e164: "+14075550111", status: "active", ids: [NUMBER_ID, "other"] });
 
     const [number] = page.data;
     expect(number?.id).toBe(NUMBER_ID);
@@ -81,6 +81,7 @@ describe("phoneNumbers reads", () => {
     expect(reads.last.url.search).toContain("filter[e164]=%2B14075550111");
     expect(query.get("filter[status]")).toBe("active");
     expect(query.get("include")).toBe("customer");
+    expect(query.getAll("filter[id][]")).toEqual([NUMBER_ID, "other"]);
   });
 
   it("reads one number, and a number in your pool has customerId null", async () => {

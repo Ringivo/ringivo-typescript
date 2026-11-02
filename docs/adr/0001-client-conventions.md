@@ -66,7 +66,11 @@ anthropic-sdk-typescript `ea8d7de`, stripe-node `6d5ed96` (all read
    polling read) is one page.
 4. **A last `RequestOptions` argument on every method** — `timeoutMs`,
    `maxRetries`, `signal`, `headers` — and client options `fetch`,
-   `defaultHeaders`, `maxRetries`.
+   `defaultHeaders`, `maxRetries`. Header precedence, lowest first: the
+   client's `defaultHeaders`, the method's own (its `Accept` and
+   `Content-Type`), the call's `headers`, then this package's `User-Agent`
+   and `Authorization`. An `Idempotency-Key` in a call's `headers` makes that
+   call resendable; one in `defaultHeaders` does not.
 5. **No credential on a property.** The secret and the token live in
    `#private` fields and a module-private `WeakMap`; both classes define
    `util.inspect.custom`.
@@ -104,7 +108,8 @@ anthropic-sdk-typescript `ea8d7de`, stripe-node `6d5ed96` (all read
 | 11 | The API takes no `Idempotency-Key` on a customer create, so a create cannot be retried safely | Medium | Open, an API change; the client sends a create once |
 | 12 | No request id on responses, so an error cannot name the request for support (the reference clients expose `x-request-id`) | Low | Open, an API change; `ApiError.headers` will carry one when the API sends it |
 | 13 | No raw-response accessor (`withResponse()`) | Low | Open; `client.request()` is the escape hatch |
-| 14 | Are the Types Wrong could not run (the CLI crashed on this package's tarball, 0.17.4 and 0.18.2) | Low | Open; publint passes and `tests/dist.test.ts` loads both bundles |
+| 14 | No check of how each module mode resolves the types | Low | Fixed: Are the Types Wrong 0.18.5 (`--pack .`) is green for node10, node16 CJS and ESM, and bundler, and runs in CI beside publint |
+| 15 | `sort` reachable on no list, though the API sorts most of them | Low | Fixed: every list that the API sorts takes `sort`; the PBX lists take their exact values |
 
 ## Consequences
 

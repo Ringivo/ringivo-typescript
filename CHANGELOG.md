@@ -22,6 +22,8 @@ Added:
   the verbs `assign()`, `unassign()`, `route()` (to the customer's phone
   system by default, or a fax account or SIP trunk) and `unroute()`. Each
   number carries `customerId`.
+- **`sort` on every list the API sorts** (the PBX lists take their exact
+  values, such as `"-startedAt"`).
 - **Types** `RegionPreference`, `SipTransport` and `ProvisioningState`, now
   also on `Customer`'s fields of the same meaning, and `examples/create-customer.ts`.
 
@@ -61,7 +63,8 @@ Breaking:
 - **Every method takes a last `RequestOptions` argument**: `timeoutMs`,
   `maxRetries`, `signal` and `headers`, for that call alone.
 - **New client options**: `fetch` (your own `fetch`, for a proxy agent or a
-  test double), `defaultHeaders`, and `maxRetries`.
+  test double), `defaultHeaders` (under each method's own `Accept` and
+  `Content-Type`, never over them), and `maxRetries`.
 - **Security fix: the client no longer prints its credential.** The client
   secret and the bearer token were ordinary properties, so
   `console.log(client)` or a logger that serialised the client printed them.

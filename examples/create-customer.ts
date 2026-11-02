@@ -92,6 +92,9 @@ async function main(): Promise<void> {
     throw error;
   }
   console.log("routed", number.e164, "to", customer.name);
+  // The calls now reach the phone system. For one to be answered, add the
+  // number to the phone system in the portal ("Add to PBX") and point it at a
+  // user or auto attendant there: this credential cannot do either yet.
 }
 
 main().catch((error: unknown) => {

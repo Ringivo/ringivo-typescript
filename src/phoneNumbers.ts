@@ -40,6 +40,8 @@ import { pathSegment } from "./pathSegment.js";
 
 /** What `phoneNumbers.list()` accepts. */
 export interface ListPhoneNumbersOptions {
+  /** Several numbers by id in one request. An empty list narrows nothing. */
+  ids?: string[];
   /** The number whose E.164 form is exactly this, with its `+`: finds one number, or none. */
   e164?: string;
   /** The numbers in this state. */
@@ -95,6 +97,7 @@ export class PhoneNumbers {
               sort: options.sort,
               "filter[e164]": options.e164,
               "filter[status]": options.status as "pending" | "active" | "failed" | "releasing" | undefined,
+              "filter[id][]": options.ids,
               include: INCLUDE_CUSTOMER,
             },
           },
@@ -162,6 +165,12 @@ export class PhoneNumbers {
    * otherwise a `ConflictError` titled `Not routable`. A number that already
    * routes is `Already routed`: `unroute()` it first. A destination id that
    * is not that customer's is an `UnprocessableEntityError`.
+   *
+   * A phone system route makes the number's calls REACH the phone system;
+   * it does not make them ring anyone. The phone system must also know the
+   * number (the portal's "Add to PBX" — there is no request for it this
+   * credential can make yet), and the number must be pointed at a user or an
+   * auto attendant in the phone system itself.
    *
    * Needs `numbers:route`.
    */

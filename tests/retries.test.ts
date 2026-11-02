@@ -329,3 +329,115 @@ describe("the 401 refresh", () => {
     ]);
   });
 });
+
+describe("header precedence", () => {
+  it("defaultHeaders fill in, and never replace the media type a method sets for its endpoint", async () => {
+    const wire = new Wire([
+      () => json({ data: { type: "fax-accounts", id: FAX_ACCOUNT_ID, attributes: { name: "Desk" } } }, 201),
+    ]);
+
+    await client(wire, {
+      defaultHeaders: { Accept: "text/plain", "Content-Type": "text/plain", "X-Team": "ops" },
+    }).faxAccounts.create({ customer: "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081", name: "Desk" });
+
+    const sent = wire.sent[0];
+    expect(sent?.headers.get("accept")).toBe("application/vnd.api+json");
+    expect(sent?.headers.get("content-type")).toBe("application/vnd.api+json");
+    expect(sent?.headers.get("x-team")).toBe("ops");
+  });
+
+  it("an Idempotency-Key in a call's headers makes that call resendable; one in defaultHeaders does not", async () => {
+    const post = (): Request => new Request(`${BASE_URL}/v1/anything`, { method: "POST", body: "{}" });
+
+    const keyed = new Wire([() => refusal(503, {}, { "Retry-After": "0" }), () => json({}, 202)]);
+    await client(keyed).request(post(), { headers: { "Idempotency-Key": "job-7" } });
+    expect(keyed.sent).toHaveLength(2);
+    expect(keyed.sent.map((request) => request.headers.get("idempotency-key"))).toEqual(["job-7", "job-7"]);
+
+    const defaulted = new Wire([() => refusal(503, {}, { "Retry-After": "0" })]);
+    await client(defaulted, { defaultHeaders: { "Idempotency-Key": "same-for-all" } })
+      .request(post())
+      .catch(() => undefined);
+    expect(defaulted.sent).toHaveLength(1);
+  });
+});
+
+describe("more transient answers", () => {
+  it("retries an attempt that timed out", async () => {
+    let calls = 0;
+    const ringivo = new Ringivo({
+      baseUrl: BASE_URL,
+      clientId: "cid",
+      clientSecret: "csecret",
+      tenant: TENANT_ID,
+      scopes: ["fax:read"],
+      timeoutMs: 20,
+      fetch: async (request) => {
+        if (new URL(request.url).pathname === "/oauth/token") {
+          return json({ access_token: "tok", token_type: "Bearer", expires_in: 900 });
+        }
+        calls += 1;
+        if (calls === 1) {
+          return new Promise((_, reject) => {
+            request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+          });
+        }
+        return fax();
+      },
+    });
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+
+    expect((await ringivo.faxes.get(FAX_ID)).id).toBe(FAX_ID);
+    expect(calls).toBe(2);
+  });
+
+  it("waits a Retry-After given as an HTTP date", async () => {
+    const delays: number[] = [];
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(((fn: () => void, ms?: number) => {
+      delays.push(ms ?? 0);
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+    const soon = new Date(Date.now() + 5_000).toUTCString();
+    const wire = new Wire([() => refusal(503, {}, { "Retry-After": soon }), () => fax()]);
+
+    await client(wire).faxes.get(FAX_ID);
+
+    expect(wire.sent).toHaveLength(2);
+    expect(delays[0]).toBeGreaterThanOrEqual(3_000);
+    expect(delays[0]).toBeLessThanOrEqual(6_000);
+  });
+});
+
+describe("a runtime without AbortSignal.any", () => {
+  it("still aborts, and lets go of the caller's signal after each attempt", async () => {
+    const any = AbortSignal.any;
+    // Node 20.0 to 20.2 have no AbortSignal.any.
+    Object.defineProperty(AbortSignal, "any", { value: undefined, configurable: true, writable: true });
+    try {
+      const controller = new AbortController();
+      const added = vi.spyOn(controller.signal, "addEventListener");
+      const removed = vi.spyOn(controller.signal, "removeEventListener");
+      const wire = new Wire([() => fax(), () => fax(), () => fax()]);
+      const ringivo = client(wire);
+
+      for (let i = 0; i < 3; i += 1) {
+        await ringivo.faxes.get(FAX_ID, {}, { signal: controller.signal });
+      }
+
+      expect(added.mock.calls.length).toBe(3);
+      expect(removed.mock.calls.length).toBe(3);
+
+      controller.abort(new Error("stop"));
+      const error = await ringivo.faxes
+        .get(FAX_ID, {}, { signal: controller.signal })
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(RequestAbortedError);
+    } finally {
+      Object.defineProperty(AbortSignal, "any", { value: any, configurable: true, writable: true });
+    }
+  });
+});

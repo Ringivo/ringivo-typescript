@@ -74,7 +74,13 @@ export interface SendContext {
   resendable?: boolean | undefined;
   /** Returns the bearer token to send; `true` asks for a new one. */
   authorize?: ((forceRefresh: boolean) => Promise<string>) | undefined;
-  /** Headers set on every attempt, over the request's own. */
+  /**
+   * Headers UNDER the request's own: a client's `defaultHeaders`. They fill
+   * in what the request does not say, and never replace the `Accept` or
+   * `Content-Type` a method set for its own endpoint.
+   */
+  defaultHeaders?: Headers | undefined;
+  /** Headers OVER the request's own: one call's `headers`, then the User-Agent. */
   headers?: Headers | undefined;
 }
 
@@ -83,10 +89,14 @@ export interface SendContext {
  * throw the error it earned.
  */
 export async function send(template: Request, context: SendContext): Promise<Response> {
+  // The key counts wherever the caller put it: on the request, or in this
+  // call's own `headers`. Not in a client's `defaultHeaders` — one key for
+  // every request would make every write a replay of the first.
   const resendable =
     SAFE_METHODS.has(template.method.toUpperCase()) ||
     context.resendable === true ||
-    template.headers.has("Idempotency-Key");
+    template.headers.has("Idempotency-Key") ||
+    context.headers?.has("Idempotency-Key") === true;
 
   let retriesLeft = resendable ? Math.max(0, Math.trunc(context.maxRetries)) : 0;
   let retriesDone = 0;
@@ -112,7 +122,7 @@ export async function send(template: Request, context: SendContext): Promise<Res
 
     if (response.status === 401 && context.authorize && !refreshed) {
       refreshed = true;
-      await discard(response);
+      discard(response);
       token = await context.authorize(true);
       continue;
     }
@@ -120,7 +130,7 @@ export async function send(template: Request, context: SendContext): Promise<Res
     if (retriesLeft > 0 && (await isTransient(response))) {
       const delay = retryDelayMs(response, retriesDone);
       if (delay !== undefined) {
-        await discard(response);
+        discard(response);
         await sleep(delay, context.signal);
         retriesLeft -= 1;
         retriesDone += 1;
@@ -133,33 +143,55 @@ export async function send(template: Request, context: SendContext): Promise<Res
   }
 }
 
-function attempt(outgoing: Request, context: SendContext, token: string | undefined): Promise<Response> {
-  const headers = new Headers(outgoing.headers);
+async function attempt(outgoing: Request, context: SendContext, token: string | undefined): Promise<Response> {
+  // Lowest first: the client's defaults, the request's own, this call's own.
+  const headers = new Headers(context.defaultHeaders);
+  outgoing.headers.forEach((value, name) => headers.set(name, value));
   context.headers?.forEach((value, name) => headers.set(name, value));
   if (token !== undefined) {
     headers.set("Authorization", `Bearer ${token}`);
   }
 
   const timeout = AbortSignal.timeout(context.timeoutMs);
-  const signal = context.signal ? anySignal(context.signal, timeout) : timeout;
-
-  return context.fetch(new Request(outgoing, { headers, signal }));
+  const combined = context.signal ? anySignal(context.signal, timeout) : { signal: timeout, release: noop };
+  try {
+    return await context.fetch(new Request(outgoing, { headers, signal: combined.signal }));
+  } finally {
+    combined.release();
+  }
 }
 
-/** `AbortSignal.any` where the runtime has it (Node 20.3+), the same by hand where it does not. */
-function anySignal(first: AbortSignal, second: AbortSignal): AbortSignal {
+function noop(): void {}
+
+/**
+ * `AbortSignal.any` where the runtime has it (Node 20.3+), the same by hand
+ * where it does not. The hand-made one RELEASES its listeners when the
+ * attempt settles: a caller's long-lived signal (a server's shutdown signal)
+ * would otherwise gather one listener per request.
+ */
+function anySignal(first: AbortSignal, second: AbortSignal): { signal: AbortSignal; release: () => void } {
   if (typeof AbortSignal.any === "function") {
-    return AbortSignal.any([first, second]);
+    return { signal: AbortSignal.any([first, second]), release: noop };
   }
   const controller = new AbortController();
+  const listeners: Array<[AbortSignal, () => void]> = [];
   for (const signal of [first, second]) {
     if (signal.aborted) {
       controller.abort(signal.reason);
       break;
     }
-    signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
+    const onAbort = (): void => controller.abort(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    listeners.push([signal, onAbort]);
   }
-  return controller.signal;
+  return {
+    signal: controller.signal,
+    release: () => {
+      for (const [signal, onAbort] of listeners) {
+        signal.removeEventListener("abort", onAbort);
+      }
+    },
+  };
 }
 
 /**
@@ -231,7 +263,7 @@ function backoffMs(retriesDone: number): number {
  * NOT awaited: a cancel can wait on a stream that never settles (a mocked
  * response is one), and nothing here needs it finished.
  */
-async function discard(response: Response): Promise<void> {
+function discard(response: Response): void {
   response.body?.cancel().catch(() => undefined);
 }
 

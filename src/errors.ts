@@ -122,10 +122,12 @@ export class ApiError extends RingivoError {
 /**
  * The credential was refused, or the token it bought no longer works.
  *
- * Thrown both for a token request the server rejected and for a request that
- * answered 401 twice — once on its own, and once more after the token was
- * force-refreshed and the request retried. A second 401 means the
- * credential, not the token, is the problem.
+ * Thrown for a token request refused with a 401 (`invalid_client`: a wrong
+ * secret) and for a request that answered 401 twice — once on its own, and
+ * once more after the token was force-refreshed. A second 401 means the
+ * credential, not the token, is the problem. A token request refused with a
+ * 400 (`invalid_scope`, `invalid_request`, `unauthorized_client`) is a
+ * `BadRequestError`: branch on its `code`.
  */
 export class AuthenticationError extends ApiError {}
 

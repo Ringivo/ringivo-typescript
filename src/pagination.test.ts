@@ -130,3 +130,26 @@ describe("a list", () => {
     });
   });
 });
+
+describe("a PagePromise's own then, catch and finally", () => {
+  it("delegate to the request, and answer plain promises", async () => {
+    const seen: URL[] = [];
+    let finished = false;
+
+    const failed = client(seen).customers.list({ after: "nonsense" }, { maxRetries: 0 });
+    const caught = failed.catch((error: unknown) => (error as { statusCode: number }).statusCode);
+    expect(caught).not.toBeInstanceOf(PagePromise);
+    expect(await caught).toBe(400);
+
+    const page = await client(seen)
+      .customers.list()
+      .finally(() => {
+        finished = true;
+      });
+    expect(finished).toBe(true);
+    expect(page.data).toHaveLength(2);
+
+    const winner = await Promise.race([client(seen).customers.list(), new Promise(() => undefined)]);
+    expect((winner as Page<unknown>).data).toHaveLength(2);
+  });
+});
