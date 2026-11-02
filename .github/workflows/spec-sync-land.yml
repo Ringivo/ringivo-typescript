@@ -66,7 +66,7 @@ jobs:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
       CI_RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The commit ci validated, plus enough history to prove the fast-forward below.
           ref: ${{ github.event.workflow_run.head_sha }}
