@@ -51,6 +51,32 @@ info:
     rule runs — so a resource belonging to somebody else answers **404**, never 403. A token issued
     for a person additionally sees only the fax accounts that person was granted.
 
+    ## Set up a customer
+
+    These requests create a customer, build its phone system, and send one of your numbers to it.
+    Use a credential issued for your whole account, with the scopes `customers:write`,
+    `numbers:read`, `numbers:assign` and `numbers:route`.
+
+    1. **`GET /v1/regions`** — the values you may send for `dataResidencyCountry` and
+       `regionPreference`.
+    2. **`POST /v1/customers`** — the name, the service address, the time zone and those two values.
+       It answers 201 with the customer's `id`. The customer has no phone system yet.
+    3. **`POST /v1/customers/{customer}/pbx`** — send no body for the defaults, or a flat JSON body
+       with `domainLabel` to choose the phone system domain. It answers 202.
+    4. **`GET /v1/customers/{customer}`** — read it again until `provisioningState` is `active`. A
+       number can be routed to the phone system only after that. If it is `failed`, contact support.
+    5. **Find the number's `id`** with `GET /v1/phone-numbers?filter[e164]=%2B13025550100`. Buy a
+       number in the portal, or with `GET /v1/available-numbers` and `POST /v1/number-orders`, which
+       take a console user's personal access token and not this credential.
+    6. **`POST /v1/phone-numbers/{phoneNumber}/customer`** with `{"customerId": "<id>"}`, then
+       **`POST /v1/phone-numbers/{phoneNumber}/routing`** with no body. The number's calls now reach
+       the customer's phone system.
+
+    **A call is answered only after two more steps, which this credential cannot make.** The
+    phone system must know the number: add it to the customer's phone system in the portal ("Add
+    to PBX"). Then point it at a user or an auto attendant in the phone system itself. Until both
+    are done, a call to the number reaches the phone system and is not answered.
+
     ## Pagination
 
     Every collection pages the same way, by **cursor**. Ask for `page[size]` rows — the default is
@@ -5123,6 +5149,105 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
+  /v1/phone-numbers:
+    get:
+      tags: [Phone numbers]
+      operationId: listPhoneNumbers
+      summary: List your phone numbers
+      description: |
+        Every number in your inventory, newest first: the ones in your own pool and the ones you
+        gave to a customer. A credential issued for one customer sees only that customer's numbers.
+
+        A number's `id` is what the assignment and routing requests take. To find the id of one
+        number, filter by `e164`: `filter[e164]=%2B13025550100` (the `+` is `%2B` in a query
+        string).
+      security:
+        - bearerAuth: [numbers:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - name: sort
+          in: query
+          required: false
+          description: |
+            Sortable fields: `createdAt`, `e164`, `id`. Prefix with `-` to reverse. The default is
+            `-createdAt,-id`, newest first. Any other field is refused with a 400.
+          schema: { type: string }
+          example: e164
+        - name: filter[e164]
+          in: query
+          required: false
+          description: The number whose E.164 form is exactly this value, with its `+`.
+          schema: { type: string }
+          example: '+13025550100'
+        - name: filter[status]
+          in: query
+          required: false
+          description: The numbers in this state.
+          schema:
+            type: string
+            enum: [pending, active, failed, releasing]
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more number ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`. Sent without the brackets it is refused
+            with a 400.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+        - $ref: '#/components/parameters/PhoneNumberInclude'
+      responses:
+        '200':
+          description: A page of your numbers.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberCollectionDocument'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/phone-numbers/{phoneNumber}:
+    parameters:
+      - $ref: '#/components/parameters/PhoneNumberId'
+    get:
+      tags: [Phone numbers]
+      operationId: getPhoneNumber
+      summary: Read one phone number
+      description: |
+        A number you just bought reads `pending` until the carrier activates it, then `active`.
+
+        **To see which customer holds it, send `include=customer`.** `relationships.customer.data`
+        is then that customer's identifier, or `null` while the number is in your own pool, and the
+        customer itself is in `included`. Without `include`, a relationship carries only its links.
+
+        A number that is not yours answers **404**.
+      security:
+        - bearerAuth: [numbers:read]
+      parameters:
+        - $ref: '#/components/parameters/PhoneNumberInclude'
+      responses:
+        '200':
+          description: The number.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PhoneNumberDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /v1/phone-numbers/{phoneNumber}/customer:
     parameters:
       - $ref: '#/components/parameters/PhoneNumberId'
@@ -6801,6 +6926,114 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [Customers]
+      operationId: createCustomer
+      summary: Create a customer
+      description: |
+        Adds a customer to your account. It answers **201** with the customer, and the customer is
+        complete when the call returns. **It has no phone system yet:** `pbx` is `false`. To give it
+        one, send `POST /v1/customers/{customer}/pbx` next.
+
+        **Read `GET /v1/regions` first.** It lists the values you may send for
+        `dataResidencyCountry` and `regionPreference`. Both are required, and neither is ever
+        guessed: `dataResidencyCountry` cannot change after the create.
+
+        **The service address is checked.** `country`, `addressLines`, `city`, `region` and
+        `postalCode` are validated as one postal address, and the customer keeps the corrected
+        spelling — read `addressLines` back from the answer, not from your request. An address that
+        cannot be confirmed precisely enough is refused with a **422** on `/data/attributes/addressLines`
+        whose `detail` says what is wrong. Send `city`, `region` and `postalCode` when you have them:
+        they are optional here, and an address without them is more often refused.
+
+        `timeZone` is an IANA name, such as `America/Chicago`. A name the phone system does not
+        support is refused with a **422** on `/data/attributes/timeZone`.
+
+        **Send only the attributes in this schema.** `code` is made for you, from the customer's
+        name. The phone system settings (`pbx`, `residential`, `callLimit`, `callLimitExternal`,
+        `transports`, and the `domainLabel` that chooses `code`) belong to
+        `POST /v1/customers/{customer}/pbx`, and sending one of them here is a **422** that says so.
+        Every other attribute a read returns is read-only, and is refused here too.
+
+        This request does not take an `Idempotency-Key`. If you did not get an answer, list
+        `GET /v1/customers` (newest first) and look for the name before you send it again.
+
+        Needs a credential issued for your whole account: a credential issued for one customer cannot
+        hold `customers:write`.
+      security:
+        - bearerAuth: [customers:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/CustomerCreateRequest'
+            example:
+              data:
+                type: customers
+                attributes:
+                  name: Acme Dental
+                  country: US
+                  addressLines: [233 S Wacker Dr]
+                  city: Chicago
+                  region: IL
+                  postalCode: '60606'
+                  timeZone: America/Chicago
+                  dataResidencyCountry: US
+                  regionPreference: partner_default
+      responses:
+        '201':
+          description: The customer. It has no phone system yet.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/CustomerDocumentResponse'
+              example:
+                data:
+                  type: customers
+                  id: 0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e
+                  attributes:
+                    name: Acme Dental
+                    code: acmedental
+                    country: US
+                    addressLines: [233 S Wacker Dr]
+                    city: Chicago
+                    region: IL
+                    postalCode: '60606'
+                    timeZone: America/Chicago
+                    dataResidencyCountry: US
+                    regionPreference: partner_default
+                    effectiveRegion: use1
+                    pbx: false
+                    residential: null
+                    callLimit: null
+                    callLimitExternal: null
+                    transports: null
+                    provisioningState: null
+                    createdAt: '2026-09-01T12:00:00.000000Z'
+                    updatedAt: '2026-09-01T12:00:00.000000Z'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          description: |
+            The document could not be applied. Each error's `source.pointer` names the attribute:
+            a missing required one, a value past its limit, a `regionPreference` that is not legal in
+            the chosen `dataResidencyCountry`, an address that could not be confirmed, a time zone
+            the phone system does not support, or an attribute this request does not take.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    detail: That address could not be confirmed precisely enough to serve. Check the street number and try again.
+                    source:
+                      pointer: /data/attributes/addressLines
+        '429':
+          $ref: '#/components/responses/RateLimited'
   /v1/customers/{customer}:
     parameters:
       - $ref: '#/components/parameters/CustomerId'
@@ -6852,6 +7085,244 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/RateLimited'
+    patch:
+      tags: [Customers]
+      operationId: updateCustomer
+      summary: Change a customer
+      description: |
+        Changes `name` and `timeZone`, and, when the customer has a phone system, its settings:
+        `residential`, `callLimit`, `callLimitExternal` and `transports`. It answers **200** with the
+        customer. When a change touches a value the phone system holds, the phone system is updated
+        in the background, and `provisioningState` shows where that stands.
+
+        **A sparse PATCH is fine.** Send only what you change; every attribute you leave out keeps
+        its value, and the rules below are checked against the values the customer will have.
+
+        **Everything else is fixed.** The service address, `code`, `dataResidencyCountry`,
+        `regionPreference` and `pbx` cannot change here. Sending one of them with a DIFFERENT value
+        is a **422** on that attribute; sending it with the value it already has is accepted, so you
+        can send back a document you read — if it has not changed since. `domainLabel` is refused
+        with any value: choose it on the enable. A stale `updatedAt` or `provisioningState` is a **422** too: read the customer again
+        and resend, or send only the members you change. To add or remove the phone system, use
+        `POST` or `DELETE /v1/customers/{customer}/pbx`.
+
+        The phone system settings are refused with a **422** for a customer that has no phone
+        system. `callLimitExternal` may not be larger than `callLimit`, and `transports` needs at
+        least one entry.
+      security:
+        - bearerAuth: [customers:write]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/CustomerUpdateRequest'
+            example:
+              data:
+                type: customers
+                id: 0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e
+                attributes:
+                  name: Acme Dental Group
+                  callLimit: 20
+      responses:
+        '200':
+          description: The changed customer.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/CustomerDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [Customers]
+      operationId: deleteCustomer
+      summary: Delete a customer
+      description: |
+        Deletes the customer and, when it has one, its phone system. It answers **202**: the customer
+        is gone from this API when the call returns, and the phone system's domain is removed in the
+        background. Numbers the customer held go back to your own pool.
+
+        **It is refused, and nothing changes, while the phone system is in use.** Each refusal is a
+        **409** whose `detail` says what to remove first:
+
+        - the customer's phone system still holds numbers (`title: PBX still holds numbers`);
+        - its domain still has users or SIP trunks (`title: Phone system not empty`) — deleting the
+          domain would cut live service, so we stop rather than decide that for you;
+        - its phone system is being set up or repaired right now (`title: Teardown did not run`) —
+          try again in a few minutes.
+
+        A **502** means the phone system could not be asked whether it is empty. Nothing was changed,
+        and you may send the request again.
+      security:
+        - bearerAuth: [customers:write]
+      responses:
+        '202':
+          description: Accepted. The customer is deleted, and the phone system's domain is removed in the background.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The phone system is still in use, or busy. Nothing was changed.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: Phone system not empty
+                    detail: >-
+                      This customer's phone system still has 2 users. Remove them first — deleting
+                      the domain now would cut live service, so we stop rather than decide that for
+                      you. Remove the users from the customer's Users screen and ask support to
+                      release any SIP trunks, then try again.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/CustomerPhoneSystemUnreachable'
+
+  /v1/customers/{customer}/pbx:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+    post:
+      tags: [Customers]
+      operationId: enableCustomerPbx
+      summary: Give a customer a phone system
+      description: |
+        Starts building the customer's phone system. It answers **202**: the customer reads
+        `pbx: true` at once, and the phone system itself is built in the background. Read the
+        customer back with `GET /v1/customers/{customer}` and wait for `provisioningState` to be
+        `active`; `failed` means we gave up.
+
+        **The body is flat JSON, and every member is optional.** Send no body to use the defaults.
+        A JSON:API document (a body with a top-level `data`) is refused with a **400**, because its
+        settings would otherwise be ignored.
+
+        | Member | Default | Rule |
+        |---|---|---|
+        | `residential` | `false` | `true` or `false` |
+        | `callLimit` | `10` | the most calls at once, 1 to 50 |
+        | `callLimitExternal` | `10` | the most external calls at once, 1 to 50, and not more than `callLimit` |
+        | `transports` | `[tls, udp]` | the SIP transports to offer, first preferred; at least one, no repeats |
+        | `domainLabel` | the customer's `code` | the first label of the phone system domain, `{domainLabel}.signlar.com` |
+
+        **`domainLabel` becomes the customer's `code`,** and the domain the customer's users sign in
+        with. Use 3 to 32 lowercase letters, digits and hyphens, with no hyphen at either end. A label
+        that is badly formed, reserved, in use, still being removed or could not be checked is a
+        **422** on `/domainLabel`. A **409** (`title: Domain label unavailable`) means nothing was
+        written: the label — the one you sent, or, with no `domainLabel`, the one chosen on an
+        earlier enable — is taken, is still being removed, or could not be checked just now.
+        `detail` says which. Try again later, or send a new label.
+
+        A refused setting is a **422** whose `source.pointer` names the member, such as `/callLimit`.
+
+        To change the settings later, `PATCH /v1/customers/{customer}`. The domain label cannot
+        change after the phone system exists.
+      security:
+        - bearerAuth: [customers:write]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerPbxEnableRequest'
+            example:
+              callLimit: 20
+              callLimitExternal: 10
+              domainLabel: acme-dental
+      responses:
+        '202':
+          description: Accepted. The phone system is being built.
+        '400':
+          description: The body was a JSON:API document. Send the settings at the top level.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: |
+            The phone system cannot be built now. Nothing was written. The `title` says why:
+            `Phone system already enabled`, `Domain label unavailable`, `No PBX node available` (no
+            phone system can take a customer in its region), or `PBX cannot be placed`.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: Phone system already enabled
+                    detail: This customer already has a phone system. Change its settings with an update, or remove it first.
+        '422':
+          description: A setting was refused. `source.pointer` names the member.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    title: Unprocessable Entity
+                    detail: The external concurrent call limit cannot exceed the total concurrent call limit.
+                    source:
+                      pointer: /callLimitExternal
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [Customers]
+      operationId: removeCustomerPbx
+      summary: Take away a customer's phone system
+      description: |
+        Removes the customer's phone system and keeps the customer. It answers **202**: the customer
+        reads `pbx: false` at once, and the phone system's domain is removed in the background.
+
+        It is refused with a **409**, and nothing changes, for the same reasons a customer delete is
+        (`PBX still holds numbers`, `Phone system not empty`, `Teardown did not run`), and when the
+        customer has no phone system (`title: No phone system`). A **502** means the phone system
+        could not be asked whether it is empty; nothing was changed, and you may send it again.
+      security:
+        - bearerAuth: [customers:write]
+      responses:
+        '202':
+          description: Accepted. The phone system is being removed.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The customer has no phone system, or it is still in use, or busy. Nothing was changed.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: PBX still holds numbers
+                    detail: Acme Dental's PBX still holds 1 number(s). Remove them from the PBX first.
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/CustomerPhoneSystemUnreachable'
 
   /v1/tenants/{tenant}:
     parameters:
@@ -9126,6 +9597,16 @@ components:
       required: true
       description: The hosted messaging order's id.
       schema: { type: string, format: uuid }
+    PhoneNumberInclude:
+      name: include
+      in: query
+      required: false
+      description: |
+        `customer` side-loads the customer that holds each number, and fills
+        `relationships.customer.data` (`null` for a number in your own pool).
+      schema:
+        type: string
+        enum: [customer]
     PhoneNumberId:
       name: phoneNumber
       in: path
@@ -9295,6 +9776,19 @@ components:
         application/vnd.api+json:
           schema:
             $ref: '#/components/schemas/ErrorDocument'
+    CustomerPhoneSystemUnreachable:
+      description: |
+        The phone system could not be reached, so we could not check that it is empty. Nothing was
+        changed, and the request may be sent again.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+          example:
+            errors:
+              - status: '502'
+                title: Phone system unreachable
+                detail: The phone system could not be reached. Nothing was changed — try again.
     RateLimited:
       description: 'Too many requests (`code: rate_limited`).'
       content:
@@ -10387,6 +10881,21 @@ components:
         enabled:
           type: boolean
           description: Whether we carry this number's calls.
+    PhoneNumberDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/PhoneNumberResource'
+        included:
+          type: array
+          description: The customer that holds the number, when you sent `include=customer` and one does.
+          items:
+            $ref: '#/components/schemas/CustomerResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
     PhoneNumberCollectionDocument:
       type: object
       required: [data]
@@ -10395,6 +10904,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PhoneNumberResource'
+        included:
+          type: array
+          description: The customers that hold these numbers, when you sent `include=customer`.
+          items:
+            $ref: '#/components/schemas/CustomerResource'
         links:
           $ref: '#/components/schemas/CollectionLinks'
         meta:
@@ -13370,6 +13884,122 @@ components:
           $ref: '#/components/schemas/CollectionLinks'
         meta:
           $ref: '#/components/schemas/DocumentMeta'
+    # A FLAT OBJECT, like FaxAccountCreateAttributes: both generators want one here.
+    CustomerCreateAttributes:
+      type: object
+      required: [name, country, addressLines, timeZone, dataResidencyCountry, regionPreference]
+      properties:
+        name: { type: string, maxLength: 255, example: Acme Dental }
+        country:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: The service address's country, ISO 3166-1 alpha-2.
+          example: US
+        addressLines:
+          type: array
+          minItems: 1
+          maxItems: 2
+          items: { type: string, maxLength: 255 }
+          description: |
+            The service address's street lines, one or two. The customer keeps the validated
+            spelling, which can differ from what you sent.
+          example: [233 S Wacker Dr]
+        city: { type: [string, 'null'], maxLength: 128, example: Chicago }
+        region:
+          type: [string, 'null']
+          maxLength: 128
+          description: The state or province.
+          example: IL
+        postalCode: { type: [string, 'null'], maxLength: 32, example: '60606' }
+        timeZone:
+          type: string
+          maxLength: 64
+          description: An IANA time zone name.
+          example: America/Chicago
+        dataResidencyCountry:
+          type: string
+          minLength: 2
+          maxLength: 2
+          description: |
+            The country this customer's data is kept in, ISO 3166-1 alpha-2 — one of the `id`s
+            `GET /v1/regions` lists. It cannot change later.
+          example: US
+        regionPreference:
+          $ref: '#/components/schemas/CustomerRegionPreference'
+    CustomerCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, attributes]
+          properties:
+            type: { type: string, enum: [customers] }
+            attributes:
+              $ref: '#/components/schemas/CustomerCreateAttributes'
+    CustomerUpdateAttributes:
+      type: object
+      description: |
+        The attributes a PATCH may change. The phone system settings apply only to a customer that
+        has a phone system.
+      properties:
+        name: { type: string, maxLength: 255 }
+        timeZone: { type: string, maxLength: 64, example: America/Chicago }
+        residential: { type: boolean }
+        callLimit: { type: integer, minimum: 1, maximum: 50 }
+        callLimitExternal:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Not more than `callLimit`.
+        transports:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/CustomerTransport'
+          description: The SIP transports to offer, first preferred.
+    CustomerUpdateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, id, attributes]
+          properties:
+            type: { type: string, enum: [customers] }
+            id: { type: string, format: uuid }
+            attributes:
+              $ref: '#/components/schemas/CustomerUpdateAttributes'
+    CustomerPbxEnableRequest:
+      type: object
+      description: |
+        The settings of a new phone system — FLAT JSON, and every member is optional. No body at all
+        uses the defaults. A `data` member is refused with a **400**.
+      properties:
+        residential: { type: boolean, description: '`false` when absent.' }
+        callLimit: { type: integer, minimum: 1, maximum: 50, description: '`10` when absent.' }
+        callLimitExternal:
+          type: integer
+          minimum: 1
+          maximum: 50
+          description: Not more than `callLimit`. `10` when absent.
+        transports:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            $ref: '#/components/schemas/CustomerTransport'
+          description: The SIP transports to offer, first preferred. `[tls, udp]` when absent.
+        domainLabel:
+          type: [string, 'null']
+          maxLength: 32
+          description: |
+            The first label of the phone system domain, which becomes the customer's `code`. 3 to 32
+            lowercase letters, digits and hyphens, with no hyphen at either end. Absent or empty keeps
+            the customer's current `code`.
+          example: acme-dental
 
     # -- tenants (the credential's own view of itself, ADR-0029) -----------------------------------
     TenantStatus:
