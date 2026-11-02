@@ -43,6 +43,9 @@ function client(): Ringivo {
     clientSecret: "csecret",
     tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
     scopes: ["numbers:read"],
+    // One attempt per call: this file is about what each answer becomes.
+    // tests/retries.test.ts owns the retry loop.
+    maxRetries: 0,
   });
 }
 
@@ -86,8 +89,8 @@ describe("list", () => {
 
     const page = await client().inboundMessages.list();
 
-    expect(page.messages).toHaveLength(1);
-    const message = page.messages[0];
+    expect(page.data).toHaveLength(1);
+    const message = page.data[0];
     expect(message?.id).toBe(MESSAGE_ID);
     expect(message?.kind).toBe("sms");
     expect(message?.from).toBe("+12003004000");
@@ -99,7 +102,7 @@ describe("list", () => {
     expect(page.nextCursor).toBe("cursor-2");
     expect(page.nextUrl).toBe(`${MESSAGES_URL}?page[after]=cursor-2`);
     expect(Object.isFrozen(page)).toBe(true);
-    expect(Object.isFrozen(page.messages)).toBe(true);
+    expect(Object.isFrozen(page.data)).toBe(true);
     expect(Object.isFrozen(message)).toBe(true);
   });
 
@@ -164,7 +167,7 @@ describe("list", () => {
 
     const page = await client().inboundMessages.list();
 
-    expect(page.messages).toEqual([]);
+    expect(page.data).toEqual([]);
     expect(page.nextCursor).toBeNull();
     expect(page.nextUrl).toBeNull();
   });
@@ -304,7 +307,7 @@ describe("list reads media links", () => {
 
     const page = await client().inboundMessages.list();
 
-    expect(page.messages[0]?.media[0]).toEqual({
+    expect(page.data[0]?.media[0]).toEqual({
       contentType: "image/png",
       filename: "a.png",
       size: 9,
@@ -333,8 +336,8 @@ describe("list reads media links", () => {
 
     const page = await client().inboundMessages.list();
 
-    expect(page.messages[0]?.media[0]?.contentUrl).toBeNull();
-    expect(page.messages[0]?.media[0]?.expiresAt).toBeNull();
+    expect(page.data[0]?.media[0]?.contentUrl).toBeNull();
+    expect(page.data[0]?.media[0]?.expiresAt).toBeNull();
   });
 });
 

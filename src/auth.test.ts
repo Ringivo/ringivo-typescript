@@ -85,7 +85,7 @@ function sent(call: Recorded): Record<string, unknown> {
  * both are required, so there is no shape of client that lacks either.
  */
 function client(
-  options: { scopes?: string[]; tenant?: string; customer?: string } = {},
+  options: { scopes?: string[]; tenant?: string; customer?: string; maxRetries?: number } = {},
 ): Ringivo {
   return new Ringivo({
     baseUrl: BASE_URL,
@@ -417,7 +417,9 @@ describe("refusals", () => {
   ): Promise<ApiError> {
     server.use(http.post(TOKEN_URL, () => HttpResponse.json(body, { status })));
 
-    return (await client(options)
+    // One attempt: this is about what one refusal becomes, and a retried
+    // 429 would be a test of the retry loop (tests/retries.test.ts).
+    return (await client({ maxRetries: 0, ...options })
       .faxes.get(FAX_ID)
       .catch((caught: unknown) => caught)) as ApiError;
   }
@@ -541,7 +543,8 @@ describe("refusals", () => {
       ),
     );
 
-    const error = (await client()
+    // One attempt: a 60 s Retry-After is one the retry loop would wait out.
+    const error = (await client({ maxRetries: 0 })
       .faxes.get(FAX_ID)
       .catch((caught: unknown) => caught)) as ApiError;
 

@@ -27,6 +27,8 @@
  */
 import type { paths } from "./_generated/schema.js";
 import { type Ringivo, transportOf } from "./client.js";
+import { callOptions, type RequestOptions } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import {
   type RawJson,
   type WebhookDelivery,
@@ -100,21 +102,27 @@ export class WebhookDeliveries {
    * `fax:read` token lists only the deliveries of **fax-account-scoped**
    * endpoints.
    */
-  async list(options: ListWebhookDeliveriesOptions = {}): Promise<WebhookDeliveryPage> {
-    const { data } = await transportOf(this.client)["/v1/webhook-deliveries"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[endpoint]": options.endpoint,
-          "filter[eventType]": options.eventType as ListWebhookDeliveriesQuery["filter[eventType]"],
-          "filter[status]": options.status,
-        },
-      },
-    });
+  list(options: ListWebhookDeliveriesOptions = {}, requestOptions?: RequestOptions): PagePromise<WebhookDelivery> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/webhook-deliveries"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[endpoint]": options.endpoint,
+              "filter[eventType]": options.eventType as ListWebhookDeliveriesQuery["filter[eventType]"],
+              "filter[status]": options.status,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return webhookDeliveryPageFromDocument(isRecord(data) ? data : {});
+        return webhookDeliveryPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -128,10 +136,11 @@ export class WebhookDeliveries {
    * `fax:read` token reaches only the deliveries of **fax-account-scoped**
    * endpoints; any other answers 404 to it.
    */
-  async get(webhookDeliveryId: string): Promise<WebhookDelivery> {
+  async get(webhookDeliveryId: string, requestOptions?: RequestOptions): Promise<WebhookDelivery> {
     const { data } = await transportOf(this.client)[
       "/v1/webhook-deliveries/{webhookDelivery}"
     ].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { webhookDelivery: webhookDeliveryIdParam(webhookDeliveryId) } },
     });
 

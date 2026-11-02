@@ -42,6 +42,8 @@
  */
 import type { components } from "./_generated/schema.js";
 import { JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
+import { callOptions, type RequestOptions, sendThrough } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import {
   type FaxAccountUser,
   type FaxAccountUserPage,
@@ -102,20 +104,26 @@ export class FaxAccountUsers {
    *
    * Needs `fax:read`.
    */
-  async list(options: ListFaxAccountUsersOptions = {}): Promise<FaxAccountUserPage> {
-    const { data } = await transportOf(this.client)["/v1/fax-account-users"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[faxAccount]": options.faxAccount,
-          "filter[user]": options.user,
-        },
-      },
-    });
+  list(options: ListFaxAccountUsersOptions = {}, requestOptions?: RequestOptions): PagePromise<FaxAccountUser> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/fax-account-users"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[faxAccount]": options.faxAccount,
+              "filter[user]": options.user,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return faxAccountUserPageFromDocument(isRecord(data) ? data : {});
+        return faxAccountUserPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -129,8 +137,9 @@ export class FaxAccountUsers {
    *
    * Needs `fax:read`.
    */
-  async get(faxAccountUserId: string): Promise<FaxAccountUser> {
+  async get(faxAccountUserId: string, requestOptions?: RequestOptions): Promise<FaxAccountUser> {
     const { data } = await transportOf(this.client)["/v1/fax-account-users/{faxAccountUser}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { faxAccountUser: faxAccountUserIdParam(faxAccountUserId) } },
     });
 
@@ -154,7 +163,7 @@ export class FaxAccountUsers {
    *
    * Needs `fax-accounts:write`.
    */
-  async create(options: CreateFaxAccountUserOptions): Promise<FaxAccountUser> {
+  async create(options: CreateFaxAccountUserOptions, requestOptions?: RequestOptions): Promise<FaxAccountUser> {
     const document: CreateRequest = {
       data: {
         type: "fax-account-users",
@@ -165,13 +174,11 @@ export class FaxAccountUsers {
       },
     };
 
-    const response = await this.client.request(
-      new Request(`${this.client.baseUrl}/v1/fax-account-users`, {
+    const response = await sendThrough(this.client, new Request(`${this.client.baseUrl}/v1/fax-account-users`, {
         method: "POST",
         headers: jsonApiHeaders(),
         body: JSON.stringify(document),
-      }),
-    );
+      }), requestOptions ?? {}, false);
 
     return faxAccountUserFromResource(dataObject(await response.json()));
   }
@@ -192,8 +199,9 @@ export class FaxAccountUsers {
    *
    * Needs `fax-accounts:write`.
    */
-  async delete(faxAccountUserId: string): Promise<void> {
+  async delete(faxAccountUserId: string, requestOptions?: RequestOptions): Promise<void> {
     await transportOf(this.client)["/v1/fax-account-users/{faxAccountUser}"].DELETE({
+      ...callOptions(this.client, requestOptions),
       params: { path: { faxAccountUser: faxAccountUserIdParam(faxAccountUserId) } },
     });
   }

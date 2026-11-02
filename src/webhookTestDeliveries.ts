@@ -34,6 +34,8 @@
  * outcome.
  */
 import { type Ringivo, transportOf } from "./client.js";
+import { callOptions, type RequestOptions } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import { ApiError, WebhookTestTimeoutError } from "./errors.js";
 import {
   type RawJson,
@@ -105,20 +107,26 @@ export class WebhookTestDeliveries {
    * `fax:read` token lists only the tests of **fax-account-scoped**
    * endpoints.
    */
-  async list(options: ListWebhookTestDeliveriesOptions = {}): Promise<WebhookTestDeliveryPage> {
-    const { data } = await transportOf(this.client)["/v1/webhook-test-deliveries"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[endpoint]": options.endpoint,
-          "filter[id][]": options.ids,
-        },
-      },
-    });
+  list(options: ListWebhookTestDeliveriesOptions = {}, requestOptions?: RequestOptions): PagePromise<WebhookTestDelivery> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/webhook-test-deliveries"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[endpoint]": options.endpoint,
+              "filter[id][]": options.ids,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return webhookTestDeliveryPageFromDocument(isRecord(data) ? data : {});
+        return webhookTestDeliveryPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -130,10 +138,11 @@ export class WebhookTestDeliveries {
    * Needs `webhooks:read`. A test borrows its endpoint's reach, as a
    * delivery does.
    */
-  async get(webhookTestDeliveryId: string): Promise<WebhookTestDelivery> {
+  async get(webhookTestDeliveryId: string, requestOptions?: RequestOptions): Promise<WebhookTestDelivery> {
     const { data } = await transportOf(this.client)[
       "/v1/webhook-test-deliveries/{webhookTestDelivery}"
     ].GET({
+      ...callOptions(this.client, requestOptions),
       params: {
         path: { webhookTestDelivery: webhookTestDeliveryIdParam(webhookTestDeliveryId) },
       },
@@ -173,6 +182,7 @@ export class WebhookTestDeliveries {
   async wait(
     delivery: WebhookTestDelivery | string,
     options: WaitForWebhookTestOptions = {},
+    requestOptions?: RequestOptions,
   ): Promise<WebhookTestDelivery> {
     const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -211,7 +221,7 @@ export class WebhookTestDeliveries {
       }
 
       try {
-        last = await this.get(id);
+        last = await this.get(id, requestOptions);
       } catch (error) {
         const backoff = rateLimitBackoffMs(error);
         if (backoff === undefined || deadline - performance.now() <= 0) {

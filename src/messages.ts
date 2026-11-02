@@ -98,6 +98,7 @@
  */
 import type { components } from "./_generated/schema.js";
 import { JSONAPI_MEDIA_TYPE, type Ringivo } from "./client.js";
+import type { RequestOptions } from "./client.js";
 import {
   type OutboundMessage,
   type RawJson,
@@ -180,7 +181,7 @@ export class Messages {
    *
    * Needs `messages:record`.
    */
-  async record(options: RecordMessageOptions): Promise<OutboundMessage> {
+  async record(options: RecordMessageOptions, requestOptions?: RequestOptions): Promise<OutboundMessage> {
     const document = recordDocument(options);
 
     const response = await this.client.request(
@@ -189,7 +190,10 @@ export class Messages {
         headers: { Accept: JSONAPI_MEDIA_TYPE, "Content-Type": JSONAPI_MEDIA_TYPE },
         body: JSON.stringify(document),
       }),
-      { timeoutMs: Math.max(this.client.timeoutMs, RECORD_MIN_TIMEOUT_MS) },
+      {
+        ...requestOptions,
+        timeoutMs: Math.max(requestOptions?.timeoutMs ?? this.client.timeoutMs, RECORD_MIN_TIMEOUT_MS),
+      },
     );
 
     return outboundMessageFromResource(dataObject(await response.json()), {

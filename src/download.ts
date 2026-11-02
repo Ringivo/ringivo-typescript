@@ -4,7 +4,8 @@
  * (`inboundMessages.downloadMedia()`) both come through here.
  */
 import { USER_AGENT } from "./auth.js";
-import { throwForResponse } from "./errors.js";
+import { type RequestOptions, type Ringivo, fetchOf } from "./client.js";
+import { send } from "./transport.js";
 
 /**
  * Follow a pre-signed URL and return the bytes behind it.
@@ -24,12 +25,21 @@ import { throwForResponse } from "./errors.js";
  * signature does not verify or has expired, a 404 for a file that is not
  * there, a 429 with its `retryAfter`.
  */
-export async function downloadUnauthenticated(url: string, timeoutMs: number): Promise<Uint8Array> {
-  const response = await fetch(url, {
-    headers: { "User-Agent": USER_AGENT },
-    redirect: "follow",
-    signal: AbortSignal.timeout(timeoutMs),
+export async function downloadUnauthenticated(
+  client: Ringivo,
+  url: string,
+  options: RequestOptions = {},
+): Promise<Uint8Array> {
+  // The client's own fetch, timeout and retries, and NO `authorize`: the loop
+  // sets an Authorization header only when it is handed a token source.
+  const headers = new Headers(options.headers);
+  headers.set("User-Agent", USER_AGENT);
+  const response = await send(new Request(url, { redirect: "follow" }), {
+    fetch: fetchOf(client),
+    timeoutMs: options.timeoutMs ?? client.timeoutMs,
+    maxRetries: options.maxRetries ?? client.maxRetries,
+    signal: options.signal,
+    headers,
   });
-  await throwForResponse(response);
   return new Uint8Array(await response.arrayBuffer());
 }

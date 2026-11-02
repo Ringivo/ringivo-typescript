@@ -35,6 +35,8 @@
  * that needs no serialiser of its own.
  */
 import type { Ringivo } from "./client.js";
+import { callOptions, type RequestOptions } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import { transportOf } from "./client.js";
 import { downloadUnauthenticated } from "./download.js";
 import {
@@ -91,24 +93,30 @@ export class InboundMessages {
    *
    * Needs `numbers:read` or `numbers:messaging`.
    */
-  async list(options: ListInboundMessagesOptions = {}): Promise<InboundMessagePage> {
-    const { data } = await transportOf(this.client)["/v1/inbound-messages"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[number]": options.number,
-          "filter[from]": options.from,
-          "filter[kind]": options.kind,
-          "filter[receivedAfter]": options.receivedAfter,
-          "filter[receivedBefore]": options.receivedBefore,
-          "filter[id][]": options.ids,
-        },
-      },
-    });
+  list(options: ListInboundMessagesOptions = {}, requestOptions?: RequestOptions): PagePromise<InboundMessage> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/inbound-messages"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[number]": options.number,
+              "filter[from]": options.from,
+              "filter[kind]": options.kind,
+              "filter[receivedAfter]": options.receivedAfter,
+              "filter[receivedBefore]": options.receivedBefore,
+              "filter[id][]": options.ids,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return inboundMessagePageFromDocument(isRecord(data) ? data : {});
+        return inboundMessagePageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -119,8 +127,9 @@ export class InboundMessages {
    *
    * Needs `numbers:read` or `numbers:messaging`.
    */
-  async get(inboundMessageId: string): Promise<InboundMessage> {
+  async get(inboundMessageId: string, requestOptions?: RequestOptions): Promise<InboundMessage> {
     const { data } = await transportOf(this.client)["/v1/inbound-messages/{message}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { message: inboundMessageIdParam(inboundMessageId) } },
     });
 
@@ -144,7 +153,7 @@ export class InboundMessages {
    * the message again for a fresh link. A file the platform no longer holds
    * is a 404 `not_found`; too many downloads is a 429 with `retryAfter`.
    */
-  async downloadMedia(item: InboundMessageMediaWithLink): Promise<Uint8Array> {
+  async downloadMedia(item: InboundMessageMediaWithLink, requestOptions?: RequestOptions): Promise<Uint8Array> {
     const contentUrl: unknown = item.contentUrl;
     if (typeof contentUrl !== "string" || contentUrl === "") {
       throw new Error(
@@ -155,7 +164,7 @@ export class InboundMessages {
       );
     }
 
-    return downloadUnauthenticated(contentUrl, this.client.timeoutMs);
+    return downloadUnauthenticated(this.client, contentUrl, requestOptions);
   }
 }
 

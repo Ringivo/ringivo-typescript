@@ -41,6 +41,8 @@
  * rather than trusting any of it.
  */
 import type { Ringivo } from "./client.js";
+import { callOptions, type RequestOptions } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import { transportOf } from "./client.js";
 import {
   type Customer,
@@ -95,20 +97,26 @@ export class Customers {
    *
    * Needs `customers:read`, which only an account-wide credential holds.
    */
-  async list(options: ListCustomersOptions = {}): Promise<CustomerPage> {
-    const { data } = await transportOf(this.client)["/v1/customers"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[id][]": options.ids,
-          "filter[code]": options.code,
-        },
-      },
-    });
+  list(options: ListCustomersOptions = {}, requestOptions?: RequestOptions): PagePromise<Customer> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/customers"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[id][]": options.ids,
+              "filter[code]": options.code,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return customerPageFromDocument(isRecord(data) ? data : {});
+        return customerPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -119,8 +127,9 @@ export class Customers {
    *
    * Needs `customers:read`, which only an account-wide credential holds.
    */
-  async get(customerId: string): Promise<Customer> {
+  async get(customerId: string, requestOptions?: RequestOptions): Promise<Customer> {
     const { data } = await transportOf(this.client)["/v1/customers/{customer}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { customer: customerIdParam(customerId) } },
     });
 

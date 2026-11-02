@@ -17,8 +17,9 @@
  *
  * -- ONE REQUEST PATH, ONE AUTH FLOW ----------------------------------------
  * Every request goes through `request()` below, so token caching, the expiry
- * margin, the single 401 retry, the User-Agent and the typed errors apply
- * once and apply everywhere. `openapi-fetch` is handed that method as its
+ * margin, the single 401 refresh, the retries and their backoff (see
+ * transport.ts), the User-Agent and the typed errors apply once and apply
+ * everywhere. `openapi-fetch` is handed that method as its
  * `fetch`, which is what puts the spec-typed calls in src/faxes.ts on the
  * same path as the hand-written multipart send — and what makes `request()`
  * a supported escape hatch rather than a way around the client.
@@ -29,6 +30,12 @@
  * it must still never receive our bearer token: the signature in the URL is
  * what authorizes the read, and handing over a credential good for the
  * whole account would extend it to a link that could end up anywhere.
+ *
+ * -- NOTHING SECRET IS AN ORDINARY PROPERTY -----------------------------------
+ * The credential and the token live in a module-private WeakMap (and
+ * `#private` fields in auth.ts), never on a property, so `console.log(client)`
+ * or a logger that serialises a client prints no secret. tests/secrets.test.ts
+ * holds that from the outside.
  *
  * -- WHY THE TYPED TRANSPORT IS HELD IN A WeakMap ---------------------------
  * `openapi-fetch`'s client is typed by `paths`, and `paths` is the
@@ -44,13 +51,13 @@ import { type PathBasedClient, createPathBasedClient } from "openapi-fetch";
 import type { paths } from "./_generated/schema.js";
 import { ClientCredentialsAuth, USER_AGENT } from "./auth.js";
 import { Customers } from "./customers.js";
-import { throwForResponse } from "./errors.js";
 import { FaxAccountUsers } from "./faxAccountUsers.js";
 import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
 import { InboundMessages } from "./inboundMessages.js";
 import { Messages } from "./messages.js";
 import { Pbx } from "./pbx.js";
+import { type Fetch, send } from "./transport.js";
 import { VERSION } from "./version.js";
 import { WebhookDeliveries } from "./webhookDeliveries.js";
 import { WebhookEndpoints } from "./webhookEndpoints.js";
@@ -67,15 +74,43 @@ export const JSON_MEDIA_TYPE = "application/json";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
+/** Anything `new Headers()` takes: a `Headers`, a plain object, or a list of pairs. */
+export type HeadersLike = ConstructorParameters<typeof Headers>[0];
+
+/** How many times a failed request is sent again, unless the client or the call says otherwise. */
+export const DEFAULT_MAX_RETRIES = 2;
+
 const transports = new WeakMap<Ringivo, PathBasedClient<paths>>();
 
-/** What `client.request()` accepts beyond the request itself. */
+/** What a client holds that must never be a readable property. */
+interface Internals {
+  auth: ClientCredentialsAuth;
+  fetch: Fetch;
+  defaultHeaders: Headers;
+}
+
+const internals = new WeakMap<Ringivo, Internals>();
+
+/**
+ * What every method accepts as its last argument, to change one call.
+ *
+ * Each member left out falls back to the client's own setting.
+ */
 export interface RequestOptions {
   /**
-   * Milliseconds this one request may take, in place of the client's own
-   * `timeoutMs`. Left out, the client's is used.
+   * Milliseconds each attempt of this call may take, in place of the client's
+   * `timeoutMs`. Retries each get the same allowance.
    */
   timeoutMs?: number;
+  /** Retries for this call, in place of the client's `maxRetries`. `0` sends once. */
+  maxRetries?: number;
+  /**
+   * Stops the call — the request in flight, or the wait before a retry. The
+   * call then rejects with `RequestAbortedError`.
+   */
+  signal?: AbortSignal;
+  /** Extra headers for this call. They replace a client `defaultHeaders` of the same name. */
+  headers?: HeadersLike;
 }
 
 /** How `Ringivo` is constructed. */
@@ -147,10 +182,32 @@ export interface RingivoOptions {
    */
   customer?: string;
   /**
-   * Milliseconds any single request may take, token requests and media
+   * Milliseconds any single attempt may take, token requests and media
    * downloads included. Thirty seconds by default.
    */
   timeoutMs?: number;
+  /**
+   * How many times a failed request is sent again: 2 by default, `0` to turn
+   * retries off.
+   *
+   * Only what is safe to send twice is retried: reads, deletes, the PATCH
+   * updates, and the writes that carry an `Idempotency-Key` (a fax send,
+   * click-to-dial). A create without a key is sent once, because a lost answer
+   * may hide a row that was made. Only transient answers are retried: no
+   * answer, a timeout, 408, 429, any 5xx, and the 409 `idempotency_key_in_use`.
+   * The wait is the server's `Retry-After` when it gives one of up to 60
+   * seconds, and otherwise a backoff from 0.5 s to 8 s with jitter. A longer
+   * `Retry-After` is not waited out: the error carries it as `retryAfter`.
+   */
+  maxRetries?: number;
+  /**
+   * The `fetch` to send with — for a proxy agent, a test double, or a runtime
+   * whose global `fetch` you want to wrap. The global `fetch` by default,
+   * looked up on every request.
+   */
+  fetch?: (input: Request) => Promise<Response>;
+  /** Headers sent with every request, under the ones this client sets itself. */
+  defaultHeaders?: HeadersLike;
 }
 
 /** A connection to one provider's API, authenticated for its lifetime. */
@@ -158,8 +215,11 @@ export class Ringivo {
   /** The API root every request is built against, with no trailing slash. */
   readonly baseUrl: string;
 
-  /** Milliseconds any single request may take. */
+  /** Milliseconds any single attempt may take. */
   readonly timeoutMs: number;
+
+  /** How many times a failed request is sent again. */
+  readonly maxRetries: number;
 
   /** Send a fax, read one, list them, cancel one, fetch its pages. */
   readonly faxes: Faxes;
@@ -196,8 +256,6 @@ export class Ringivo {
 
   /** Read the texts somebody sent to your numbers: list them, read one. */
   readonly inboundMessages: InboundMessages;
-
-  private readonly auth: ClientCredentialsAuth;
 
   constructor(options: RingivoOptions) {
     if (!options.baseUrl) {
@@ -250,14 +308,28 @@ export class Ringivo {
 
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    this.auth = new ClientCredentialsAuth({
-      baseUrl: this.baseUrl,
-      clientId: options.clientId,
-      clientSecret: options.clientSecret,
-      tenant: options.tenant,
-      customer: options.customer,
-      scopes: options.scopes,
-      timeoutMs: this.timeoutMs,
+    this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    if (!Number.isInteger(this.maxRetries) || this.maxRetries < 0) {
+      throw new TypeError("maxRetries must be a whole number, 0 or more");
+    }
+    // Looked up per request rather than captured here, so a global `fetch`
+    // replaced after the client was made (a test interceptor, an APM agent)
+    // is the one used.
+    const fetchImpl: Fetch = options.fetch ?? ((input) => globalThis.fetch(input));
+    internals.set(this, {
+      fetch: fetchImpl,
+      defaultHeaders: new Headers(options.defaultHeaders),
+      auth: new ClientCredentialsAuth({
+        baseUrl: this.baseUrl,
+        clientId: options.clientId,
+        clientSecret: options.clientSecret,
+        tenant: options.tenant,
+        customer: options.customer,
+        scopes: options.scopes,
+        timeoutMs: this.timeoutMs,
+        fetch: fetchImpl,
+        maxRetries: this.maxRetries,
+      }),
     });
 
     transports.set(
@@ -289,6 +361,11 @@ export class Ringivo {
     return `Ringivo { baseUrl: ${this.baseUrl}, version: ${VERSION} }`;
   }
 
+  /** What `util.inspect` and `console.log` print: the base URL, never a credential. */
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return this.toString();
+  }
+
   /**
    * Send one request, authenticated, and hand back the response — or throw.
    *
@@ -317,39 +394,72 @@ export class Ringivo {
    * token request keeps the client's own.
    */
   async request(outgoing: Request, options: RequestOptions = {}): Promise<Response> {
-    const timeoutMs = options.timeoutMs ?? this.timeoutMs;
+    return sendThrough(this, outgoing, options, false);
+  }
+}
 
-    // Cloned BEFORE anything reads the body: a `Request` may be sent once,
-    // and the retry below needs a second copy of the same bytes. Cloning
-    // after the first send is too late.
-    const spare = outgoing.clone();
-
-    let response = await this.attempt(outgoing, await this.auth.accessToken(), timeoutMs);
-
-    if (response.status === 401) {
-      // ONCE. A second 401 is answered by the caller's error, not by another
-      // mint: a credential that has lost its reach would otherwise spin, and
-      // every attempt costs the server a token.
-      response = await this.attempt(
-        spare,
-        await this.auth.accessToken({ forceRefresh: true }),
-        timeoutMs,
-      );
-    }
-
-    await throwForResponse(response);
-    return response;
+/**
+ * Send one request through the client's loop. Internal: the resource methods
+ * call this with `resendable` set for the writes that are safe to send twice
+ * (a PATCH of attribute values), which `request()` cannot know about a request
+ * it did not build. A request carrying an `Idempotency-Key` is resendable
+ * either way.
+ */
+export function sendThrough(
+  client: Ringivo,
+  outgoing: Request,
+  options: RequestOptions,
+  resendable: boolean,
+): Promise<Response> {
+  const own = internals.get(client);
+  if (!own) {
+    throw new Error("this Ringivo client was never constructed");
   }
 
-  private attempt(outgoing: Request, token: string, timeoutMs: number): Promise<Response> {
-    const headers = new Headers(outgoing.headers);
-    headers.set("Authorization", `Bearer ${token}`);
-    headers.set("User-Agent", USER_AGENT);
+  // Lowest first: the client's defaults, this call's own, then the two
+  // headers this client always sets.
+  const headers = new Headers(own.defaultHeaders);
+  new Headers(options.headers).forEach((value, name) => headers.set(name, value));
+  headers.set("User-Agent", USER_AGENT);
 
-    return fetch(
-      new Request(outgoing, { headers, signal: AbortSignal.timeout(timeoutMs) }),
-    );
+  const maxRetries = options.maxRetries ?? client.maxRetries;
+  if (!Number.isInteger(maxRetries) || maxRetries < 0) {
+    throw new TypeError("maxRetries must be a whole number, 0 or more");
   }
+
+  return send(outgoing, {
+    fetch: own.fetch,
+    timeoutMs: options.timeoutMs ?? client.timeoutMs,
+    maxRetries,
+    signal: options.signal,
+    resendable,
+    headers,
+    // ONE refresh after a 401, inside send(): a second 401 is answered by the
+    // caller's error, not by another mint — a credential that has lost its
+    // reach would otherwise spin, and every mint costs the server a token.
+    authorize: (forceRefresh) => own.auth.accessToken({ forceRefresh }),
+  });
+}
+
+/** The `fetch` a client sends with. Internal: the signed-link download uses it with no token. */
+export function fetchOf(client: Ringivo): Fetch {
+  const own = internals.get(client);
+  if (!own) {
+    throw new Error("this Ringivo client was never constructed");
+  }
+  return own.fetch;
+}
+
+/**
+ * The per-call options `openapi-fetch` takes, so a spec-typed call goes
+ * through `sendThrough()` with this call's `RequestOptions`. Internal.
+ */
+export function callOptions(
+  client: Ringivo,
+  options: RequestOptions = {},
+  resendable = false,
+): { fetch: Fetch } {
+  return { fetch: (outgoing: Request) => sendThrough(client, outgoing, options, resendable) };
 }
 
 /**

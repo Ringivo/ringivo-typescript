@@ -154,11 +154,11 @@ describe("list", () => {
 
     const page = await client().webhookEndpoints.list();
 
-    expect(page.endpoints).toHaveLength(1);
-    expect(page.endpoints[0]?.url).toBe(HOOK_URL);
-    expect(page.endpoints[0]?.events).toEqual(["fax.received", "fax.delivered"]);
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.url).toBe(HOOK_URL);
+    expect(page.data[0]?.events).toEqual(["fax.received", "fax.delivered"]);
     // No read but the create and the rotate carries the secret.
-    expect(page.endpoints[0]?.secret).toBeNull();
+    expect(page.data[0]?.secret).toBeNull();
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
   });
@@ -172,7 +172,7 @@ describe("list", () => {
 
     const page = await client().webhookEndpoints.list();
 
-    expect(page.endpoints).toHaveLength(0);
+    expect(page.data).toHaveLength(0);
     expect(page.nextCursor).toBeNull();
     expect(page.nextUrl).toBeNull();
   });

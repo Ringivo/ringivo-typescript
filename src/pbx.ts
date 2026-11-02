@@ -45,6 +45,8 @@
  */
 import type { components } from "./_generated/schema.js";
 import type { Ringivo } from "./client.js";
+import { callOptions, type RequestOptions, sendThrough } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import { JSONAPI_MEDIA_TYPE, transportOf } from "./client.js";
 import {
   type CallRecord,
@@ -316,26 +318,32 @@ export class CallRecords {
    *
    * Needs `pbx-call-records:read`.
    */
-  async list(options: ListCallRecordsOptions = {}): Promise<CallRecordPage> {
-    const { data } = await transportOf(this.client)["/v1/pbx/call-records"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[customer]": options.customer,
-          "filter[startedAfter]": options.startedAfter,
-          "filter[startedBefore]": options.startedBefore,
-          "filter[direction]": options.direction,
-          "fields[call-records]": joinedList(options.fields),
-          "filter[subscriber]": options.subscriber,
-          "filter[callId]": options.callId,
-          "filter[includeHidden]": options.includeHidden,
-        },
-      },
-    });
+  list(options: ListCallRecordsOptions = {}, requestOptions?: RequestOptions): PagePromise<CallRecord> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/pbx/call-records"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[customer]": options.customer,
+              "filter[startedAfter]": options.startedAfter,
+              "filter[startedBefore]": options.startedBefore,
+              "filter[direction]": options.direction,
+              "fields[call-records]": joinedList(options.fields),
+              "filter[subscriber]": options.subscriber,
+              "filter[callId]": options.callId,
+              "filter[includeHidden]": options.includeHidden,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return callRecordPageFromDocument(isRecord(data) ? data : {});
+        return callRecordPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -347,8 +355,9 @@ export class CallRecords {
    *
    * Needs `pbx-call-records:read`.
    */
-  async get(callRecordId: string): Promise<CallRecord> {
+  async get(callRecordId: string, requestOptions?: RequestOptions): Promise<CallRecord> {
     const { data } = await transportOf(this.client)["/v1/pbx/call-records/{callRecord}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { callRecord: idParam(callRecordId, "a call record id is required") } },
     });
 
@@ -375,10 +384,11 @@ export class CallRecords {
    * need. Recording media is not a second resource to be granted: it is
    * the audio of a call log entry you can already read.
    */
-  async recordings(callRecordId: string): Promise<readonly Recording[]> {
+  async recordings(callRecordId: string, requestOptions?: RequestOptions): Promise<readonly Recording[]> {
     const { data } = await transportOf(this.client)[
       "/v1/pbx/call-records/{callRecord}/recordings"
     ].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { callRecord: idParam(callRecordId, "a call record id is required") } },
     });
 
@@ -414,10 +424,11 @@ export class CallRecords {
    * not — decides whether you may see that anyone spoke. A caller without
    * it learns nothing about which captures have words.
    */
-  async transcripts(callRecordId: string): Promise<readonly Transcript[]> {
+  async transcripts(callRecordId: string, requestOptions?: RequestOptions): Promise<readonly Transcript[]> {
     const { data } = await transportOf(this.client)[
       "/v1/pbx/call-records/{callRecord}/transcripts"
     ].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { callRecord: idParam(callRecordId, "a call record id is required") } },
     });
 
@@ -439,10 +450,11 @@ export class CallRecords {
    *
    * Needs BOTH `pbx-call-records:read` AND `pbx-transcripts:read`.
    */
-  async transcript(callRecordId: string, recordingId: string): Promise<Transcript> {
+  async transcript(callRecordId: string, recordingId: string, requestOptions?: RequestOptions): Promise<Transcript> {
     const { data } = await transportOf(this.client)[
       "/v1/pbx/call-records/{callRecord}/transcripts/{recording}"
-    ].GET({ params: { path: transcriptPath(callRecordId, recordingId) } });
+    ].GET({
+      ...callOptions(this.client, requestOptions), params: { path: transcriptPath(callRecordId, recordingId) } });
 
     return transcriptFromResource(dataObject(data));
   }
@@ -474,10 +486,11 @@ export class CallRecords {
    *
    * Needs `pbx-call-records:read` AND `pbx-transcripts:write`.
    */
-  async requestTranscript(callRecordId: string, recordingId: string): Promise<Transcript> {
+  async requestTranscript(callRecordId: string, recordingId: string, requestOptions?: RequestOptions): Promise<Transcript> {
     const { data } = await transportOf(this.client)[
       "/v1/pbx/call-records/{callRecord}/transcripts/{recording}"
-    ].POST({ params: { path: transcriptPath(callRecordId, recordingId) } });
+    ].POST({
+      ...callOptions(this.client, requestOptions), params: { path: transcriptPath(callRecordId, recordingId) } });
 
     return transcriptFromResource(dataObject(data));
   }
@@ -509,23 +522,29 @@ export class PbxSubscribers {
    *
    * Needs `pbx-users:read`.
    */
-  async list(options: ListPbxSubscribersOptions = {}): Promise<PbxSubscriberPage> {
-    const { data } = await transportOf(this.client)["/v1/pbx/subscribers"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[customer]": options.customer,
-          "filter[user]": options.user,
-          "filter[search]": options.search,
-          "filter[kind]": joinedList(options.kind),
-          "filter[hasDevices]": options.hasDevices,
-        },
-      },
-    });
+  list(options: ListPbxSubscribersOptions = {}, requestOptions?: RequestOptions): PagePromise<PbxSubscriber> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/pbx/subscribers"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[customer]": options.customer,
+              "filter[user]": options.user,
+              "filter[search]": options.search,
+              "filter[kind]": joinedList(options.kind),
+              "filter[hasDevices]": options.hasDevices,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return pbxSubscriberPageFromDocument(isRecord(data) ? data : {});
+        return pbxSubscriberPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -536,8 +555,9 @@ export class PbxSubscribers {
    *
    * Needs `pbx-users:read`.
    */
-  async get(subscriberId: string): Promise<PbxSubscriber> {
+  async get(subscriberId: string, requestOptions?: RequestOptions): Promise<PbxSubscriber> {
     const { data } = await transportOf(this.client)["/v1/pbx/subscribers/{subscriber}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: {
         path: { subscriber: idParam(subscriberId, "a pbx subscriber id is required") },
       },
@@ -591,7 +611,7 @@ export class PbxSubscribers {
    *
    * Needs `pbx-calls:write`.
    */
-  async call(subscriberId: string, options: PlaceCallOptions): Promise<PbxCall> {
+  async call(subscriberId: string, options: PlaceCallOptions, requestOptions?: RequestOptions): Promise<PbxCall> {
     const id = idParam(subscriberId, "a pbx subscriber id is required");
 
     // `autoAnswer` IS ALWAYS SENT, and the other two only when named.
@@ -615,8 +635,7 @@ export class PbxSubscribers {
 
     const document: CallRequest = { data: { type: "calls", attributes } };
 
-    const response = await this.client.request(
-      new Request(`${this.client.baseUrl}/v1/pbx/subscribers/${encodeURIComponent(id)}/calls`, {
+    const response = await sendThrough(this.client, new Request(`${this.client.baseUrl}/v1/pbx/subscribers/${encodeURIComponent(id)}/calls`, {
         method: "POST",
         // THE KEY IS MADE HERE, ONCE PER `call()`, before the request exists.
         // So the one request this client repeats by itself — the 401 retry in
@@ -630,8 +649,7 @@ export class PbxSubscribers {
           "Idempotency-Key": options.idempotencyKey ?? globalThis.crypto.randomUUID(),
         }),
         body: JSON.stringify(document),
-      }),
-    );
+      }), requestOptions ?? {}, false);
 
     // `Idempotent-Replay: true` is the ONLY thing that tells a replay from a
     // fresh accept — the body is the first call's 202 either way.
@@ -654,21 +672,27 @@ export class PbxDevices {
    *
    * Needs `pbx-users:read`, the same scope as the subscribers themselves.
    */
-  async list(options: ListPbxDevicesOptions = {}): Promise<PbxDevicePage> {
-    const { data } = await transportOf(this.client)["/v1/pbx/devices"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[customer]": options.customer,
-          "filter[subscriber]": options.subscriber,
-          "filter[registered]": options.registered,
-        },
-      },
-    });
+  list(options: ListPbxDevicesOptions = {}, requestOptions?: RequestOptions): PagePromise<PbxDevice> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/pbx/devices"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              "filter[customer]": options.customer,
+              "filter[subscriber]": options.subscriber,
+              "filter[registered]": options.registered,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return pbxDevicePageFromDocument(isRecord(data) ? data : {});
+        return pbxDevicePageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -680,8 +704,9 @@ export class PbxDevices {
    *
    * Needs `pbx-users:read`.
    */
-  async get(pbxDeviceId: string): Promise<PbxDevice> {
+  async get(pbxDeviceId: string, requestOptions?: RequestOptions): Promise<PbxDevice> {
     const { data } = await transportOf(this.client)["/v1/pbx/devices/{device}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { device: idParam(pbxDeviceId, "a pbx device id is required") } },
     });
 

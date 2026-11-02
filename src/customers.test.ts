@@ -222,13 +222,13 @@ describe("list", () => {
 
     const page = await client().customers.list();
 
-    expect(page.customers).toHaveLength(1);
-    expect(page.customers[0]?.id).toBe(CUSTOMER_ID);
-    expect(page.customers[0]?.name).toBe("Acme Dental");
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.id).toBe(CUSTOMER_ID);
+    expect(page.data[0]?.name).toBe("Acme Dental");
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
     expect(Object.isFrozen(page)).toBe(true);
-    expect(Object.isFrozen(page.customers)).toBe(true);
+    expect(Object.isFrozen(page.data)).toBe(true);
   });
 
   it("has no cursor to follow on the last page, where links.next is ABSENT", async () => {

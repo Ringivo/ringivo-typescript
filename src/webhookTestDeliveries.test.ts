@@ -65,6 +65,9 @@ function client(): Ringivo {
     clientSecret: "csecret",
     tenant: "0198c4a1-3d4e-7f50-a1b2-c3d4e5f6a7b8",
     scopes: ["webhooks:read", "webhooks:write"],
+    // One attempt per call: this file is about what each answer becomes.
+    // tests/retries.test.ts owns the retry loop.
+    maxRetries: 0,
   });
 }
 
@@ -157,14 +160,14 @@ describe("list", () => {
 
     const page = await client().webhookTestDeliveries.list({ endpoint: ENDPOINT_ID });
 
-    expect(page.deliveries).toHaveLength(1);
-    expect(page.deliveries[0]?.status).toBe("failed");
-    expect(page.deliveries[0]?.statusCode).toBe(401);
-    expect(page.deliveries[0]?.endpointId).toBe(ENDPOINT_ID);
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.status).toBe("failed");
+    expect(page.data[0]?.statusCode).toBe(401);
+    expect(page.data[0]?.endpointId).toBe(ENDPOINT_ID);
     expect(page.nextCursor).toBe("019a0b3c-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
     expect(Object.isFrozen(page)).toBe(true);
-    expect(Object.isFrozen(page.deliveries)).toBe(true);
+    expect(Object.isFrozen(page.data)).toBe(true);
   });
 });
 

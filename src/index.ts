@@ -71,18 +71,28 @@
  * after a 401, and `webhookTestDeliveries.wait()`, which sleeps through a 429
  * with `Retry-After` while it polls.
  */
-export { Ringivo } from "./client.js";
-export type { RequestOptions, RingivoOptions } from "./client.js";
+export { DEFAULT_MAX_RETRIES, Ringivo } from "./client.js";
+export type { HeadersLike, RequestOptions, RingivoOptions } from "./client.js";
 export { Customers } from "./customers.js";
 export type { ListCustomersOptions } from "./customers.js";
 export {
+  ApiConnectionError,
   ApiError,
+  ApiTimeoutError,
   AuthenticationError,
+  BadRequestError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
   RecordingAudioMissingError,
+  RequestAbortedError,
   RingivoError,
   SignatureVerificationError,
   TranscriptRequestLimitedError,
   TranscriptionCappedError,
+  UnprocessableEntityError,
   WebhookTestTimeoutError,
   isRetryable,
 } from "./errors.js";
@@ -163,6 +173,7 @@ export type {
   WebhookTestDelivery,
   WebhookTestDeliveryPage,
 } from "./models.js";
+export { Page, PagePromise } from "./pagination.js";
 export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
 export type {
   ListCallRecordsOptions,

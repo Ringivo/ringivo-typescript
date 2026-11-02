@@ -25,6 +25,8 @@
  * the caller did not pass.
  */
 
+import type { Page, PageParts } from "./pagination.js";
+
 /** The JSON object a model was built from, exactly as it arrived. */
 export type RawJson = Readonly<Record<string, unknown>>;
 
@@ -95,12 +97,7 @@ export interface Fax {
  * and its meaning belongs to the server; pass it straight back as `after`
  * to read the following page. It is `null` on the last page.
  */
-export interface FaxPage {
-  readonly faxes: readonly Fax[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type FaxPage = Page<Fax>;
 
 /**
  * A short-lived capability, plus the facts about what is behind it.
@@ -373,12 +370,7 @@ export interface FaxAccount {
  * never one this client built — and it is null on the last page. `nextUrl`
  * mirrors `links.next`, which is absent rather than null at the end.
  */
-export interface FaxAccountPage {
-  readonly accounts: readonly FaxAccount[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type FaxAccountPage = Page<FaxAccount>;
 
 /**
  * One number routed to a fax account.
@@ -440,12 +432,7 @@ export interface FaxAccountUser {
  * never one this client built — and it is null on the last page. `nextUrl`
  * mirrors `links.next`, which is absent rather than null at the end.
  */
-export interface FaxAccountUserPage {
-  readonly grants: readonly FaxAccountUser[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type FaxAccountUserPage = Page<FaxAccountUser>;
 
 /** Build from a JSON:API resource object — every fax-account call. */
 export function faxAccountFromResource(resource: RawJson): FaxAccount {
@@ -481,16 +468,16 @@ export function faxAccountNumberFromResource(resource: RawJson): FaxAccountNumbe
   });
 }
 
-export function faxAccountPageFromDocument(document: RawJson): FaxAccountPage {
+export function faxAccountPageFromDocument(document: RawJson): PageParts<FaxAccount> {
   const data = document.data;
   const accounts = (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountFromResource);
 
-  return Object.freeze({
-    accounts: Object.freeze(accounts),
+  return {
+    data: accounts,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** The `phone-numbers` resources in one page of the numbers relationship. */
@@ -514,16 +501,16 @@ export function faxAccountUserFromResource(resource: RawJson): FaxAccountUser {
   });
 }
 
-export function faxAccountUserPageFromDocument(document: RawJson): FaxAccountUserPage {
+export function faxAccountUserPageFromDocument(document: RawJson): PageParts<FaxAccountUser> {
   const data = document.data;
   const grants = (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountUserFromResource);
 
-  return Object.freeze({
-    grants: Object.freeze(grants),
+  return {
+    data: grants,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -537,16 +524,16 @@ export function nextCursorOfDocument(document: RawJson): string | null {
   return nextCursorOf(document);
 }
 
-export function faxPageFromDocument(document: RawJson): FaxPage {
+export function faxPageFromDocument(document: RawJson): PageParts<Fax> {
   const data = document.data;
   const faxes = (Array.isArray(data) ? data : []).filter(isRecord).map((resource) => faxFromResource(resource));
 
-  return Object.freeze({
-    faxes: Object.freeze(faxes),
+  return {
+    data: faxes,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -592,12 +579,7 @@ export interface WebhookEndpoint {
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface WebhookEndpointPage {
-  readonly endpoints: readonly WebhookEndpoint[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type WebhookEndpointPage = Page<WebhookEndpoint>;
 
 /**
  * One failed delivery attempt — evidence, not a history.
@@ -641,12 +623,7 @@ export interface WebhookDelivery {
 }
 
 /** One page of `webhookDeliveries.list()`, newest first. */
-export interface WebhookDeliveryPage {
-  readonly deliveries: readonly WebhookDelivery[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type WebhookDeliveryPage = Page<WebhookDelivery>;
 
 /** Build from a JSON:API resource object — every webhook-endpoint call. */
 export function webhookEndpointFromResource(resource: RawJson): WebhookEndpoint {
@@ -667,18 +644,18 @@ export function webhookEndpointFromResource(resource: RawJson): WebhookEndpoint 
   });
 }
 
-export function webhookEndpointPageFromDocument(document: RawJson): WebhookEndpointPage {
+export function webhookEndpointPageFromDocument(document: RawJson): PageParts<WebhookEndpoint> {
   const data = document.data;
   const endpoints = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(webhookEndpointFromResource);
 
-  return Object.freeze({
-    endpoints: Object.freeze(endpoints),
+  return {
+    data: endpoints,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** Build from a JSON:API resource object — every webhook-delivery call. */
@@ -704,18 +681,18 @@ export function webhookDeliveryFromResource(resource: RawJson): WebhookDelivery 
   });
 }
 
-export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliveryPage {
+export function webhookDeliveryPageFromDocument(document: RawJson): PageParts<WebhookDelivery> {
   const data = document.data;
   const deliveries = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(webhookDeliveryFromResource);
 
-  return Object.freeze({
-    deliveries: Object.freeze(deliveries),
+  return {
+    data: deliveries,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -761,12 +738,7 @@ export interface WebhookTestDelivery {
 }
 
 /** One page of `webhookTestDeliveries.list()`, newest first. */
-export interface WebhookTestDeliveryPage {
-  readonly deliveries: readonly WebhookTestDelivery[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type WebhookTestDeliveryPage = Page<WebhookTestDelivery>;
 
 /** Build from a JSON:API resource object — every test-event call. */
 export function webhookTestDeliveryFromResource(resource: RawJson): WebhookTestDelivery {
@@ -788,18 +760,18 @@ export function webhookTestDeliveryFromResource(resource: RawJson): WebhookTestD
   });
 }
 
-export function webhookTestDeliveryPageFromDocument(document: RawJson): WebhookTestDeliveryPage {
+export function webhookTestDeliveryPageFromDocument(document: RawJson): PageParts<WebhookTestDelivery> {
   const data = document.data;
   const deliveries = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(webhookTestDeliveryFromResource);
 
-  return Object.freeze({
-    deliveries: Object.freeze(deliveries),
+  return {
+    data: deliveries,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -871,12 +843,7 @@ export interface PbxSubscriber {
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface PbxSubscriberPage {
-  readonly subscribers: readonly PbxSubscriber[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type PbxSubscriberPage = Page<PbxSubscriber>;
 
 /**
  * One REGISTRATION, not one handset.
@@ -922,12 +889,7 @@ export interface PbxDevice {
 }
 
 /** One page of `pbx.devices.list()`, by address of record. */
-export interface PbxDevicePage {
-  readonly devices: readonly PbxDevice[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type PbxDevicePage = Page<PbxDevice>;
 
 /**
  * One call, as the phone system recorded it.
@@ -1047,12 +1009,7 @@ export interface CallRecord {
 }
 
 /** One page of `pbx.callRecords.list()`, newest first. */
-export interface CallRecordPage {
-  readonly callRecords: readonly CallRecord[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type CallRecordPage = Page<CallRecord>;
 
 /**
  * One capture of a call, from `pbx.callRecords.recordings()`.
@@ -1295,18 +1252,18 @@ export function pbxSubscriberFromResource(resource: RawJson): PbxSubscriber {
   });
 }
 
-export function pbxSubscriberPageFromDocument(document: RawJson): PbxSubscriberPage {
+export function pbxSubscriberPageFromDocument(document: RawJson): PageParts<PbxSubscriber> {
   const data = document.data;
   const subscribers = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(pbxSubscriberFromResource);
 
-  return Object.freeze({
-    subscribers: Object.freeze(subscribers),
+  return {
+    data: subscribers,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** Build from a JSON:API resource object — every PBX-device call. */
@@ -1334,16 +1291,16 @@ export function pbxDeviceFromResource(resource: RawJson): PbxDevice {
   });
 }
 
-export function pbxDevicePageFromDocument(document: RawJson): PbxDevicePage {
+export function pbxDevicePageFromDocument(document: RawJson): PageParts<PbxDevice> {
   const data = document.data;
   const devices = (Array.isArray(data) ? data : []).filter(isRecord).map(pbxDeviceFromResource);
 
-  return Object.freeze({
-    devices: Object.freeze(devices),
+  return {
+    data: devices,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** Build from a JSON:API resource object — every call-record read. */
@@ -1393,16 +1350,16 @@ export function callRecordFromResource(resource: RawJson): CallRecord {
   });
 }
 
-export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
+export function callRecordPageFromDocument(document: RawJson): PageParts<CallRecord> {
   const data = document.data;
   const callRecords = (Array.isArray(data) ? data : []).filter(isRecord).map(callRecordFromResource);
 
-  return Object.freeze({
-    callRecords: Object.freeze(callRecords),
+  return {
+    data: callRecords,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -1606,12 +1563,7 @@ export interface Customer {
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface CustomerPage {
-  readonly customers: readonly Customer[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type CustomerPage = Page<Customer>;
 
 /** Build from a JSON:API resource object — both customer calls. */
 export function customerFromResource(resource: RawJson): Customer {
@@ -1642,16 +1594,16 @@ export function customerFromResource(resource: RawJson): Customer {
   });
 }
 
-export function customerPageFromDocument(document: RawJson): CustomerPage {
+export function customerPageFromDocument(document: RawJson): PageParts<Customer> {
   const data = document.data;
   const customers = (Array.isArray(data) ? data : []).filter(isRecord).map(customerFromResource);
 
-  return Object.freeze({
-    customers: Object.freeze(customers),
+  return {
+    data: customers,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -1780,12 +1732,7 @@ export interface InboundMessage {
  * The same shape and the same cursor rules as `FaxPage`: pass `nextCursor`
  * back as `after` for the next page. It is null on the last page.
  */
-export interface InboundMessagePage {
-  readonly messages: readonly InboundMessage[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type InboundMessagePage = Page<InboundMessage>;
 
 /**
  * Who sent a message from the phone system: a kind and a display name,
@@ -2062,18 +2009,18 @@ export function inboundMessageFromResource(resource: RawJson): InboundMessage {
   });
 }
 
-export function inboundMessagePageFromDocument(document: RawJson): InboundMessagePage {
+export function inboundMessagePageFromDocument(document: RawJson): PageParts<InboundMessage> {
   const data = document.data;
   const messages = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(inboundMessageFromResource);
 
-  return Object.freeze({
-    messages: Object.freeze(messages),
+  return {
+    data: messages,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 function messageReceivedDataFromJson(source: RawJson): MessageReceivedEventData {

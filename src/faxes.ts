@@ -36,6 +36,8 @@
  */
 import type { paths } from "./_generated/schema.js";
 import { JSON_MEDIA_TYPE, JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
+import { callOptions, type RequestOptions, sendThrough } from "./client.js";
+import { PagePromise, paginate } from "./pagination.js";
 import { downloadUnauthenticated } from "./download.js";
 import {
   type Fax,
@@ -168,7 +170,7 @@ export class Faxes {
    *   happen afterwards. Watch it finish with `get()`. `idempotentReplay` is
    *   `true` when the server said this response replays an earlier send.
    */
-  async send(options: SendFaxOptions): Promise<Fax> {
+  async send(options: SendFaxOptions, requestOptions?: RequestOptions): Promise<Fax> {
     const documents = uploads(options.file);
     const urls = options.urls ?? [];
 
@@ -228,9 +230,7 @@ export class Faxes {
       body = await multipartBody(boundary, fields, options, documents);
     }
 
-    const response = await this.client.request(
-      new Request(`${this.client.baseUrl}/v1/faxes`, { method: "POST", headers, body }),
-    );
+    const response = await sendThrough(this.client, new Request(`${this.client.baseUrl}/v1/faxes`, { method: "POST", headers, body }), requestOptions ?? {}, false);
 
     // `Idempotent-Replay: true` is the ONLY thing that tells a replay from a
     // fresh accept — the body is the same fax either way.
@@ -245,8 +245,9 @@ export class Faxes {
    * @param options.include - `attempts` to side-load the per-call attempt
    *   records, which then arrive in `fax.raw`'s sibling `included` member.
    */
-  async get(faxId: string, options: { include?: "attempts" } = {}): Promise<Fax> {
+  async get(faxId: string, options: { include?: "attempts" } = {}, requestOptions?: RequestOptions): Promise<Fax> {
     const { data } = await transportOf(this.client)["/v1/faxes/{fax}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { fax: faxIdParam(faxId) }, query: { include: options.include } },
     });
 
@@ -261,48 +262,58 @@ export class Faxes {
    * overlap. Pass the previous page's `FaxPage.nextCursor` back as `after`
    * to walk forward.
    */
-  async list(options: ListFaxesOptions = {}): Promise<FaxPage> {
+  list(options: ListFaxesOptions = {}, requestOptions?: RequestOptions): PagePromise<Fax> {
     // TypeScript stops a caller passing 0.1.x's `cursor` at compile time;
     // plain JavaScript does not, and a dropped option is silent — a caller
     // polling `if (page.nextCursor) list({ cursor: page.nextCursor })`
     // would re-fetch page 1 forever instead of ever seeing an error. Refuse
     // it here, before any request is built, rather than let it vanish.
     if ("cursor" in options) {
-      throw new TypeError(
-        "list()'s cursor option was replaced by after/before in 0.2.0; pass the previous " +
-          "page's FaxPage.nextCursor as after to walk forward, or a cursor you already hold " +
-          "as before to poll for rows that arrived since your last read.",
+      return new PagePromise<Fax>(
+        Promise.reject(
+          new TypeError(
+            "list()'s cursor option was replaced by after/before in 0.2.0; pass the previous " +
+              "page's nextCursor as after to walk forward, or a cursor you already hold " +
+              "as before to poll for rows that arrived since your last read.",
+          ),
+        ),
       );
     }
 
     const tags = options.tags;
 
-    const { data } = await transportOf(this.client)["/v1/faxes"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          include: options.include,
-          "filter[faxAccount]": options.faxAccount,
-          "filter[direction]": options.direction as ListFaxesQuery["filter[direction]"],
-          "filter[status]": options.status as ListFaxesQuery["filter[status]"],
-          "filter[from]": options.from,
-          "filter[to]": options.to,
-          "filter[clientReference]": options.clientReference,
-          "filter[createdAfter]": options.createdAfter,
-          "filter[createdBefore]": options.createdBefore,
-          "filter[read]": options.read,
-          "filter[archived]": options.archived,
-          // Only when there is a tag to match: `filter[tag]` with no tag
-          // name is a 400 rather than "no opinion", and an empty object
-          // would serialise to exactly that.
-          "filter[tag]": tags && Object.keys(tags).length > 0 ? { ...tags } : undefined,
-        },
-      },
-    });
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/faxes"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              include: options.include,
+              "filter[faxAccount]": options.faxAccount,
+              "filter[direction]": options.direction as ListFaxesQuery["filter[direction]"],
+              "filter[status]": options.status as ListFaxesQuery["filter[status]"],
+              "filter[from]": options.from,
+              "filter[to]": options.to,
+              "filter[clientReference]": options.clientReference,
+              "filter[createdAfter]": options.createdAfter,
+              "filter[createdBefore]": options.createdBefore,
+              "filter[read]": options.read,
+              "filter[archived]": options.archived,
+              // Only when there is a tag to match: `filter[tag]` with no tag
+              // name is a 400 rather than "no opinion", and an empty object
+              // would serialise to exactly that.
+              "filter[tag]": tags && Object.keys(tags).length > 0 ? { ...tags } : undefined,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return faxPageFromDocument(isRecord(data) ? data : {});
+        return faxPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -314,8 +325,9 @@ export class Faxes {
    * `statusCode` is 409 and whose `errors[0].meta.reason` is `answered` or
    * `terminal`. That refusal carries no `code`; the status is the contract.
    */
-  async cancel(faxId: string): Promise<Fax> {
+  async cancel(faxId: string, requestOptions?: RequestOptions): Promise<Fax> {
     const { data } = await transportOf(this.client)["/v1/faxes/{fax}/cancel"].POST({
+      ...callOptions(this.client, requestOptions),
       params: { path: { fax: faxIdParam(faxId) } },
       headers: { Accept: JSONAPI_MEDIA_TYPE },
     });
@@ -332,8 +344,9 @@ export class Faxes {
    * @param options.format - `pdf` is what a person reads; `tiff` is what
    *   went on the wire.
    */
-  async mediaLink(faxId: string, options: { format?: MediaFormat } = {}): Promise<MediaLink> {
+  async mediaLink(faxId: string, options: { format?: MediaFormat } = {}, requestOptions?: RequestOptions): Promise<MediaLink> {
     const { data } = await transportOf(this.client)["/v1/faxes/{fax}/media"].GET({
+      ...callOptions(this.client, requestOptions),
       params: {
         path: { fax: faxIdParam(faxId) },
         query: { format: options.format ?? "pdf" },
@@ -355,8 +368,9 @@ export class Faxes {
    * A fax that is not yours, or that has no preview, is an `ApiError` with
    * status 404.
    */
-  async thumbnailLink(faxId: string): Promise<MediaLink> {
+  async thumbnailLink(faxId: string, requestOptions?: RequestOptions): Promise<MediaLink> {
     const { data } = await transportOf(this.client)["/v1/faxes/{fax}/thumbnail"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { fax: faxIdParam(faxId) } },
       headers: { Accept: JSONAPI_MEDIA_TYPE },
     });
@@ -374,9 +388,9 @@ export class Faxes {
    * A fax accepted a second ago has no rendered PDF yet, and a purged one
    * has none any more; both are an `ApiError` with status 404.
    */
-  async media(faxId: string, options: { format?: MediaFormat } = {}): Promise<Uint8Array> {
-    const link = await this.mediaLink(faxId, options);
-    return downloadUnauthenticated(link.url, this.client.timeoutMs);
+  async media(faxId: string, options: { format?: MediaFormat } = {}, requestOptions?: RequestOptions): Promise<Uint8Array> {
+    const link = await this.mediaLink(faxId, options, requestOptions);
+    return downloadUnauthenticated(this.client, link.url, requestOptions);
   }
 }
 
