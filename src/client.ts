@@ -6,7 +6,8 @@
  * off it (`client.faxes`, `client.faxAccounts`, `client.faxAccountUsers`,
  * `client.webhookEndpoints`, `client.webhookDeliveries`,
  * `client.webhookTestDeliveries`, `client.pbx`,
- * `client.customers`, `client.messages`, `client.inboundMessages`).
+ * `client.customers`, `client.regions`, `client.phoneNumbers`,
+ * `client.messages`, `client.inboundMessages`).
  *
  * -- NO HOSTNAME IS COMPILED IN ---------------------------------------------
  * `baseUrl` is required and has no default. This package is grey-label: the
@@ -57,6 +58,8 @@ import { Faxes } from "./faxes.js";
 import { InboundMessages } from "./inboundMessages.js";
 import { Messages } from "./messages.js";
 import { Pbx } from "./pbx.js";
+import { PhoneNumbers } from "./phoneNumbers.js";
+import { Regions } from "./regions.js";
 import { type Fetch, send } from "./transport.js";
 import { VERSION } from "./version.js";
 import { WebhookDeliveries } from "./webhookDeliveries.js";
@@ -248,8 +251,17 @@ export class Ringivo {
    */
   readonly pbx: Pbx;
 
-  /** Your customers: list them, read one. */
+  /**
+   * Your customers: list, read, create, change, delete, and give one a phone
+   * system (`enablePbx()`, `waitForPbx()`) or take it away (`removePbx()`).
+   */
   readonly customers: Customers;
+
+  /** Where you may place a customer: the values `customers.create()` takes. */
+  readonly regions: Regions;
+
+  /** Your numbers: list, read, give one to a customer, point it at a destination. */
+  readonly phoneNumbers: PhoneNumbers;
 
   /** Record a text your own system already sent. */
   readonly messages: Messages;
@@ -353,6 +365,8 @@ export class Ringivo {
     this.webhookTestDeliveries = new WebhookTestDeliveries(this);
     this.pbx = new Pbx(this);
     this.customers = new Customers(this);
+    this.regions = new Regions(this);
+    this.phoneNumbers = new PhoneNumbers(this);
     this.messages = new Messages(this);
     this.inboundMessages = new InboundMessages(this);
   }

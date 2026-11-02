@@ -1866,6 +1866,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/phone-numbers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List your phone numbers
+         * @description Every number in your inventory, newest first: the ones in your own pool and the ones you
+         *     gave to a customer. A credential issued for one customer sees only that customer's numbers.
+         *
+         *     A number's `id` is what the assignment and routing requests take. To find the id of one
+         *     number, filter by `e164`: `filter[e164]=%2B13025550100` (the `+` is `%2B` in a query
+         *     string).
+         */
+        get: operations["listPhoneNumbers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/phone-numbers/{phoneNumber}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read one phone number
+         * @description A number you just bought reads `pending` until the carrier activates it, then `active`.
+         *
+         *     **To see which customer holds it, send `include=customer`.** `relationships.customer.data`
+         *     is then that customer's identifier, or `null` while the number is in your own pool, and the
+         *     customer itself is in `included`. Without `include`, a relationship carries only its links.
+         *
+         *     A number that is not yours answers **404**.
+         */
+        get: operations["getPhoneNumber"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/phone-numbers/{phoneNumber}/customer": {
         parameters: {
             query?: never;
@@ -2589,7 +2643,39 @@ export interface paths {
          */
         get: operations["listCustomers"];
         put?: never;
-        post?: never;
+        /**
+         * Create a customer
+         * @description Adds a customer to your account. It answers **201** with the customer, and the customer is
+         *     complete when the call returns. **It has no phone system yet:** `pbx` is `false`. To give it
+         *     one, send `POST /v1/customers/{customer}/pbx` next.
+         *
+         *     **Read `GET /v1/regions` first.** It lists the values you may send for
+         *     `dataResidencyCountry` and `regionPreference`. Both are required, and neither is ever
+         *     guessed: `dataResidencyCountry` cannot change after the create.
+         *
+         *     **The service address is checked.** `country`, `addressLines`, `city`, `region` and
+         *     `postalCode` are validated as one postal address, and the customer keeps the corrected
+         *     spelling — read `addressLines` back from the answer, not from your request. An address that
+         *     cannot be confirmed precisely enough is refused with a **422** on `/data/attributes/addressLines`
+         *     whose `detail` says what is wrong. Send `city`, `region` and `postalCode` when you have them:
+         *     they are optional here, and an address without them is more often refused.
+         *
+         *     `timeZone` is an IANA name, such as `America/Chicago`. A name the phone system does not
+         *     support is refused with a **422** on `/data/attributes/timeZone`.
+         *
+         *     **Send only the attributes in this schema.** `code` is made for you, from the customer's
+         *     name. The phone system settings (`pbx`, `residential`, `callLimit`, `callLimitExternal`,
+         *     `transports`, and the `domainLabel` that chooses `code`) belong to
+         *     `POST /v1/customers/{customer}/pbx`, and sending one of them here is a **422** that says so.
+         *     Every other attribute a read returns is read-only, and is refused here too.
+         *
+         *     This request does not take an `Idempotency-Key`. If you did not get an answer, look for the
+         *     customer with `GET /v1/customers?filter[code]=…` or by name before you send it again.
+         *
+         *     Needs a credential issued for your whole account: a credential issued for one customer cannot
+         *     hold `customers:write`.
+         */
+        post: operations["createCustomer"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2614,7 +2700,104 @@ export interface paths {
         get: operations["getCustomer"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a customer
+         * @description Deletes the customer and, when it has one, its phone system. It answers **202**: the customer
+         *     is gone from this API when the call returns, and the phone system's domain is removed in the
+         *     background.
+         *
+         *     **It is refused, and nothing changes, while the phone system is in use.** Each refusal is a
+         *     **409** whose `detail` says what to remove first:
+         *
+         *     - the customer's phone system still holds numbers (`title: PBX still holds numbers`);
+         *     - its domain still has users or SIP trunks (`title: Phone system not empty`) — deleting the
+         *       domain would cut live service, so we stop rather than decide that for you;
+         *     - its phone system is being set up or repaired right now (`title: Teardown did not run`) —
+         *       try again in a few minutes.
+         *
+         *     A **502** means the phone system could not be asked whether it is empty. Nothing was changed,
+         *     and you may send the request again.
+         */
+        delete: operations["deleteCustomer"];
+        options?: never;
+        head?: never;
+        /**
+         * Change a customer
+         * @description Changes `name` and `timeZone`, and, when the customer has a phone system, its settings:
+         *     `residential`, `callLimit`, `callLimitExternal` and `transports`. It answers **200** with the
+         *     customer. When a change touches a value the phone system holds, the phone system is updated
+         *     in the background, and `provisioningState` shows where that stands.
+         *
+         *     **A sparse PATCH is fine.** Send only what you change; every attribute you leave out keeps
+         *     its value, and the rules below are checked against the values the customer will have.
+         *
+         *     **Everything else is fixed.** The service address, `code`, `dataResidencyCountry`,
+         *     `regionPreference` and `pbx` cannot change here. Sending one of them with a DIFFERENT value
+         *     is a **422** on that attribute; sending it with the value it already has is accepted, so you
+         *     can send back a document you read. To add or remove the phone system, use
+         *     `POST` or `DELETE /v1/customers/{customer}/pbx`.
+         *
+         *     The phone system settings are refused with a **422** for a customer that has no phone
+         *     system. `callLimitExternal` may not be larger than `callLimit`, and `transports` needs at
+         *     least one entry.
+         */
+        patch: operations["updateCustomer"];
+        trace?: never;
+    };
+    "/v1/customers/{customer}/pbx": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Give a customer a phone system
+         * @description Starts building the customer's phone system. It answers **202**: the customer reads
+         *     `pbx: true` at once, and the phone system itself is built in the background. Read the
+         *     customer back with `GET /v1/customers/{customer}` and wait for `provisioningState` to be
+         *     `active`; `failed` means we gave up.
+         *
+         *     **The body is flat JSON, and every member is optional.** Send no body to use the defaults.
+         *     A JSON:API document (a body with a top-level `data`) is refused with a **400**, because its
+         *     settings would otherwise be ignored.
+         *
+         *     | Member | Default | Rule |
+         *     |---|---|---|
+         *     | `residential` | `false` | `true` or `false` |
+         *     | `callLimit` | `10` | the most calls at once, 1 to 50 |
+         *     | `callLimitExternal` | `10` | the most external calls at once, 1 to 50, and not more than `callLimit` |
+         *     | `transports` | `[tls, udp]` | the SIP transports to offer, first preferred; at least one, no repeats |
+         *     | `domainLabel` | the customer's `code` | the first label of the phone system domain, `{domainLabel}.signlar.com` |
+         *
+         *     **`domainLabel` becomes the customer's `code`,** and the domain the customer's users sign in
+         *     with. Use 3 to 32 lowercase letters, digits and hyphens, with no hyphen at either end. A label
+         *     that is badly formed, reserved, in use or still being removed is a **422** on `/domainLabel`.
+         *     A label that was taken between our check and the write is a **409**
+         *     (`title: Domain label unavailable`), and nothing was written.
+         *
+         *     A refused setting is a **422** whose `source.pointer` names the member, such as `/callLimit`.
+         *
+         *     To change the settings later, `PATCH /v1/customers/{customer}`. The domain label cannot
+         *     change after the phone system exists.
+         */
+        post: operations["enableCustomerPbx"];
+        /**
+         * Take away a customer's phone system
+         * @description Removes the customer's phone system and keeps the customer. It answers **202**: the customer
+         *     reads `pbx: false` at once, and the phone system's domain is removed in the background.
+         *
+         *     It is refused with a **409**, and nothing changes, for the same reasons a customer delete is
+         *     (`PBX still holds numbers`, `Phone system not empty`, `Teardown did not run`), and when the
+         *     customer has no phone system (`title: No phone system`). A **502** means the phone system
+         *     could not be asked whether it is empty; nothing was changed, and you may send it again.
+         */
+        delete: operations["removeCustomerPbx"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4569,6 +4752,11 @@ export interface components {
         PhoneNumberVoice: {
             /** @description Whether we carry this number's calls. */
             enabled: boolean;
+        };
+        PhoneNumberDocumentResponse: {
+            data: components["schemas"]["PhoneNumberResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
         };
         PhoneNumberCollectionDocument: {
             data: components["schemas"]["PhoneNumberResource"][];
@@ -7007,6 +7195,96 @@ export interface components {
             links?: components["schemas"]["CollectionLinks"];
             meta?: components["schemas"]["DocumentMeta"];
         };
+        CustomerCreateAttributes: {
+            /** @example Acme Dental */
+            name: string;
+            /**
+             * @description The service address's country, ISO 3166-1 alpha-2.
+             * @example US
+             */
+            country: string;
+            /**
+             * @description The service address's street lines, one or two. The customer keeps the validated
+             *     spelling, which can differ from what you sent.
+             * @example [
+             *       "233 S Wacker Dr"
+             *     ]
+             */
+            addressLines: string[];
+            /** @example Chicago */
+            city?: string | null;
+            /**
+             * @description The state or province.
+             * @example IL
+             */
+            region?: string | null;
+            /** @example 60606 */
+            postalCode?: string | null;
+            /**
+             * @description An IANA time zone name.
+             * @example America/Chicago
+             */
+            timeZone: string;
+            /**
+             * @description The country this customer's data is kept in, ISO 3166-1 alpha-2 — one of the `id`s
+             *     `GET /v1/regions` lists. It cannot change later.
+             * @example US
+             */
+            dataResidencyCountry: string;
+            regionPreference: components["schemas"]["CustomerRegionPreference"];
+        };
+        CustomerCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "customers";
+                attributes: components["schemas"]["CustomerCreateAttributes"];
+            };
+        };
+        /**
+         * @description The attributes a PATCH may change. The phone system settings apply only to a customer that
+         *     has a phone system.
+         */
+        CustomerUpdateAttributes: {
+            name?: string;
+            /** @example America/Chicago */
+            timeZone?: string;
+            residential?: boolean;
+            callLimit?: number;
+            /** @description Not more than `callLimit`. */
+            callLimitExternal?: number;
+            /** @description The SIP transports to offer, first preferred. */
+            transports?: components["schemas"]["CustomerTransport"][];
+        };
+        CustomerUpdateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "customers";
+                /** Format: uuid */
+                id: string;
+                attributes: components["schemas"]["CustomerUpdateAttributes"];
+            };
+        };
+        /**
+         * @description The settings of a new phone system — FLAT JSON, and every member is optional. No body at all
+         *     uses the defaults. A `data` member is refused with a **400**.
+         */
+        CustomerPbxEnableRequest: {
+            /** @description `false` when absent. */
+            residential?: boolean;
+            /** @description `10` when absent. */
+            callLimit?: number;
+            /** @description Not more than `callLimit`. `10` when absent. */
+            callLimitExternal?: number;
+            /** @description The SIP transports to offer, first preferred. `[tls, udp]` when absent. */
+            transports?: components["schemas"]["CustomerTransport"][];
+            /**
+             * @description The first label of the phone system domain, which becomes the customer's `code`. 3 to 32
+             *     lowercase letters, digits and hyphens, with no hyphen at either end. Absent or empty keeps
+             *     the customer's current `code`.
+             * @example acme-dental
+             */
+            domainLabel?: string | null;
+        };
         /**
          * @description The reseller onboarding lifecycle (console ADR-0006). Only `active` opens the portal;
          *     `suspended` is a staff action reachable from any other state.
@@ -8243,6 +8521,29 @@ export interface components {
                 "application/vnd.api+json": components["schemas"]["ErrorDocument"];
             };
         };
+        /**
+         * @description The phone system could not be reached, so we could not check that it is empty. Nothing was
+         *     changed, and the request may be sent again.
+         */
+        CustomerPhoneSystemUnreachable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "status": "502",
+                 *           "title": "Phone system unreachable",
+                 *           "detail": "The phone system could not be reached. Nothing was changed — try again."
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+            };
+        };
         /** @description Too many requests (`code: rate_limited`). */
         RateLimited: {
             headers: {
@@ -8270,6 +8571,11 @@ export interface components {
         InboundMessageId: string;
         /** @description The hosted messaging order's id. */
         HostedMessagingOrderId: string;
+        /**
+         * @description `customer` side-loads the customer that holds each number, and fills
+         *     `relationships.customer.data` (`null` for a number in your own pool).
+         */
+        PhoneNumberInclude: "customer";
         /** @description The phone number's id. */
         PhoneNumberId: string;
         /** @description The tenant's id. Only the credential's own tenant resolves; any other id is a 404. */
@@ -13105,6 +13411,103 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    listPhoneNumbers: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `e164`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 * @example e164
+                 */
+                sort?: string;
+                /**
+                 * @description The number whose E.164 form is exactly this value, with its `+`.
+                 * @example +13025550100
+                 */
+                "filter[e164]"?: string;
+                /** @description The numbers in this state. */
+                "filter[status]"?: "pending" | "active" | "failed" | "releasing";
+                /**
+                 * @description `customer` side-loads the customer that holds each number, and fills
+                 *     `relationships.customer.data` (`null` for a number in your own pool).
+                 */
+                include?: components["parameters"]["PhoneNumberInclude"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of your numbers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PhoneNumberCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getPhoneNumber: {
+        parameters: {
+            query?: {
+                /**
+                 * @description `customer` side-loads the customer that holds each number, and fills
+                 *     `relationships.customer.data` (`null` for a number in your own pool).
+                 */
+                include?: components["parameters"]["PhoneNumberInclude"];
+            };
+            header?: never;
+            path: {
+                /** @description The phone number's id. */
+                phoneNumber: components["parameters"]["PhoneNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The number. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PhoneNumberDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
     assignPhoneNumberToCustomer: {
         parameters: {
             query?: never;
@@ -14791,6 +15194,111 @@ export interface operations {
             429: components["responses"]["RateLimited"];
         };
     };
+    createCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "customers",
+                 *         "attributes": {
+                 *           "name": "Acme Dental",
+                 *           "country": "US",
+                 *           "addressLines": [
+                 *             "233 S Wacker Dr"
+                 *           ],
+                 *           "city": "Chicago",
+                 *           "region": "IL",
+                 *           "postalCode": "60606",
+                 *           "timeZone": "America/Chicago",
+                 *           "dataResidencyCountry": "US",
+                 *           "regionPreference": "partner_default"
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["CustomerCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The customer. It has no phone system yet. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "customers",
+                     *         "id": "0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e",
+                     *         "attributes": {
+                     *           "name": "Acme Dental",
+                     *           "code": "acmedental",
+                     *           "country": "US",
+                     *           "addressLines": [
+                     *             "233 S Wacker Dr"
+                     *           ],
+                     *           "city": "Chicago",
+                     *           "region": "IL",
+                     *           "postalCode": "60606",
+                     *           "timeZone": "America/Chicago",
+                     *           "dataResidencyCountry": "US",
+                     *           "regionPreference": "partner_default",
+                     *           "effectiveRegion": "use1",
+                     *           "pbx": false,
+                     *           "residential": null,
+                     *           "callLimit": null,
+                     *           "callLimitExternal": null,
+                     *           "transports": null,
+                     *           "provisioningState": null,
+                     *           "createdAt": "2026-09-01T12:00:00.000000Z",
+                     *           "updatedAt": "2026-09-01T12:00:00.000000Z"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["CustomerDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description The document could not be applied. Each error's `source.pointer` names the attribute:
+             *     a missing required one, a value past its limit, a `regionPreference` that is not legal in
+             *     the chosen `dataResidencyCountry`, an address that could not be confirmed, a time zone
+             *     the phone system does not support, or an attribute this request does not take.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "detail": "That address could not be confirmed precisely enough to serve. Check the street number and try again.",
+                     *           "source": {
+                     *             "pointer": "/data/attributes/addressLines"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
     getCustomer: {
         parameters: {
             query?: never;
@@ -14847,6 +15355,234 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             429: components["responses"]["RateLimited"];
+        };
+    };
+    deleteCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted. The customer is deleted, and the phone system's domain is removed in the background. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The phone system is still in use, or busy. Nothing was changed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Phone system not empty",
+                     *           "detail": "This customer's phone system still has 2 users. Remove them first — deleting the domain now would cut live service, so we stop rather than decide that for you. Remove the users from the customer's Users screen and ask support to release any SIP trunks, then try again."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["CustomerPhoneSystemUnreachable"];
+        };
+    };
+    updateCustomer: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "customers",
+                 *         "id": "0198c4a1-7a10-7c3e-9d21-4f5a6b7c8d9e",
+                 *         "attributes": {
+                 *           "name": "Acme Dental Group",
+                 *           "callLimit": 20
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["CustomerUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description The changed customer. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["CustomerDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    enableCustomerPbx: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                /**
+                 * @example {
+                 *       "callLimit": 20,
+                 *       "callLimitExternal": 10,
+                 *       "domainLabel": "acme-dental"
+                 *     }
+                 */
+                "application/json": components["schemas"]["CustomerPbxEnableRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted. The phone system is being built. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The body was a JSON:API document. Send the settings at the top level. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The phone system cannot be built now. Nothing was written. The `title` says why:
+             *     `Phone system already enabled`, `Domain label unavailable`, `No PBX node available` (no
+             *     phone system can take a customer in its region), or `PBX cannot be placed`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Phone system already enabled",
+                     *           "detail": "This customer already has a phone system. Change its settings with an update, or remove it first."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description A setting was refused. `source.pointer` names the member. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "The external concurrent call limit cannot exceed the total concurrent call limit.",
+                     *           "source": {
+                     *             "pointer": "/callLimitExternal"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    removeCustomerPbx: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted. The phone system is being removed. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The customer has no phone system, or it is still in use, or busy. Nothing was changed. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "PBX still holds numbers",
+                     *           "detail": "Acme Dental's PBX still holds 1 number(s). Remove them from the PBX first."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["CustomerPhoneSystemUnreachable"];
         };
     };
     getTenant: {

@@ -2,8 +2,30 @@
 
 ## Unreleased (0.26.0) — Breaking
 
-This release brings the client in line with the conventions most TypeScript
-API clients share. Each change below says what to change in your code.
+This release adds the customer lifecycle and the phone-number verbs, and
+brings the client in line with the conventions most TypeScript API clients
+share. Each breaking change below says what to change in your code.
+
+Added:
+
+- **Create, change and delete customers**: `customers.create()`,
+  `update()` (a sparse PATCH) and `delete()`. A create is sent once, never
+  resent: the API takes no `Idempotency-Key` on it.
+- **Give a customer a phone system**: `customers.enablePbx()` (flat
+  settings, every one optional, including the `domainLabel` that becomes the
+  customer's `code`), `customers.waitForPbx()` (reads until
+  `provisioningState` is `active` or `failed`, or throws
+  `PbxProvisioningTimeoutError`), and `customers.removePbx()`.
+- **`client.regions.list()`**: the `dataResidencyCountry` and
+  `regionPreference` values a create takes.
+- **`client.phoneNumbers`**: `list()` (by `e164` or `status`), `get()`, and
+  the verbs `assign()`, `unassign()`, `route()` (to the customer's phone
+  system by default, or a fax account or SIP trunk) and `unroute()`. Each
+  number carries `customerId`.
+- **Types** `RegionPreference`, `SipTransport` and `ProvisioningState`, now
+  also on `Customer`'s fields of the same meaning, and `examples/create-customer.ts`.
+
+Breaking:
 
 - **The client retries for you.** Up to 2 more times by default
   (`maxRetries` on the client or on one call; `0` turns it off), with the

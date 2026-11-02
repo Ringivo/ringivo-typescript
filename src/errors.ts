@@ -25,7 +25,7 @@
  * member to branch on wherever the refusal came from: `code` carries the
  * JSON:API error's `code` on one side and the OAuth `error` on the other.
  */
-import type { WebhookTestDelivery } from "./models.js";
+import type { Customer, WebhookTestDelivery } from "./models.js";
 
 /**
  * Base class for everything this package throws deliberately.
@@ -252,6 +252,24 @@ export class WebhookTestTimeoutError extends RingivoError {
   constructor(message: string, delivery: WebhookTestDelivery) {
     super(message);
     this.delivery = delivery;
+  }
+}
+
+/**
+ * `customers.waitForPbx()` ran out of time while the phone system was still
+ * being built.
+ *
+ * Not an `ApiError`: every read was answered, and the answer was "not yet".
+ * `customer` is the last read. `isRetryable()` is `false`: nothing needs
+ * sending again — wait longer, or read the customer later.
+ */
+export class PbxProvisioningTimeoutError extends RingivoError {
+  /** The last read — `provisioningState` still `pending` or `provisioning`. */
+  readonly customer: Customer;
+
+  constructor(message: string, customer: Customer) {
+    super(message);
+    this.customer = customer;
   }
 }
 

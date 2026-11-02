@@ -46,9 +46,16 @@
  * `pbx-users:read`; transcripts need `pbx-transcripts:read` too;
  * click-to-dial needs `pbx-calls:write`.
  *
- * Your customers themselves are `client.customers` — list them and read one.
- * A customer's `id` is what `client.pbx` lists take as `customer`. Both need
- * `customers:read`, which only an account-wide credential holds.
+ * Your customers themselves are `client.customers` — list, read, create,
+ * change and delete them (`customers:read`/`customers:write`, which only an
+ * account-wide credential holds), and give one a phone system with
+ * `enablePbx()`, then `waitForPbx()`. `client.regions.list()` answers the
+ * placement values a create takes. A customer's `id` is what `client.pbx`
+ * lists take as `customer`.
+ *
+ * Your numbers are `client.phoneNumbers` — list and read them
+ * (`numbers:read`), give one to a customer (`assign()`, `numbers:assign`),
+ * and point it at the customer's phone system (`route()`, `numbers:route`).
  *
  * `client.messages.record()` records a text your own system already sent
  * through your own messaging-provider account, so staff see it in their
@@ -80,7 +87,13 @@
 export { DEFAULT_MAX_RETRIES, Ringivo } from "./client.js";
 export type { HeadersLike, RequestOptions, RingivoOptions } from "./client.js";
 export { Customers } from "./customers.js";
-export type { ListCustomersOptions } from "./customers.js";
+export type {
+  CreateCustomerOptions,
+  EnablePbxOptions,
+  ListCustomersOptions,
+  UpdateCustomerOptions,
+  WaitForPbxOptions,
+} from "./customers.js";
 export {
   ApiConnectionError,
   ApiError,
@@ -100,6 +113,7 @@ export {
   TranscriptionCappedError,
   UnprocessableEntityError,
   WebhookTestTimeoutError,
+  PbxProvisioningTimeoutError,
   isRetryable,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
@@ -167,7 +181,15 @@ export type {
   PbxDevicePage,
   PbxSubscriber,
   PbxSubscriberPage,
+  PhoneNumber,
+  PhoneNumberPage,
+  PhoneNumberStatus,
+  ProvisioningState,
   Recording,
+  Region,
+  RegionOption,
+  RegionPreference,
+  SipTransport,
   Transcript,
   TranscriptChannel,
   TranscriptSegment,
@@ -181,6 +203,9 @@ export type {
 } from "./models.js";
 export { Page, PagePromise } from "./pagination.js";
 export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
+export { PhoneNumbers } from "./phoneNumbers.js";
+export type { ListPhoneNumbersOptions, RouteTarget } from "./phoneNumbers.js";
+export { Regions } from "./regions.js";
 export type {
   ListCallRecordsOptions,
   ListPbxDevicesOptions,

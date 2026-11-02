@@ -15,5 +15,5 @@
     "verbatimModuleSyntax": true,
     "noEmit": true
   },
-  "include": ["src", "tests", "tsup.config.ts"]
+  "include": ["src", "tests", "examples", "tsup.config.ts"]
 }

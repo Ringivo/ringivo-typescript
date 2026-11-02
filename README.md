@@ -1,11 +1,12 @@
 # ringivo
 
-The TypeScript and JavaScript client for the Ringivo API: send a fax, read
-one, list them, cancel one, fetch its pages, manage your customers' fax
-accounts, say who may read them, register the webhooks that tell you what
-happened — and verify them when they arrive. It also lists your customers
-and reads their phone systems: their call records, who holds which
-extension, what their phones have registered, and click-to-dial. For text
+The TypeScript and JavaScript client for the Ringivo API. Create your
+customers and give them a phone system, assign and route their numbers, and
+read those phone systems: their call records, who holds which extension, what
+their phones have registered, and click-to-dial. Send a fax, read one, list
+them, cancel one, fetch its pages, manage your customers' fax accounts, say who
+may read them, register the webhooks that tell you what happened — and verify
+them when they arrive. For text
 messaging, it records the texts your own system sent, reads the texts sent to
 your numbers, and parses the `message.*` webhooks.
 
@@ -691,48 +692,117 @@ app.post("/hooks/messages", (request, response) => {
 
 ## Customers
 
-`client.customers` lists the businesses you sell to and reads one.
+`client.customers` lists the businesses you sell to, reads one, creates,
+changes and deletes them, and gives one a phone system.
+
+### Set up a customer, its phone system and a number
+
+Six calls, in this order. Use a credential issued for your whole account,
+with `customers:read`, `customers:write`, `numbers:read`, `numbers:assign` and
+`numbers:route`. [`examples/create-customer.ts`](examples/create-customer.ts)
+is the same flow as a script you can run.
 
 ```ts
-const found = await client.customers.list({ code: "jpz3k" });
-const [clinic] = found.customers;
+// 1. Where you may place a customer: the values a create takes.
+const [us] = await client.regions.list(); // { country: "US", options: [{ value: "partner_default", … }, …] }
 
-if (clinic) {
-  console.log(clinic.name, clinic.pbx, clinic.effectiveRegion);
+// 2. The customer. Synchronous: it exists when this resolves, with no phone system.
+const customer = await client.customers.create({
+  name: "Acme Dental",
+  country: "US",
+  addressLines: ["233 S Wacker Dr"],
+  city: "Chicago",
+  region: "IL",
+  postalCode: "60606",
+  timeZone: "America/Chicago",
+  dataResidencyCountry: us.country,
+  regionPreference: "partner_default",
+});
 
-  const calls = await client.pbx.callRecords.list({ customer: clinic.id });
-  console.log(calls.data.length);
+// 3. Its phone system. Every setting is optional; domainLabel becomes the
+//    customer's `code` and the first label of the domain its users sign in with.
+await client.customers.enablePbx(customer.id, { domainLabel: "acme-dental" });
+
+// 4. The build runs in the background: wait until it is active (or failed).
+const ready = await client.customers.waitForPbx(customer.id);
+if (ready.provisioningState !== "active") throw new Error("the phone system was not built");
+
+// 5. A number you hold, by its E.164 form...
+const [number] = (await client.phoneNumbers.list({ e164: "+13025550100" })).data;
+
+// 6. ...given to the customer, and pointed at its phone system.
+await client.phoneNumbers.assign(number.id, customer.id);
+await client.phoneNumbers.route(number.id);
+```
+
+**The service address is checked**, as one postal address, and the customer
+keeps the corrected spelling: read `addressLines` off the answer. An address
+that cannot be confirmed is an `UnprocessableEntityError` whose
+`errors[0].source.pointer` is `/data/attributes/addressLines` and whose
+`detail` says what is wrong. Send `city`, `region` and `postalCode` when you
+have them. `dataResidencyCountry` can never change after the create.
+
+**A create is sent once.** The API takes no `Idempotency-Key` on it, so the
+client does not resend it on a failure: a lost answer may hide a customer that
+was made. If a create fails with no answer, look the customer up by name or
+`code` before you send it again. The same holds for `enablePbx()`, whose second
+attempt would answer `ConflictError` `Phone system already enabled`.
+
+`update()` is a sparse PATCH of `name`, `timeZone` and the phone system
+settings. `delete()` and `removePbx()` answer as soon as the change is
+accepted, and finish the phone system's removal in the background. Both are
+refused with a `ConflictError`, and nothing changes, while the phone system
+still holds numbers, users or SIP trunks; `errors[0].title` and `detail` say
+what to remove first.
+
+### Reading customers
+
+```ts
+for await (const clinic of client.customers.list()) {
+  console.log(clinic.name, clinic.code, clinic.pbx, clinic.effectiveRegion);
 }
+
+const found = await client.customers.list({ code: "acmedental" });
+const [clinic] = found.data;
 ```
 
 **A customer's `id` is what the other resources take as `customer`** —
 `client.pbx.callRecords.list({ customer })`, `pbx.subscribers.list` and
-`pbx.devices.list`, and the fax-account calls. `code` is the platform's short
-code for a customer: five lowercase letters and digits that never change, so
-it finds one customer or none.
+`pbx.devices.list`, the fax-account calls, and `phoneNumbers.assign()`.
+`code` is unique on the platform, so it finds one customer or none; it is made
+from the customer's name, and you may choose it once, with `enablePbx()`'s
+`domainLabel`.
 
-`ids` reads several customers by id in one request — the ids `list()` and
-`get()` hand back — instead of one round trip each. It combines with `code`,
-which narrows the same page further, and an empty list narrows nothing:
+`ids` reads several customers by id in one request, and combines with `code`.
 
-```ts
-const page = await client.customers.list({
-  ids: ["0198c4a1-4d5e-7f60-a172-3c4d5e6f7081", "0198c4a1-9b21-7e4f-8a32-5b6c7d8e9f01"],
-});
-```
-
-**An account-wide credential only.** `customers:read` rides a credential
-issued for your whole account. A credential issued for one customer never
-holds it: the scope is dropped when the token is minted.
+**An account-wide credential only.** `customers:read` and `customers:write`
+ride a credential issued for your whole account. A credential issued for one
+customer never holds them: they are dropped when the token is minted.
 
 `pbx` says whether the customer has a phone system. When it is `false`,
 `residential`, `callLimit`, `callLimitExternal`, `transports` and
 `provisioningState` are all `null`. The order of `transports` is data: it is
-the order the transports are offered in DNS, first preferred.
+the order the transports are offered in DNS, first preferred. A customer that
+is not on your account answers **404**, not 403.
 
-The list is newest first and walks by cursor like every other list here —
-`after`, `before`, `pageSize`. A customer that is not on your account answers
-**404**, not 403.
+## Phone numbers
+
+`client.phoneNumbers` reads your inventory and moves numbers: `assign()` gives
+one from your pool to a customer (`numbers:assign`), `route()` points it at
+that customer's phone system, or at one of its fax accounts or SIP trunks
+(`numbers:route`). `unroute()` and `unassign()` undo them, in that order.
+
+```ts
+const number = await client.phoneNumbers.get(numberId);
+number.customerId; // the customer that holds it, or null while it is in your pool
+
+await client.phoneNumbers.route(number.id, { targetType: "fax", faxAccount: faxAccountId });
+```
+
+Nothing moves in one call. A routed number moves to another customer in four
+steps — `unroute()`, `unassign()`, `assign()`, `route()` — and the gap in the
+middle is real. A refused step is a `ConflictError` whose `errors[0].title`
+names the state (`Already assigned`, `Not routable`, `Still routed`, …).
 
 ## Call records, subscribers, devices and click-to-dial
 
@@ -1523,6 +1593,17 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
 | `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `PagePromise`: one `CustomerPage` (`data`, `nextCursor`), or every item with `for await`. `ids` reads several customers by id in one request; `code` finds one customer. |
 | `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
+| `client.customers.create({ name, country, addressLines, city?, region?, postalCode?, timeZone, dataResidencyCountry, regionPreference })` | `customers:write` | The new `Customer`, with no phone system. Sent once. |
+| `client.customers.update(customerId, { name?, timeZone?, residential?, callLimit?, callLimitExternal?, transports? })` | `customers:write` | A sparse PATCH; the changed `Customer`. |
+| `client.customers.delete(customerId)` | `customers:write` | Accepted; the phone system's domain is removed in the background. 409 while it is in use. |
+| `client.customers.enablePbx(customerId, { residential?, callLimit?, callLimitExternal?, transports?, domainLabel? })` | `customers:write` | Starts building the phone system. Sent once. |
+| `client.customers.waitForPbx(customerId, { intervalMs?, timeoutMs? })` | `customers:read` | Reads until `provisioningState` is `active` or `failed`. Throws `PbxProvisioningTimeoutError` past `timeoutMs` (5 min by default). |
+| `client.customers.removePbx(customerId)` | `customers:write` | Accepted; takes the phone system away and keeps the customer. |
+| `client.regions.list()` | — | Every `Region` (a country) with the `regionPreference` options you may choose there. |
+| `client.phoneNumbers.list({ e164?, status?, sort?, after?, before?, pageSize? })` | `numbers:read` | A `PagePromise` of `PhoneNumber`s, each with its `customerId`. |
+| `client.phoneNumbers.get(phoneNumberId)` | `numbers:read` | One `PhoneNumber`. |
+| `client.phoneNumbers.assign(phoneNumberId, customerId)` / `unassign(phoneNumberId)` | `numbers:assign` | Give a number to a customer, or take it back. |
+| `client.phoneNumbers.route(phoneNumberId, target?)` / `unroute(phoneNumberId)` | `numbers:route` | Point a number at its customer's phone system (the default), a fax account or a SIP trunk, or stop it. |
 | `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `PagePromise`: one `CallRecordPage` (`data`, `nextCursor`), or every item with `for await`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds the records that carry one call id: what a click-to-dial became, a leg's SIP Call-ID, or a recording webhook's `callId`. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |

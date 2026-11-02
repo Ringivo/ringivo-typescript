@@ -1538,7 +1538,7 @@ export interface Customer {
   /** The country this customer's data is kept in, ISO 3166-1 alpha-2. */
   readonly dataResidencyCountry: string | null;
   /** `partner_default`, `use1` or `usw1`. */
-  readonly regionPreference: string | null;
+  readonly regionPreference: RegionPreference | null;
   readonly effectiveRegion: string | null;
   /** Whether this customer has a phone system. */
   readonly pbx: boolean | null;
@@ -1548,9 +1548,12 @@ export interface Customer {
   /** The most external calls the phone system allows at once. */
   readonly callLimitExternal: number | null;
   /** The SIP transports offered, first preferred. */
-  readonly transports: readonly string[] | null;
-  /** Where building the phone system on the switch stands. */
-  readonly provisioningState: string | null;
+  readonly transports: readonly SipTransport[] | null;
+  /**
+   * Where building the phone system stands: `pending`, `provisioning`,
+   * `active` or `failed`; `null` while the customer has no phone system.
+   */
+  readonly provisioningState: ProvisioningState | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
   readonly raw: RawJson;
@@ -1586,7 +1589,7 @@ export function customerFromResource(resource: RawJson): Customer {
     residential: boolean(attributes, "residential"),
     callLimit: integer(attributes, "callLimit"),
     callLimitExternal: integer(attributes, "callLimitExternal"),
-    transports: textList(attributes, "transports"),
+    transports: textList(attributes, "transports") as readonly SipTransport[] | null,
     provisioningState: text(attributes, "provisioningState"),
     createdAt: instant(attributes.createdAt),
     updatedAt: instant(attributes.updatedAt),
@@ -2142,4 +2145,114 @@ function nextCursorOf(document: RawJson): string | null {
 
   const cursor = page.nextCursor;
   return typeof cursor === "string" ? cursor : null;
+}
+
+// -- Customers: the placement vocabulary, and the values a write takes -----
+
+/**
+ * The primary region of a customer: `partner_default` follows your account's
+ * default region, `use1` and `usw1` pin one. Typed open (`string & {}`), so a
+ * region the API adds later is still a value this type accepts.
+ */
+export type RegionPreference = "partner_default" | "use1" | "usw1" | (string & {});
+
+/** A SIP transport a customer's phone system offers. */
+export type SipTransport = "udp" | "tcp" | "tls";
+
+/** Where a queued write against the phone system stands. Typed open, like `RegionPreference`. */
+export type ProvisioningState = "pending" | "provisioning" | "active" | "failed" | (string & {});
+
+/** One `regionPreference` value you may send in a country, and a name to show a person. */
+export interface RegionOption {
+  readonly value: RegionPreference;
+  readonly label: string | null;
+}
+
+/**
+ * Where a customer whose data is kept in one country may be placed —
+ * one entry of `regions.list()`.
+ */
+export interface Region {
+  /** The country code: the value of `dataResidencyCountry`. */
+  readonly country: string;
+  /** The `regionPreference` values legal in that country, in the order to offer them. */
+  readonly options: readonly RegionOption[];
+  readonly raw: RawJson;
+}
+
+export function regionFromResource(resource: RawJson): Region {
+  const attributes = nested(resource, "attributes") ?? {};
+  const options = Array.isArray(attributes.options) ? attributes.options : [];
+
+  return Object.freeze({
+    country: text(resource, "id") ?? "",
+    options: Object.freeze(
+      options.filter(isRecord).map((option) =>
+        Object.freeze({ value: text(option, "value") ?? "", label: text(option, "label") }),
+      ),
+    ),
+    raw: resource,
+  });
+}
+
+// -- Phone numbers ---------------------------------------------------------
+
+/** Where a number stands with its carrier. Typed open, like `RegionPreference`. */
+export type PhoneNumberStatus = "pending" | "active" | "failed" | "releasing" | (string & {});
+
+/**
+ * One number in your inventory — `phoneNumbers.list()` and `get()`.
+ *
+ * `customerId` is the customer that holds it, or `null` while it is in your
+ * own pool. Assignment and routing take the number's `id`.
+ */
+export interface PhoneNumber {
+  readonly id: string;
+  /** The number in E.164, with its `+`. */
+  readonly e164: string | null;
+  readonly status: PhoneNumberStatus | null;
+  readonly country: string | null;
+  readonly customerId: string | null;
+  /** Whether the number can send and receive text messages today. */
+  readonly messagingEnabled: boolean;
+  /** Whether this platform carries the number's calls. `false` for a hosted-messaging number. */
+  readonly voiceEnabled: boolean;
+  readonly activatedAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `phoneNumbers.list()`. */
+export type PhoneNumberPage = Page<PhoneNumber>;
+
+export function phoneNumberFromResource(resource: RawJson): PhoneNumber {
+  const attributes = nested(resource, "attributes") ?? {};
+  const relationships = nested(resource, "relationships") ?? {};
+  const customer = nested(relationships, "customer");
+  const linkage = customer ? customer.data : undefined;
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    e164: text(attributes, "e164"),
+    status: text(attributes, "status"),
+    country: text(attributes, "country"),
+    // Present only when the read asked for `include=customer`, which this
+    // package always does: `null` linkage is "in your pool".
+    customerId: isRecord(linkage) ? text(linkage, "id") : null,
+    messagingEnabled: boolean(nested(attributes, "messaging") ?? {}, "enabled") === true,
+    voiceEnabled: boolean(nested(attributes, "voice") ?? {}, "enabled") === true,
+    activatedAt: instant(attributes.activatedAt),
+    createdAt: instant(attributes.createdAt),
+    raw: resource,
+  });
+}
+
+export function phoneNumberPageFromDocument(document: RawJson): PageParts<PhoneNumber> {
+  const data = document.data;
+  return {
+    data: (Array.isArray(data) ? data : []).filter(isRecord).map(phoneNumberFromResource),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  };
 }
