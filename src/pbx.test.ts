@@ -27,6 +27,7 @@ import { beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { Calls, mockServer } from "../tests/msw.js";
 import {
   ApiError,
+  NotFoundError,
   RecordingAudioMissingError,
   Ringivo,
   TranscriptRequestLimitedError,
@@ -374,7 +375,7 @@ describe("callRecords.list", () => {
 
     expect(calls.count).toBe(1);
     expect([...calls.last.url.searchParams.entries()]).toEqual([["filter[callId]", CALL_ID]]);
-    expect(page.callRecords).toHaveLength(1);
+    expect(page.data).toHaveLength(1);
   });
 
   it("walks backward from a cursor", async () => {
@@ -405,8 +406,8 @@ describe("callRecords.list", () => {
 
     const page = await client().pbx.callRecords.list();
 
-    expect(page.callRecords).toHaveLength(1);
-    expect(page.callRecords[0]?.id).toBe(CALL_RECORD_ID);
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.id).toBe(CALL_RECORD_ID);
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
     expect(Object.isFrozen(page)).toBe(true);
@@ -1274,7 +1275,8 @@ describe("callRecords.requestTranscript", () => {
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(ApiError);
-    expect((failure as Error).constructor).toBe(ApiError);
+    // The status class, and none of the three code classes.
+    expect((failure as Error).constructor).toBe(NotFoundError);
     expect(failure).toMatchObject({ statusCode: 404, code: "transcript_failed" });
   });
 
@@ -1381,9 +1383,9 @@ describe("subscribers.list", () => {
 
     const page = await client().pbx.subscribers.list();
 
-    expect(page.subscribers).toHaveLength(1);
-    expect(page.subscribers[0]?.displayName).toBe("Ann Perkins");
-    expect(page.subscribers[0]?.kind).toBe("user");
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.displayName).toBe("Ann Perkins");
+    expect(page.data[0]?.kind).toBe("user");
     expect(page.nextCursor).toBe("0198c4a1-next");
   });
 });
@@ -1585,8 +1587,8 @@ describe("devices.list", () => {
 
     const page = await client().pbx.devices.list();
 
-    expect(page.devices).toHaveLength(1);
-    expect(page.devices[0]?.aor).toBe("sip:101@acme.example");
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.aor).toBe("sip:101@acme.example");
     expect(page.nextCursor).toBe("0198c4a1-next");
   });
 });

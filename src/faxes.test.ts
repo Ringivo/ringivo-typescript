@@ -730,8 +730,8 @@ describe("list", () => {
 
     const page = await client().faxes.list();
 
-    expect(page.faxes).toHaveLength(1);
-    expect(page.faxes[0]?.id).toBe(FAX_ID);
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.id).toBe(FAX_ID);
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
   });
@@ -753,7 +753,7 @@ describe("list", () => {
 
     const page = await client().faxes.list();
 
-    expect(page.faxes).toHaveLength(0);
+    expect(page.data).toHaveLength(0);
     expect(page.nextCursor).toBeNull();
     expect(page.nextUrl).toBeNull();
   });

@@ -61,6 +61,8 @@ interface Surface {
     webhookTestDeliveries: object;
     pbx: { callRecords: object; subscribers: object; devices: object };
     customers: object;
+    regions: object;
+    phoneNumbers: object;
     messages: object;
     inboundMessages: object;
     request: unknown;
@@ -283,12 +285,21 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       scopes: ["customers:read"],
     });
 
-    // Reads only, in this release.
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.customers))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["get", "list"]);
+    ).toEqual(["create", "delete", "enablePbx", "get", "list", "removePbx", "update", "waitForPbx"]);
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.regions))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["list"]);
+    expect(
+      Object.getOwnPropertyNames(Object.getPrototypeOf(client.phoneNumbers))
+        .filter((name) => name !== "constructor")
+        .sort(),
+    ).toEqual(["assign", "get", "list", "route", "unassign", "unroute"]);
   });
 
   it("exposes the whole messaging surface", async () => {

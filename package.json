@@ -1,13 +1,13 @@
 {
   "name": "ringivo",
   "version": "0.25.0",
-  "description": "Ringivo fax API client for TypeScript and JavaScript",
+  "description": "TypeScript and JavaScript client for the Ringivo API: customers, phone systems, numbers, fax, messaging and webhooks",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Ringivo/ringivo-typescript.git"
   },
-  "keywords": ["fax", "api", "client", "sdk", "webhooks"],
+  "keywords": ["api", "client", "sdk", "telephony", "pbx", "fax", "sms", "webhooks"],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

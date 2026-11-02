@@ -130,8 +130,8 @@ describe("list", () => {
 
     const page = await client().faxAccounts.list();
 
-    expect(page.accounts).toHaveLength(1);
-    expect(page.accounts[0]?.name).toBe("Front desk");
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.name).toBe("Front desk");
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
   });
@@ -145,7 +145,7 @@ describe("list", () => {
 
     const page = await client().faxAccounts.list();
 
-    expect(page.accounts).toHaveLength(0);
+    expect(page.data).toHaveLength(0);
     expect(page.nextCursor).toBeNull();
     expect(page.nextUrl).toBeNull();
   });

@@ -25,6 +25,8 @@
  * the caller did not pass.
  */
 
+import type { Page, PageParts } from "./pagination.js";
+
 /** The JSON object a model was built from, exactly as it arrived. */
 export type RawJson = Readonly<Record<string, unknown>>;
 
@@ -95,12 +97,7 @@ export interface Fax {
  * and its meaning belongs to the server; pass it straight back as `after`
  * to read the following page. It is `null` on the last page.
  */
-export interface FaxPage {
-  readonly faxes: readonly Fax[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type FaxPage = Page<Fax>;
 
 /**
  * A short-lived capability, plus the facts about what is behind it.
@@ -373,12 +370,7 @@ export interface FaxAccount {
  * never one this client built — and it is null on the last page. `nextUrl`
  * mirrors `links.next`, which is absent rather than null at the end.
  */
-export interface FaxAccountPage {
-  readonly accounts: readonly FaxAccount[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type FaxAccountPage = Page<FaxAccount>;
 
 /**
  * One number routed to a fax account.
@@ -440,12 +432,7 @@ export interface FaxAccountUser {
  * never one this client built — and it is null on the last page. `nextUrl`
  * mirrors `links.next`, which is absent rather than null at the end.
  */
-export interface FaxAccountUserPage {
-  readonly grants: readonly FaxAccountUser[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type FaxAccountUserPage = Page<FaxAccountUser>;
 
 /** Build from a JSON:API resource object — every fax-account call. */
 export function faxAccountFromResource(resource: RawJson): FaxAccount {
@@ -481,16 +468,16 @@ export function faxAccountNumberFromResource(resource: RawJson): FaxAccountNumbe
   });
 }
 
-export function faxAccountPageFromDocument(document: RawJson): FaxAccountPage {
+export function faxAccountPageFromDocument(document: RawJson): PageParts<FaxAccount> {
   const data = document.data;
   const accounts = (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountFromResource);
 
-  return Object.freeze({
-    accounts: Object.freeze(accounts),
+  return {
+    data: accounts,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** The `phone-numbers` resources in one page of the numbers relationship. */
@@ -514,16 +501,16 @@ export function faxAccountUserFromResource(resource: RawJson): FaxAccountUser {
   });
 }
 
-export function faxAccountUserPageFromDocument(document: RawJson): FaxAccountUserPage {
+export function faxAccountUserPageFromDocument(document: RawJson): PageParts<FaxAccountUser> {
   const data = document.data;
   const grants = (Array.isArray(data) ? data : []).filter(isRecord).map(faxAccountUserFromResource);
 
-  return Object.freeze({
-    grants: Object.freeze(grants),
+  return {
+    data: grants,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -537,16 +524,16 @@ export function nextCursorOfDocument(document: RawJson): string | null {
   return nextCursorOf(document);
 }
 
-export function faxPageFromDocument(document: RawJson): FaxPage {
+export function faxPageFromDocument(document: RawJson): PageParts<Fax> {
   const data = document.data;
   const faxes = (Array.isArray(data) ? data : []).filter(isRecord).map((resource) => faxFromResource(resource));
 
-  return Object.freeze({
-    faxes: Object.freeze(faxes),
+  return {
+    data: faxes,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -592,12 +579,7 @@ export interface WebhookEndpoint {
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface WebhookEndpointPage {
-  readonly endpoints: readonly WebhookEndpoint[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type WebhookEndpointPage = Page<WebhookEndpoint>;
 
 /**
  * One failed delivery attempt — evidence, not a history.
@@ -641,12 +623,7 @@ export interface WebhookDelivery {
 }
 
 /** One page of `webhookDeliveries.list()`, newest first. */
-export interface WebhookDeliveryPage {
-  readonly deliveries: readonly WebhookDelivery[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type WebhookDeliveryPage = Page<WebhookDelivery>;
 
 /** Build from a JSON:API resource object — every webhook-endpoint call. */
 export function webhookEndpointFromResource(resource: RawJson): WebhookEndpoint {
@@ -667,18 +644,18 @@ export function webhookEndpointFromResource(resource: RawJson): WebhookEndpoint 
   });
 }
 
-export function webhookEndpointPageFromDocument(document: RawJson): WebhookEndpointPage {
+export function webhookEndpointPageFromDocument(document: RawJson): PageParts<WebhookEndpoint> {
   const data = document.data;
   const endpoints = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(webhookEndpointFromResource);
 
-  return Object.freeze({
-    endpoints: Object.freeze(endpoints),
+  return {
+    data: endpoints,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** Build from a JSON:API resource object — every webhook-delivery call. */
@@ -704,18 +681,18 @@ export function webhookDeliveryFromResource(resource: RawJson): WebhookDelivery 
   });
 }
 
-export function webhookDeliveryPageFromDocument(document: RawJson): WebhookDeliveryPage {
+export function webhookDeliveryPageFromDocument(document: RawJson): PageParts<WebhookDelivery> {
   const data = document.data;
   const deliveries = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(webhookDeliveryFromResource);
 
-  return Object.freeze({
-    deliveries: Object.freeze(deliveries),
+  return {
+    data: deliveries,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -761,12 +738,7 @@ export interface WebhookTestDelivery {
 }
 
 /** One page of `webhookTestDeliveries.list()`, newest first. */
-export interface WebhookTestDeliveryPage {
-  readonly deliveries: readonly WebhookTestDelivery[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type WebhookTestDeliveryPage = Page<WebhookTestDelivery>;
 
 /** Build from a JSON:API resource object — every test-event call. */
 export function webhookTestDeliveryFromResource(resource: RawJson): WebhookTestDelivery {
@@ -788,18 +760,18 @@ export function webhookTestDeliveryFromResource(resource: RawJson): WebhookTestD
   });
 }
 
-export function webhookTestDeliveryPageFromDocument(document: RawJson): WebhookTestDeliveryPage {
+export function webhookTestDeliveryPageFromDocument(document: RawJson): PageParts<WebhookTestDelivery> {
   const data = document.data;
   const deliveries = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(webhookTestDeliveryFromResource);
 
-  return Object.freeze({
-    deliveries: Object.freeze(deliveries),
+  return {
+    data: deliveries,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -871,12 +843,7 @@ export interface PbxSubscriber {
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface PbxSubscriberPage {
-  readonly subscribers: readonly PbxSubscriber[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type PbxSubscriberPage = Page<PbxSubscriber>;
 
 /**
  * One REGISTRATION, not one handset.
@@ -922,12 +889,7 @@ export interface PbxDevice {
 }
 
 /** One page of `pbx.devices.list()`, by address of record. */
-export interface PbxDevicePage {
-  readonly devices: readonly PbxDevice[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type PbxDevicePage = Page<PbxDevice>;
 
 /**
  * One call, as the phone system recorded it.
@@ -1047,12 +1009,7 @@ export interface CallRecord {
 }
 
 /** One page of `pbx.callRecords.list()`, newest first. */
-export interface CallRecordPage {
-  readonly callRecords: readonly CallRecord[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type CallRecordPage = Page<CallRecord>;
 
 /**
  * One capture of a call, from `pbx.callRecords.recordings()`.
@@ -1295,18 +1252,18 @@ export function pbxSubscriberFromResource(resource: RawJson): PbxSubscriber {
   });
 }
 
-export function pbxSubscriberPageFromDocument(document: RawJson): PbxSubscriberPage {
+export function pbxSubscriberPageFromDocument(document: RawJson): PageParts<PbxSubscriber> {
   const data = document.data;
   const subscribers = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(pbxSubscriberFromResource);
 
-  return Object.freeze({
-    subscribers: Object.freeze(subscribers),
+  return {
+    data: subscribers,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** Build from a JSON:API resource object — every PBX-device call. */
@@ -1334,16 +1291,16 @@ export function pbxDeviceFromResource(resource: RawJson): PbxDevice {
   });
 }
 
-export function pbxDevicePageFromDocument(document: RawJson): PbxDevicePage {
+export function pbxDevicePageFromDocument(document: RawJson): PageParts<PbxDevice> {
   const data = document.data;
   const devices = (Array.isArray(data) ? data : []).filter(isRecord).map(pbxDeviceFromResource);
 
-  return Object.freeze({
-    devices: Object.freeze(devices),
+  return {
+    data: devices,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /** Build from a JSON:API resource object — every call-record read. */
@@ -1393,16 +1350,16 @@ export function callRecordFromResource(resource: RawJson): CallRecord {
   });
 }
 
-export function callRecordPageFromDocument(document: RawJson): CallRecordPage {
+export function callRecordPageFromDocument(document: RawJson): PageParts<CallRecord> {
   const data = document.data;
   const callRecords = (Array.isArray(data) ? data : []).filter(isRecord).map(callRecordFromResource);
 
-  return Object.freeze({
-    callRecords: Object.freeze(callRecords),
+  return {
+    data: callRecords,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -1581,7 +1538,7 @@ export interface Customer {
   /** The country this customer's data is kept in, ISO 3166-1 alpha-2. */
   readonly dataResidencyCountry: string | null;
   /** `partner_default`, `use1` or `usw1`. */
-  readonly regionPreference: string | null;
+  readonly regionPreference: RegionPreference | null;
   readonly effectiveRegion: string | null;
   /** Whether this customer has a phone system. */
   readonly pbx: boolean | null;
@@ -1591,9 +1548,12 @@ export interface Customer {
   /** The most external calls the phone system allows at once. */
   readonly callLimitExternal: number | null;
   /** The SIP transports offered, first preferred. */
-  readonly transports: readonly string[] | null;
-  /** Where building the phone system on the switch stands. */
-  readonly provisioningState: string | null;
+  readonly transports: readonly SipTransport[] | null;
+  /**
+   * Where building the phone system stands: `pending`, `provisioning`,
+   * `active` or `failed`; `null` while the customer has no phone system.
+   */
+  readonly provisioningState: ProvisioningState | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
   readonly raw: RawJson;
@@ -1606,12 +1566,7 @@ export interface Customer {
  * one this client built — and it is null on the last page. `nextUrl` mirrors
  * `links.next`, which is absent rather than null at the end.
  */
-export interface CustomerPage {
-  readonly customers: readonly Customer[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type CustomerPage = Page<Customer>;
 
 /** Build from a JSON:API resource object — both customer calls. */
 export function customerFromResource(resource: RawJson): Customer {
@@ -1634,7 +1589,7 @@ export function customerFromResource(resource: RawJson): Customer {
     residential: boolean(attributes, "residential"),
     callLimit: integer(attributes, "callLimit"),
     callLimitExternal: integer(attributes, "callLimitExternal"),
-    transports: textList(attributes, "transports"),
+    transports: textList(attributes, "transports") as readonly SipTransport[] | null,
     provisioningState: text(attributes, "provisioningState"),
     createdAt: instant(attributes.createdAt),
     updatedAt: instant(attributes.updatedAt),
@@ -1642,16 +1597,16 @@ export function customerFromResource(resource: RawJson): Customer {
   });
 }
 
-export function customerPageFromDocument(document: RawJson): CustomerPage {
+export function customerPageFromDocument(document: RawJson): PageParts<Customer> {
   const data = document.data;
   const customers = (Array.isArray(data) ? data : []).filter(isRecord).map(customerFromResource);
 
-  return Object.freeze({
-    customers: Object.freeze(customers),
+  return {
+    data: customers,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 /**
@@ -1780,12 +1735,7 @@ export interface InboundMessage {
  * The same shape and the same cursor rules as `FaxPage`: pass `nextCursor`
  * back as `after` for the next page. It is null on the last page.
  */
-export interface InboundMessagePage {
-  readonly messages: readonly InboundMessage[];
-  readonly nextUrl: string | null;
-  readonly nextCursor: string | null;
-  readonly raw: RawJson;
-}
+export type InboundMessagePage = Page<InboundMessage>;
 
 /**
  * Who sent a message from the phone system: a kind and a display name,
@@ -2062,18 +2012,18 @@ export function inboundMessageFromResource(resource: RawJson): InboundMessage {
   });
 }
 
-export function inboundMessagePageFromDocument(document: RawJson): InboundMessagePage {
+export function inboundMessagePageFromDocument(document: RawJson): PageParts<InboundMessage> {
   const data = document.data;
   const messages = (Array.isArray(data) ? data : [])
     .filter(isRecord)
     .map(inboundMessageFromResource);
 
-  return Object.freeze({
-    messages: Object.freeze(messages),
+  return {
+    data: messages,
     nextUrl: nextLink(document),
     nextCursor: nextCursorOf(document),
     raw: document,
-  });
+  };
 }
 
 function messageReceivedDataFromJson(source: RawJson): MessageReceivedEventData {
@@ -2195,4 +2145,114 @@ function nextCursorOf(document: RawJson): string | null {
 
   const cursor = page.nextCursor;
   return typeof cursor === "string" ? cursor : null;
+}
+
+// -- Customers: the placement vocabulary, and the values a write takes -----
+
+/**
+ * The primary region of a customer: `partner_default` follows your account's
+ * default region, `use1` and `usw1` pin one. Typed open (`string & {}`), so a
+ * region the API adds later is still a value this type accepts.
+ */
+export type RegionPreference = "partner_default" | "use1" | "usw1" | (string & {});
+
+/** A SIP transport a customer's phone system offers. */
+export type SipTransport = "udp" | "tcp" | "tls";
+
+/** Where a queued write against the phone system stands. Typed open, like `RegionPreference`. */
+export type ProvisioningState = "pending" | "provisioning" | "active" | "failed" | (string & {});
+
+/** One `regionPreference` value you may send in a country, and a name to show a person. */
+export interface RegionOption {
+  readonly value: RegionPreference;
+  readonly label: string | null;
+}
+
+/**
+ * Where a customer whose data is kept in one country may be placed —
+ * one entry of `regions.list()`.
+ */
+export interface Region {
+  /** The country code: the value of `dataResidencyCountry`. */
+  readonly country: string;
+  /** The `regionPreference` values legal in that country, in the order to offer them. */
+  readonly options: readonly RegionOption[];
+  readonly raw: RawJson;
+}
+
+export function regionFromResource(resource: RawJson): Region {
+  const attributes = nested(resource, "attributes") ?? {};
+  const options = Array.isArray(attributes.options) ? attributes.options : [];
+
+  return Object.freeze({
+    country: text(resource, "id") ?? "",
+    options: Object.freeze(
+      options.filter(isRecord).map((option) =>
+        Object.freeze({ value: text(option, "value") ?? "", label: text(option, "label") }),
+      ),
+    ),
+    raw: resource,
+  });
+}
+
+// -- Phone numbers ---------------------------------------------------------
+
+/** Where a number stands with its carrier. Typed open, like `RegionPreference`. */
+export type PhoneNumberStatus = "pending" | "active" | "failed" | "releasing" | (string & {});
+
+/**
+ * One number in your inventory — `phoneNumbers.list()` and `get()`.
+ *
+ * `customerId` is the customer that holds it, or `null` while it is in your
+ * own pool. Assignment and routing take the number's `id`.
+ */
+export interface PhoneNumber {
+  readonly id: string;
+  /** The number in E.164, with its `+`. */
+  readonly e164: string | null;
+  readonly status: PhoneNumberStatus | null;
+  readonly country: string | null;
+  readonly customerId: string | null;
+  /** Whether the number can send and receive text messages today. */
+  readonly messagingEnabled: boolean;
+  /** Whether this platform carries the number's calls. `false` for a hosted-messaging number. */
+  readonly voiceEnabled: boolean;
+  readonly activatedAt: Date | null;
+  readonly createdAt: Date | null;
+  readonly raw: RawJson;
+}
+
+/** One page of `phoneNumbers.list()`. */
+export type PhoneNumberPage = Page<PhoneNumber>;
+
+export function phoneNumberFromResource(resource: RawJson): PhoneNumber {
+  const attributes = nested(resource, "attributes") ?? {};
+  const relationships = nested(resource, "relationships") ?? {};
+  const customer = nested(relationships, "customer");
+  const linkage = customer ? customer.data : undefined;
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    e164: text(attributes, "e164"),
+    status: text(attributes, "status"),
+    country: text(attributes, "country"),
+    // Present only when the read asked for `include=customer`, which this
+    // package always does: `null` linkage is "in your pool".
+    customerId: isRecord(linkage) ? text(linkage, "id") : null,
+    messagingEnabled: boolean(nested(attributes, "messaging") ?? {}, "enabled") === true,
+    voiceEnabled: boolean(nested(attributes, "voice") ?? {}, "enabled") === true,
+    activatedAt: instant(attributes.activatedAt),
+    createdAt: instant(attributes.createdAt),
+    raw: resource,
+  });
+}
+
+export function phoneNumberPageFromDocument(document: RawJson): PageParts<PhoneNumber> {
+  const data = document.data;
+  return {
+    data: (Array.isArray(data) ? data : []).filter(isRecord).map(phoneNumberFromResource),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  };
 }

@@ -56,6 +56,8 @@
  */
 import type { components, paths } from "./_generated/schema.js";
 import { JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
+import { callOptions, type RequestOptions, sendThrough } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import {
   type RawJson,
   type WebhookEndpoint,
@@ -145,6 +147,14 @@ export interface ListWebhookEndpointsOptions {
    * rows that arrived since your last read. Cannot be combined with `after`.
    */
   before?: string;
+  /**
+   * The order of the list: a field name, or several separated by commas,
+   * with a leading `-` to reverse one (`-createdAt`). Newest first
+   * (`-createdAt,-id`) by default. Each list takes the fields its API
+   * reference names; any other is refused with a 400. A cursor belongs to the
+   * order that made it, so keep `sort` the same while you walk a list.
+   */
+  sort?: string;
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
@@ -249,21 +259,28 @@ export class WebhookEndpoints {
    * absent from that list rather than refused, so a short list is what a
    * narrower token looks like.
    */
-  async list(options: ListWebhookEndpointsOptions = {}): Promise<WebhookEndpointPage> {
-    const { data } = await transportOf(this.client)["/v1/webhook-endpoints"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[scopeType]": options.scopeType as ListWebhookEndpointsQuery["filter[scopeType]"],
-          "filter[scopeId]": options.scopeId,
-          "filter[active]": options.active,
-        },
-      },
-    });
+  list(options: ListWebhookEndpointsOptions = {}, requestOptions?: RequestOptions): PagePromise<WebhookEndpoint> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/webhook-endpoints"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              sort: options.sort,
+              "filter[scopeType]": options.scopeType as ListWebhookEndpointsQuery["filter[scopeType]"],
+              "filter[scopeId]": options.scopeId,
+              "filter[active]": options.active,
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return webhookEndpointPageFromDocument(isRecord(data) ? data : {});
+        return webhookEndpointPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -275,10 +292,11 @@ export class WebhookEndpoints {
    * **fax-account-scoped** endpoint; a customer- or tenant-scoped one answers
    * 404 to it, exactly as an id that names nothing does.
    */
-  async get(webhookEndpointId: string): Promise<WebhookEndpoint> {
+  async get(webhookEndpointId: string, requestOptions?: RequestOptions): Promise<WebhookEndpoint> {
     const { data } = await transportOf(this.client)[
       "/v1/webhook-endpoints/{webhookEndpoint}"
     ].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { webhookEndpoint: webhookEndpointIdParam(webhookEndpointId) } },
     });
 
@@ -301,7 +319,7 @@ export class WebhookEndpoints {
    * `fax_account`-scoped endpoint: naming a `customer` or `tenant` scope with
    * a `fax:*` token is a 422.
    */
-  async create(options: CreateWebhookEndpointOptions): Promise<WebhookEndpoint> {
+  async create(options: CreateWebhookEndpointOptions, requestOptions?: RequestOptions): Promise<WebhookEndpoint> {
     const attributes: CreateAttributes = {
       url: options.url,
       scopeType: options.scopeType as CreateAttributes["scopeType"],
@@ -316,13 +334,11 @@ export class WebhookEndpoints {
       data: { type: "webhook-endpoints", attributes },
     };
 
-    const response = await this.client.request(
-      new Request(`${this.client.baseUrl}/v1/webhook-endpoints`, {
+    const response = await sendThrough(this.client, new Request(`${this.client.baseUrl}/v1/webhook-endpoints`, {
         method: "POST",
         headers: jsonApiHeaders(),
         body: JSON.stringify(document),
-      }),
-    );
+      }), requestOptions ?? {}, false);
 
     return webhookEndpointFromResource(dataObject(await response.json()));
   }
@@ -349,6 +365,7 @@ export class WebhookEndpoints {
   async update(
     webhookEndpointId: string,
     options: UpdateWebhookEndpointOptions,
+    requestOptions?: RequestOptions,
   ): Promise<WebhookEndpoint> {
     const attributes = writableAttributes(options);
     if (Object.keys(attributes).length === 0) {
@@ -359,14 +376,12 @@ export class WebhookEndpoints {
       data: { type: "webhook-endpoints", id: webhookEndpointId, attributes },
     };
 
-    const response = await this.client.request(
-      new Request(
+    const response = await sendThrough(this.client, new Request(
         `${this.client.baseUrl}/v1/webhook-endpoints/${encodeURIComponent(
           webhookEndpointIdParam(webhookEndpointId),
         )}`,
         { method: "PATCH", headers: jsonApiHeaders(), body: JSON.stringify(document) },
-      ),
-    );
+      ), requestOptions ?? {}, true);
 
     return webhookEndpointFromResource(dataObject(await response.json()));
   }
@@ -382,8 +397,9 @@ export class WebhookEndpoints {
    * **fax-account-scoped** endpoint; a customer- or tenant-scoped one answers
    * 404 to it.
    */
-  async delete(webhookEndpointId: string): Promise<void> {
+  async delete(webhookEndpointId: string, requestOptions?: RequestOptions): Promise<void> {
     await transportOf(this.client)["/v1/webhook-endpoints/{webhookEndpoint}"].DELETE({
+      ...callOptions(this.client, requestOptions),
       params: { path: { webhookEndpoint: webhookEndpointIdParam(webhookEndpointId) } },
     });
   }
@@ -403,10 +419,11 @@ export class WebhookEndpoints {
    * **fax-account-scoped** endpoint's secret; a customer- or tenant-scoped
    * one answers 404 to it.
    */
-  async rotateSecret(webhookEndpointId: string): Promise<WebhookEndpoint> {
+  async rotateSecret(webhookEndpointId: string, requestOptions?: RequestOptions): Promise<WebhookEndpoint> {
     const { data } = await transportOf(this.client)[
       "/v1/webhook-endpoints/{webhookEndpoint}/rotate-secret"
     ].POST({
+      ...callOptions(this.client, requestOptions),
       params: { path: { webhookEndpoint: webhookEndpointIdParam(webhookEndpointId) } },
     });
 
@@ -448,6 +465,7 @@ export class WebhookEndpoints {
   async sendTest(
     webhookEndpointId: string,
     options: SendWebhookTestOptions = {},
+    requestOptions?: RequestOptions,
   ): Promise<WebhookTestDelivery> {
     // Always a JSON object, `{}` when no type was named: the spec's "an empty
     // body sends the endpoint's first type".
@@ -466,6 +484,7 @@ export class WebhookEndpoints {
     const { data } = await transportOf(this.client)[
       "/v1/webhook-endpoints/{webhookEndpoint}/test"
     ].POST({
+      ...callOptions(this.client, requestOptions),
       params: { path: { webhookEndpoint: webhookEndpointIdParam(webhookEndpointId) } },
       body,
     });

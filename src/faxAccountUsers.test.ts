@@ -121,9 +121,9 @@ describe("list", () => {
 
     const page = await client().faxAccountUsers.list({ faxAccount: ACCOUNT_ID });
 
-    expect(page.grants).toHaveLength(1);
-    expect(page.grants[0]?.userEmail).toBe("records@acme-vet.example");
-    expect(page.grants[0]?.faxAccountId).toBe(ACCOUNT_ID);
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.userEmail).toBe("records@acme-vet.example");
+    expect(page.data[0]?.faxAccountId).toBe(ACCOUNT_ID);
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
   });
@@ -137,7 +137,7 @@ describe("list", () => {
 
     const page = await client().faxAccountUsers.list();
 
-    expect(page.grants).toHaveLength(0);
+    expect(page.data).toHaveLength(0);
     expect(page.nextCursor).toBeNull();
     expect(page.nextUrl).toBeNull();
   });

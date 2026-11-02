@@ -23,7 +23,16 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ApiError,
   AuthenticationError,
+  BadRequestError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
+  RecordingAudioMissingError,
   RingivoError,
+  TranscriptionCappedError,
+  UnprocessableEntityError,
   isRetryable,
   throwForResponse,
 } from "./errors.js";
@@ -393,5 +402,43 @@ describe("isRetryable", () => {
     ["undefined", undefined],
   ])("does not retry %s, which this package did not throw for the API", (_name, error) => {
     expect(isRetryable(error)).toBe(false);
+  });
+});
+
+describe("the class a refusal becomes", () => {
+  async function thrown(status: number, body: object = {}, headers: Record<string, string> = {}): Promise<unknown> {
+    return throwForResponse(
+      new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/vnd.api+json", ...headers } }),
+    ).catch((caught: unknown) => caught);
+  }
+
+  it.each([
+    [400, BadRequestError],
+    [401, AuthenticationError],
+    [403, PermissionDeniedError],
+    [404, NotFoundError],
+    [409, ConflictError],
+    [422, UnprocessableEntityError],
+    [429, RateLimitError],
+    [500, InternalServerError],
+    [503, InternalServerError],
+    [418, ApiError],
+  ] as const)("a %i is a %s, and still an ApiError", async (status, Class) => {
+    const error = await thrown(status, { errors: [{ status: String(status) }] }, { "X-Request-Id": "req-1" });
+
+    expect((error as Error).constructor).toBe(Class);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).statusCode).toBe(status);
+    expect((error as ApiError).headers.get("x-request-id")).toBe("req-1");
+  });
+
+  it("a code with a class of its own wins, and that class is still its status's", async () => {
+    const capped = await thrown(429, { errors: [{ status: "429", code: "transcription_capped" }] });
+    expect((capped as Error).constructor).toBe(TranscriptionCappedError);
+    expect(capped).toBeInstanceOf(RateLimitError);
+
+    const missing = await thrown(409, { errors: [{ status: "409", code: "recording_audio_missing" }] });
+    expect((missing as Error).constructor).toBe(RecordingAudioMissingError);
+    expect(missing).toBeInstanceOf(ConflictError);
   });
 });

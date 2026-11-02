@@ -46,9 +46,16 @@
  * `pbx-users:read`; transcripts need `pbx-transcripts:read` too;
  * click-to-dial needs `pbx-calls:write`.
  *
- * Your customers themselves are `client.customers` — list them and read one.
- * A customer's `id` is what `client.pbx` lists take as `customer`. Both need
- * `customers:read`, which only an account-wide credential holds.
+ * Your customers themselves are `client.customers` — list, read, create,
+ * change and delete them (`customers:read`/`customers:write`, which only an
+ * account-wide credential holds), and give one a phone system with
+ * `enablePbx()`, then `waitForPbx()`. `client.regions.list()` answers the
+ * placement values a create takes. A customer's `id` is what `client.pbx`
+ * lists take as `customer`.
+ *
+ * Your numbers are `client.phoneNumbers` — list and read them
+ * (`numbers:read`), give one to a customer (`assign()`, `numbers:assign`),
+ * and point it at the customer's phone system (`route()`, `numbers:route`).
  *
  * `client.messages.record()` records a text your own system already sent
  * through your own messaging-provider account, so staff see it in their
@@ -64,26 +71,49 @@
  * variant: branch on `event.type`, or route on `INBOUND_MESSAGE_EVENT_TYPES`
  * (texts sent to you) and `OUTBOUND_MESSAGE_EVENT_TYPES` (texts sent from you).
  *
- * `isRetryable(error)` says whether the API's contract allows the same call
- * again (no answer, 408, 429, 5xx, and a 409 `idempotency_key_in_use`);
- * `ApiError.retryAfter` says how long the server asked you to wait. The
- * client never retries by itself, apart from one resend with a fresh token
- * after a 401, and `webhookTestDeliveries.wait()`, which sleeps through a 429
- * with `Retry-After` while it polls.
+ * Every `list()` answers a `PagePromise`: `await` it for one `Page` (its
+ * items are `page.data`), or `for await` it for every item on every page.
+ *
+ * Every method takes a last `RequestOptions` argument — `timeoutMs`,
+ * `maxRetries`, `signal`, `headers` — for that call alone.
+ *
+ * A refusal is an `ApiError` subclass by status (`NotFoundError`,
+ * `UnprocessableEntityError`, `RateLimitError`, …); no answer at all is an
+ * `ApiConnectionError` or `ApiTimeoutError`. The client retries what is safe
+ * to send twice, up to `maxRetries` (2) times, with backoff and the server's
+ * `Retry-After`. `isRetryable(error)` says whether the API's contract allows
+ * the same call again later, from your own queue.
  */
-export { Ringivo } from "./client.js";
-export type { RequestOptions, RingivoOptions } from "./client.js";
+export { DEFAULT_MAX_RETRIES, Ringivo } from "./client.js";
+export type { HeadersLike, RequestOptions, RingivoOptions } from "./client.js";
 export { Customers } from "./customers.js";
-export type { ListCustomersOptions } from "./customers.js";
+export type {
+  CreateCustomerOptions,
+  EnablePbxOptions,
+  ListCustomersOptions,
+  UpdateCustomerOptions,
+  WaitForPbxOptions,
+} from "./customers.js";
 export {
+  ApiConnectionError,
   ApiError,
+  ApiTimeoutError,
   AuthenticationError,
+  BadRequestError,
+  ConflictError,
+  InternalServerError,
+  NotFoundError,
+  PermissionDeniedError,
+  RateLimitError,
   RecordingAudioMissingError,
+  RequestAbortedError,
   RingivoError,
   SignatureVerificationError,
   TranscriptRequestLimitedError,
   TranscriptionCappedError,
+  UnprocessableEntityError,
   WebhookTestTimeoutError,
+  PbxProvisioningTimeoutError,
   isRetryable,
 } from "./errors.js";
 export type { ApiErrorDetail } from "./errors.js";
@@ -151,7 +181,15 @@ export type {
   PbxDevicePage,
   PbxSubscriber,
   PbxSubscriberPage,
+  PhoneNumber,
+  PhoneNumberPage,
+  PhoneNumberStatus,
+  ProvisioningState,
   Recording,
+  Region,
+  RegionOption,
+  RegionPreference,
+  SipTransport,
   Transcript,
   TranscriptChannel,
   TranscriptSegment,
@@ -163,7 +201,11 @@ export type {
   WebhookTestDelivery,
   WebhookTestDeliveryPage,
 } from "./models.js";
+export { Page, PagePromise } from "./pagination.js";
 export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
+export { PhoneNumbers } from "./phoneNumbers.js";
+export type { ListPhoneNumbersOptions, RouteTarget } from "./phoneNumbers.js";
+export { Regions } from "./regions.js";
 export type {
   ListCallRecordsOptions,
   ListPbxDevicesOptions,

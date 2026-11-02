@@ -68,7 +68,8 @@
  * 401 on the same stale token join the same in-flight mint rather than each
  * buying a fresh token for a refresh already under way.
  */
-import { AuthenticationError, throwForResponse } from "./errors.js";
+import { AuthenticationError } from "./errors.js";
+import { type Fetch, send } from "./transport.js";
 import { VERSION } from "./version.js";
 
 /**
@@ -96,30 +97,52 @@ export interface ClientCredentialsAuthOptions {
   customer?: string;
   scopes?: readonly string[];
   timeoutMs: number;
+  /** The `fetch` the mint is sent with. */
+  fetch: Fetch;
+  /** Retries of a mint that got no answer, a 408, 429 or 5xx. Minting twice is harmless. */
+  maxRetries: number;
 }
 
-/** Mints bearer tokens, and keeps the one it holds good. */
+/**
+ * Mints bearer tokens, and keeps the one it holds good.
+ *
+ * EVERY FIELD IS AN ECMASCRIPT `#private` ONE, and that is a security
+ * property, not style. A TypeScript `private` member is an ordinary property
+ * at run time: `console.log(client)` or a logger that serialises its
+ * argument printed the client secret and the live token. `#private` fields are
+ * invisible to `util.inspect`, `JSON.stringify` and `Object.keys`, so the
+ * secret leaves this object only in the body of the mint.
+ */
 export class ClientCredentialsAuth {
-  private readonly tokenUrl: string;
-  private readonly clientId: string;
-  private readonly clientSecret: string;
-  private readonly tenant: string;
-  private readonly customer: string | undefined;
-  private readonly scopes: readonly string[] | undefined;
-  private readonly timeoutMs: number;
+  readonly #tokenUrl: string;
+  readonly #clientId: string;
+  readonly #clientSecret: string;
+  readonly #tenant: string;
+  readonly #customer: string | undefined;
+  readonly #scopes: readonly string[] | undefined;
+  readonly #timeoutMs: number;
+  readonly #fetch: Fetch;
+  readonly #maxRetries: number;
 
-  private accessTokenValue: string | null = null;
-  private expiresAt: number | null = null;
-  private pending: Promise<string> | null = null;
+  #accessToken: string | null = null;
+  #expiresAt: number | null = null;
+  #pending: Promise<string> | null = null;
 
   constructor(options: ClientCredentialsAuthOptions) {
-    this.tokenUrl = `${options.baseUrl.replace(/\/+$/, "")}/oauth/token`;
-    this.clientId = options.clientId;
-    this.clientSecret = options.clientSecret;
-    this.tenant = options.tenant;
-    this.customer = options.customer;
-    this.scopes = options.scopes;
-    this.timeoutMs = options.timeoutMs;
+    this.#tokenUrl = `${options.baseUrl.replace(/\/+$/, "")}/oauth/token`;
+    this.#clientId = options.clientId;
+    this.#clientSecret = options.clientSecret;
+    this.#tenant = options.tenant;
+    this.#customer = options.customer;
+    this.#scopes = options.scopes;
+    this.#timeoutMs = options.timeoutMs;
+    this.#fetch = options.fetch;
+    this.#maxRetries = options.maxRetries;
+  }
+
+  /** What `util.inspect` and `console.log` print: nothing secret. */
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return "ClientCredentialsAuth { [credentials hidden] }";
   }
 
   /**
@@ -133,32 +156,32 @@ export class ClientCredentialsAuth {
    * the bug — it bought a second token for a refresh already under way.
    */
   async accessToken(options: { forceRefresh?: boolean } = {}): Promise<string> {
-    if (!options.forceRefresh && this.accessTokenValue !== null && this.isFresh()) {
-      return this.accessTokenValue;
+    if (!options.forceRefresh && this.#accessToken !== null && this.#isFresh()) {
+      return this.#accessToken;
     }
-    if (this.pending) {
-      return this.pending;
+    if (this.#pending) {
+      return this.#pending;
     }
 
-    const pending = this.mint().finally(() => {
-      if (this.pending === pending) {
-        this.pending = null;
+    const pending = this.#mint().finally(() => {
+      if (this.#pending === pending) {
+        this.#pending = null;
       }
     });
-    this.pending = pending;
+    this.#pending = pending;
     return pending;
   }
 
-  private isFresh(): boolean {
-    if (this.expiresAt === null) {
+  #isFresh(): boolean {
+    if (this.#expiresAt === null) {
       // The server did not say when it expires, so there is nothing to
       // pre-empt. The 401 retry is what replaces this one.
       return true;
     }
-    return monotonic() < this.expiresAt;
+    return monotonic() < this.#expiresAt;
   }
 
-  private async mint(): Promise<string> {
+  async #mint(): Promise<string> {
     // The credentials and the tenant always go out; `customer` only when the
     // caller configured one. A member sent as `null` or as an empty string is
     // a value the server has to interpret; a member left out is the absence
@@ -173,31 +196,40 @@ export class ClientCredentialsAuth {
     // rather than an option.
     const asked: Record<string, unknown> = {
       grant_type: "client_credentials",
-      client_id: this.clientId,
-      client_secret: this.clientSecret,
-      tenant: this.tenant,
+      client_id: this.#clientId,
+      client_secret: this.#clientSecret,
+      tenant: this.#tenant,
     };
-    if (this.customer !== undefined) {
-      asked.customer = this.customer;
+    if (this.#customer !== undefined) {
+      asked.customer = this.#customer;
     }
-    if (this.scopes && this.scopes.length > 0) {
+    if (this.#scopes && this.#scopes.length > 0) {
       // ONE SPACE-DELIMITED STRING, which is RFC 6749's encoding and the only
       // one this endpoint reads. A scope carrying a space of its own would be
       // unrepresentable here, and no published scope does.
-      asked.scope = this.scopes.join(" ");
+      asked.scope = this.#scopes.join(" ");
     }
 
-    const response = await fetch(this.tokenUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "User-Agent": USER_AGENT,
+    // Through the same loop as every other request, with no token: a mint
+    // that got no answer or a 503 is retried like one, and minting twice only
+    // buys a second token. RESENDABLE although it is a POST, for that reason.
+    const response = await send(
+      new Request(this.#tokenUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "User-Agent": USER_AGENT,
+        },
+        body: JSON.stringify(asked),
+      }),
+      {
+        fetch: this.#fetch,
+        timeoutMs: this.#timeoutMs,
+        maxRetries: this.#maxRetries,
+        resendable: true,
       },
-      body: JSON.stringify(asked),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    await throwForResponse(response);
+    );
 
     const body = await response.text();
     let payload: unknown;
@@ -221,8 +253,8 @@ export class ClientCredentialsAuth {
     }
 
     const expiresIn = (payload as Record<string, unknown>).expires_in;
-    this.accessTokenValue = token;
-    this.expiresAt =
+    this.#accessToken = token;
+    this.#expiresAt =
       typeof expiresIn === "number" && Number.isFinite(expiresIn)
         ? monotonic() + Math.max(Math.trunc(expiresIn) - EXPIRY_MARGIN_SECONDS, 0)
         : null;

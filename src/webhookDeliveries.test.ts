@@ -129,9 +129,9 @@ describe("list", () => {
 
     const page = await client().webhookDeliveries.list({ status: "dead" });
 
-    expect(page.deliveries).toHaveLength(1);
-    expect(page.deliveries[0]?.status).toBe("dead");
-    expect(page.deliveries[0]?.endpointId).toBe(ENDPOINT_ID);
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.status).toBe("dead");
+    expect(page.data[0]?.endpointId).toBe(ENDPOINT_ID);
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
   });

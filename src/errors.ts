@@ -25,16 +25,16 @@
  * member to branch on wherever the refusal came from: `code` carries the
  * JSON:API error's `code` on one side and the OAuth `error` on the other.
  */
-import type { WebhookTestDelivery } from "./models.js";
+import type { Customer, WebhookTestDelivery } from "./models.js";
 
 /**
  * Base class for everything this package throws deliberately.
  *
- * Catch this to catch the SDK. Transport-level failures — a connection
- * refused, a TLS error, an abort on timeout — are the platform's own
- * `TypeError`/`DOMException` and are deliberately not wrapped: re-labelling
- * them would hide which layer failed while adding nothing a caller can
- * branch on.
+ * Catch this to catch the SDK. A request that got no answer is one of the
+ * three classes below `ApiConnectionError`, with the platform's own error kept
+ * on `cause`, so which layer failed is still there to read. A `TypeError` this
+ * package did not wrap is a fault in the call itself — a malformed URL, a
+ * header value `Headers` refuses — and sending it again fails the same way.
  */
 export class RingivoError extends Error {
   constructor(message: string) {
@@ -92,6 +92,8 @@ export class ApiError extends RingivoError {
    * here, because a caller would read that as the server's instruction.
    */
   readonly retryAfter: number | undefined;
+  /** The response headers, so a header the API adds still reaches you. */
+  readonly headers: Headers;
 
   constructor(
     message: string,
@@ -100,6 +102,7 @@ export class ApiError extends RingivoError {
       errors?: readonly ApiErrorDetail[];
       body?: string;
       retryAfter?: number;
+      headers?: Headers;
     },
   ) {
     super(message);
@@ -107,6 +110,7 @@ export class ApiError extends RingivoError {
     this.errors = options.errors ?? [];
     this.body = options.body ?? "";
     this.retryAfter = options.retryAfter;
+    this.headers = options.headers ?? new Headers();
   }
 
   /** The first error's machine code, when the answer carried one. */
@@ -118,12 +122,71 @@ export class ApiError extends RingivoError {
 /**
  * The credential was refused, or the token it bought no longer works.
  *
- * Thrown both for a token request the server rejected and for a request that
- * answered 401 twice — once on its own, and once more after the token was
- * force-refreshed and the request retried. A second 401 means the
- * credential, not the token, is the problem.
+ * Thrown for a token request refused with a 401 (`invalid_client`: a wrong
+ * secret) and for a request that answered 401 twice — once on its own, and
+ * once more after the token was force-refreshed. A second 401 means the
+ * credential, not the token, is the problem. A token request refused with a
+ * 400 (`invalid_scope`, `invalid_request`, `unauthorized_client`) is a
+ * `BadRequestError`: branch on its `code`.
  */
 export class AuthenticationError extends ApiError {}
+
+/** A 400: the request was malformed — a query parameter, a header or a body this API does not take. */
+export class BadRequestError extends ApiError {}
+
+/** A 403: the credential is good and does not allow this — most often a missing scope. */
+export class PermissionDeniedError extends ApiError {}
+
+/**
+ * A 404: nothing of yours has that id. This includes a row that belongs to
+ * somebody else — the API never answers 403 for that, because a 403 would say
+ * the row exists.
+ */
+export class NotFoundError extends ApiError {}
+
+/** A 409: the request was well formed, and the current state refused it. `code` or `title` says which state. */
+export class ConflictError extends ApiError {}
+
+/** A 422: a member of the body was refused. `errors[n].source.pointer` names it. */
+export class UnprocessableEntityError extends ApiError {}
+
+/** A 429: too many requests. `retryAfter` says how long to wait, when the server said. */
+export class RateLimitError extends ApiError {}
+
+/** A 5xx: the API, or a system behind it, failed. Sending the request again may work. */
+export class InternalServerError extends ApiError {}
+
+/**
+ * The request got no answer: the connection was refused or reset, a name did
+ * not resolve, TLS failed. The platform's own error is `cause`.
+ *
+ * The request may or may not have reached the API, so a write that is not
+ * idempotent may have happened. `isRetryable()` is `true` for it.
+ */
+export class ApiConnectionError extends RingivoError {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message);
+    if (options.cause !== undefined) {
+      Object.defineProperty(this, "cause", { value: options.cause, configurable: true, writable: true });
+    }
+  }
+}
+
+/** The request took longer than its `timeoutMs`. `isRetryable()` is `true` for it. */
+export class ApiTimeoutError extends ApiConnectionError {}
+
+/**
+ * The `signal` you passed was aborted. Not retried, and `isRetryable()` is
+ * `false` for it: you asked for the stop. The signal's `reason` is `cause`.
+ */
+export class RequestAbortedError extends RingivoError {
+  constructor(message: string, options: { cause?: unknown } = {}) {
+    super(message);
+    if (options.cause !== undefined) {
+      Object.defineProperty(this, "cause", { value: options.cause, configurable: true, writable: true });
+    }
+  }
+}
 
 /**
  * A 409 `recording_audio_missing`: there is no audio for this capture.
@@ -131,7 +194,7 @@ export class AuthenticationError extends ApiError {}
  * Thrown by `pbx.callRecords.requestTranscript()`. The platform holds no audio
  * for the capture, so it cannot be transcribed. Asking again does not help.
  */
-export class RecordingAudioMissingError extends ApiError {}
+export class RecordingAudioMissingError extends ConflictError {}
 
 /**
  * A 429 `transcription_capped`: the daily transcription budget is spent.
@@ -139,7 +202,7 @@ export class RecordingAudioMissingError extends ApiError {}
  * Thrown by `pbx.callRecords.requestTranscript()`. `retryAfter` gives the
  * seconds until the budget resets at 00:00 UTC. Nothing was started.
  */
-export class TranscriptionCappedError extends ApiError {}
+export class TranscriptionCappedError extends RateLimitError {}
 
 /**
  * A 429 `transcript_request_limited`: this call was asked about too often.
@@ -148,7 +211,7 @@ export class TranscriptionCappedError extends ApiError {}
  * CALL, across all of its captures (3 a day by default). `retryAfter` gives
  * the seconds until one more ask is accepted. Nothing was started.
  */
-export class TranscriptRequestLimitedError extends ApiError {}
+export class TranscriptRequestLimitedError extends RateLimitError {}
 
 /**
  * The refusals that get a class of their own, by the API's `code`. The code is
@@ -191,6 +254,24 @@ export class WebhookTestTimeoutError extends RingivoError {
   constructor(message: string, delivery: WebhookTestDelivery) {
     super(message);
     this.delivery = delivery;
+  }
+}
+
+/**
+ * `customers.waitForPbx()` ran out of time while the phone system was still
+ * being built.
+ *
+ * Not an `ApiError`: every read was answered, and the answer was "not yet".
+ * `customer` is the last read. `isRetryable()` is `false`: nothing needs
+ * sending again — wait longer, or read the customer later.
+ */
+export class PbxProvisioningTimeoutError extends RingivoError {
+  /** The last read — `provisioningState` still `pending` or `provisioning`. */
+  readonly customer: Customer;
+
+  constructor(message: string, customer: Customer) {
+    super(message);
+    this.customer = customer;
   }
 }
 
@@ -286,7 +367,7 @@ function errorsFromBody(body: string, statusCode: number): readonly ApiErrorDeta
  * `delay-seconds` must be digits and nothing else, and an HTTP-date must
  * begin with the weekday name that all three of the standard's formats do.
  */
-function retryAfterSeconds(value: string | null): number | undefined {
+export function retryAfterSeconds(value: string | null): number | undefined {
   if (value === null) {
     return undefined;
   }
@@ -347,14 +428,42 @@ export async function throwForResponse(response: Response): Promise<void> {
   const Failure =
     response.status === 401
       ? AuthenticationError
-      : ((code !== null && Object.hasOwn(BY_CODE, code) ? BY_CODE[code] : undefined) ?? ApiError);
+      : ((code !== null && Object.hasOwn(BY_CODE, code) ? BY_CODE[code] : undefined) ??
+        byStatus(response.status));
 
   throw new Failure(message(response.status, errors, body), {
     statusCode: response.status,
     errors,
     body,
     retryAfter: retryAfterSeconds(response.headers.get("retry-after")),
+    headers: response.headers,
   });
+}
+
+/**
+ * The class a status gets when no `code` earns a class of its own. The names
+ * are the ones most TypeScript API clients use, so `catch (e) { if (e
+ * instanceof NotFoundError) … }` reads the same here as there.
+ */
+function byStatus(status: number): typeof ApiError {
+  switch (status) {
+    case 400:
+      return BadRequestError;
+    case 401:
+      return AuthenticationError;
+    case 403:
+      return PermissionDeniedError;
+    case 404:
+      return NotFoundError;
+    case 409:
+      return ConflictError;
+    case 422:
+      return UnprocessableEntityError;
+    case 429:
+      return RateLimitError;
+    default:
+      return status >= 500 ? InternalServerError : ApiError;
+  }
 }
 
 /** The statuses below 500 the API's contract says to retry unchanged. */
@@ -383,26 +492,31 @@ const KEY_IN_USE = "idempotency_key_in_use";
  * change, or slowly. `false` for anything else, because this package did not
  * throw it for the API — a refusal before any request included.
  *
- * NO ANSWER is what Node's `fetch` throws when the request got no response:
- * the `TimeoutError` of this client's own timeout, and the `TypeError`
- * whose `cause` carries a system or socket error `code` (`ECONNREFUSED`,
- * `ENOTFOUND`, `ECONNRESET`, `UND_ERR_SOCKET`, a TLS failure, and so on).
- * A `TypeError` this client caused is `false`: an unknown URL scheme or a
- * forbidden port (a `cause` with no `code`) and an invalid URL or argument
- * (`ERR_INVALID_*`, `UND_ERR_INVALID_ARG`, `UND_ERR_NOT_SUPPORTED`). An
- * unchanged retry of those fails the same way.
+ * NO ANSWER is an `ApiConnectionError` (an `ApiTimeoutError` included): the
+ * request got no response. The raw errors Node's `fetch` throws for the same
+ * cases are read too, for a caller who sends with their own `fetch`: the
+ * `TimeoutError` of a timeout, and the `TypeError` whose `cause` carries a
+ * system or socket error `code` (`ECONNREFUSED`, `ENOTFOUND`, `ECONNRESET`,
+ * `UND_ERR_SOCKET`, a TLS failure). A `TypeError` the call itself caused is
+ * `false`: an unknown URL scheme, a forbidden port, an invalid URL or argument.
+ * `RequestAbortedError` is `false`: you stopped it.
  *
  * This decides WHETHER to retry, never WHEN. Wait at least
  * `error.retryAfter` seconds when it is set; otherwise use your own backoff.
- * The client never retries by itself, apart from one resend with a fresh
- * token after a 401, and `webhookTestDeliveries.wait()`, which sleeps through
- * a 429 with `Retry-After` while it polls: a retry belongs in your durable
- * queue, not inside a call that would block your worker.
  *
- * The Python client's `is_retryable()` is the same contract; the two are kept
- * the same on purpose.
+ * The client already retried what it could before you see the error: by
+ * default up to 2 more times (`maxRetries`), with backoff, and only a request
+ * that is safe to send twice — see `RingivoOptions.maxRetries`. So an error
+ * this answers `true` for has failed every attempt; send it again from your
+ * own queue, later, rather than in a tight loop.
  */
 export function isRetryable(error: unknown): boolean {
+  if (error instanceof ApiConnectionError) {
+    return true;
+  }
+  if (error instanceof RingivoError && !(error instanceof ApiError)) {
+    return false;
+  }
   if (error instanceof ApiError) {
     if (error.statusCode === 409) {
       return error.code === KEY_IN_USE;
@@ -412,7 +526,8 @@ export function isRetryable(error: unknown): boolean {
   return isNoAnswer(error);
 }
 
-function isNoAnswer(error: unknown): boolean {
+/** Whether a thrown `fetch` error means the request got no answer. Internal. */
+export function isNoAnswer(error: unknown): boolean {
   if (typeof error !== "object" || error === null) {
     return false;
   }

@@ -25,7 +25,14 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
-import { ApiError, Ringivo } from "./index.js";
+import {
+  ApiError,
+  ConflictError,
+  InternalServerError,
+  PbxProvisioningTimeoutError,
+  Ringivo,
+  UnprocessableEntityError,
+} from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -222,13 +229,13 @@ describe("list", () => {
 
     const page = await client().customers.list();
 
-    expect(page.customers).toHaveLength(1);
-    expect(page.customers[0]?.id).toBe(CUSTOMER_ID);
-    expect(page.customers[0]?.name).toBe("Acme Dental");
+    expect(page.data).toHaveLength(1);
+    expect(page.data[0]?.id).toBe(CUSTOMER_ID);
+    expect(page.data[0]?.name).toBe("Acme Dental");
     expect(page.nextCursor).toBe("0198c4a1-next");
     expect(page.nextUrl).toContain("page%5Bafter%5D");
     expect(Object.isFrozen(page)).toBe(true);
-    expect(Object.isFrozen(page.customers)).toBe(true);
+    expect(Object.isFrozen(page.data)).toBe(true);
   });
 
   it("has no cursor to follow on the last page, where links.next is ABSENT", async () => {
@@ -366,5 +373,288 @@ describe("get", () => {
       statusCode: 404,
       code: "not_found",
     });
+  });
+});
+
+describe("create", () => {
+  const created = (): object => ({
+    data: customerResource({
+      code: "acmedental",
+      addressLines: ["233 S Wacker Dr"],
+      pbx: false,
+      residential: null,
+      callLimit: null,
+      callLimitExternal: null,
+      transports: null,
+      provisioningState: null,
+    }),
+  });
+
+  it("posts a JSON:API document with exactly the members named, and answers the customer", async () => {
+    const posts = new Calls();
+    server.use(
+      http.post(CUSTOMERS_URL, async ({ request }) => {
+        await posts.record(request);
+        return HttpResponse.json(created(), { status: 201, headers: { "Content-Type": JSONAPI } });
+      }),
+    );
+
+    const customer = await client().customers.create({
+      name: "Acme Dental",
+      country: "US",
+      addressLines: ["233 S Wacker"],
+      city: "Chicago",
+      region: "IL",
+      timeZone: "America/Chicago",
+      dataResidencyCountry: "US",
+      regionPreference: "partner_default",
+    });
+
+    expect(customer.id).toBe(CUSTOMER_ID);
+    expect(customer.pbx).toBe(false);
+    expect(customer.code).toBe("acmedental");
+    // The answer carries the validated spelling, not what was sent.
+    expect(customer.addressLines).toEqual(["233 S Wacker Dr"]);
+
+    expect(posts.count).toBe(1);
+    expect(posts.last.request.headers.get("content-type")).toBe(JSONAPI);
+    expect(JSON.parse(posts.last.body)).toEqual({
+      data: {
+        type: "customers",
+        attributes: {
+          name: "Acme Dental",
+          country: "US",
+          addressLines: ["233 S Wacker"],
+          city: "Chicago",
+          region: "IL",
+          timeZone: "America/Chicago",
+          dataResidencyCountry: "US",
+          regionPreference: "partner_default",
+        },
+      },
+    });
+  });
+
+  it("surfaces the address refusal on its pointer, and never resends the create", async () => {
+    const posts = new Calls();
+    server.use(
+      http.post(CUSTOMERS_URL, async ({ request }) => {
+        await posts.record(request);
+        return posts.count === 1
+          ? HttpResponse.json(
+              { errors: [{ status: "503", title: "Service Unavailable" }] },
+              { status: 503, headers: { "Retry-After": "0" } },
+            )
+          : HttpResponse.json(created(), { status: 201 });
+      }),
+    );
+
+    const error = await client()
+      .customers.create({
+        name: "Acme Dental",
+        country: "US",
+        addressLines: ["1 Nowhere"],
+        timeZone: "America/Chicago",
+        dataResidencyCountry: "US",
+        regionPreference: "use1",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(InternalServerError);
+    expect(posts.count).toBe(1);
+
+    server.use(
+      http.post(CUSTOMERS_URL, () =>
+        HttpResponse.json(
+          {
+            errors: [
+              {
+                status: "422",
+                detail: "That address could not be confirmed precisely enough to serve.",
+                source: { pointer: "/data/attributes/addressLines" },
+              },
+            ],
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+    const refused = await client()
+      .customers.create({
+        name: "Acme Dental",
+        country: "US",
+        addressLines: ["1 Nowhere"],
+        timeZone: "America/Chicago",
+        dataResidencyCountry: "US",
+        regionPreference: "use1",
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(refused).toBeInstanceOf(UnprocessableEntityError);
+    expect((refused as UnprocessableEntityError).errors[0]?.source).toEqual({
+      pointer: "/data/attributes/addressLines",
+    });
+  });
+});
+
+describe("update", () => {
+  it("sends a sparse PATCH of only the members named", async () => {
+    const patches = new Calls();
+    server.use(
+      http.patch(CUSTOMER_URL, async ({ request }) => {
+        await patches.record(request);
+        return HttpResponse.json({ data: customerResource({ callLimit: 20 }) });
+      }),
+    );
+
+    const customer = await client().customers.update(CUSTOMER_ID, { callLimit: 20, transports: ["udp"] });
+
+    expect(customer.callLimit).toBe(20);
+    expect(patches.last.request.headers.get("content-type")).toBe(JSONAPI);
+    expect(JSON.parse(patches.last.body)).toEqual({
+      data: { type: "customers", id: CUSTOMER_ID, attributes: { callLimit: 20, transports: ["udp"] } },
+    });
+  });
+
+  it("refuses an update that names nothing, before any request", async () => {
+    await expect(client().customers.update(CUSTOMER_ID, {})).rejects.toThrow(/at least one field/);
+  });
+});
+
+describe("delete", () => {
+  it("resolves on the 202 with no body", async () => {
+    const deletes = new Calls();
+    server.use(
+      http.delete(CUSTOMER_URL, async ({ request }) => {
+        await deletes.record(request);
+        return new HttpResponse(null, { status: 202, headers: { "Content-Type": "text/html; charset=utf-8" } });
+      }),
+    );
+
+    await expect(client().customers.delete(CUSTOMER_ID)).resolves.toBeUndefined();
+    expect(deletes.count).toBe(1);
+  });
+
+  it("throws the 409 that says what to remove first", async () => {
+    server.use(
+      http.delete(CUSTOMER_URL, () =>
+        HttpResponse.json(
+          { errors: [{ status: "409", title: "Phone system not empty", detail: "This customer's phone system still has 2 users." }] },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const error = await client().customers.delete(CUSTOMER_ID).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictError);
+    expect((error as ConflictError).errors[0]?.title).toBe("Phone system not empty");
+  });
+});
+
+describe("enablePbx and removePbx", () => {
+  const PBX_URL = `${CUSTOMER_URL}/pbx`;
+
+  it("sends no member it was not given: an empty enable is an empty flat object", async () => {
+    const posts = new Calls();
+    server.use(
+      http.post(PBX_URL, async ({ request }) => {
+        await posts.record(request);
+        return HttpResponse.json({}, { status: 202 });
+      }),
+    );
+
+    await client().customers.enablePbx(CUSTOMER_ID);
+    await client().customers.enablePbx(CUSTOMER_ID, { domainLabel: "acme-dental", callLimit: 20 });
+
+    expect(JSON.parse(posts.at(0).body)).toEqual({});
+    // FLAT, and plain JSON: a `data` wrapper is refused by the endpoint.
+    expect(JSON.parse(posts.at(1).body)).toEqual({ domainLabel: "acme-dental", callLimit: 20 });
+    expect(posts.at(1).request.headers.get("content-type")).toBe("application/json");
+  });
+
+  it("is sent once: an enable is not resent on a transient failure", async () => {
+    const posts = new Calls();
+    server.use(
+      http.post(PBX_URL, async ({ request }) => {
+        await posts.record(request);
+        return HttpResponse.json({ errors: [{ status: "503" }] }, { status: 503, headers: { "Retry-After": "0" } });
+      }),
+    );
+
+    await expect(client().customers.enablePbx(CUSTOMER_ID)).rejects.toBeInstanceOf(InternalServerError);
+    expect(posts.count).toBe(1);
+  });
+
+  it("surfaces a refused setting on its flat pointer", async () => {
+    server.use(
+      http.post(PBX_URL, () =>
+        HttpResponse.json(
+          { errors: [{ status: "422", detail: "The external concurrent call limit cannot exceed the total concurrent call limit.", source: { pointer: "/callLimitExternal" } }] },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    const error = await client()
+      .customers.enablePbx(CUSTOMER_ID, { callLimit: 5, callLimitExternal: 9 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(UnprocessableEntityError);
+    expect((error as UnprocessableEntityError).errors[0]?.source).toEqual({ pointer: "/callLimitExternal" });
+  });
+
+  it("removes the phone system on a DELETE that answers 202", async () => {
+    const deletes = new Calls();
+    server.use(
+      http.delete(PBX_URL, async ({ request }) => {
+        await deletes.record(request);
+        return HttpResponse.json({}, { status: 202 });
+      }),
+    );
+
+    await expect(client().customers.removePbx(CUSTOMER_ID)).resolves.toBeUndefined();
+    expect(deletes.count).toBe(1);
+  });
+});
+
+describe("waitForPbx", () => {
+  it("reads until the phone system is active, and answers that read", async () => {
+    const states = ["pending", "provisioning", "active"];
+    const reads = new Calls();
+    server.use(
+      http.get(CUSTOMER_URL, async ({ request }) => {
+        await reads.record(request);
+        return HttpResponse.json({ data: customerResource({ provisioningState: states[reads.count - 1] }) });
+      }),
+    );
+
+    const customer = await client().customers.waitForPbx(CUSTOMER_ID, { intervalMs: 1 });
+
+    expect(customer.provisioningState).toBe("active");
+    expect(reads.count).toBe(3);
+  });
+
+  it("answers a failed build too, for the caller to read", async () => {
+    server.use(http.get(CUSTOMER_URL, () => HttpResponse.json({ data: customerResource({ provisioningState: "failed" }) })));
+
+    await expect(client().customers.waitForPbx(CUSTOMER_ID)).resolves.toMatchObject({ provisioningState: "failed" });
+  });
+
+  it("throws PbxProvisioningTimeoutError with the last read when time runs out", async () => {
+    server.use(http.get(CUSTOMER_URL, () => HttpResponse.json({ data: customerResource({ provisioningState: "pending" }) })));
+
+    const error = await client()
+      .customers.waitForPbx(CUSTOMER_ID, { intervalMs: 1, timeoutMs: 5 })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PbxProvisioningTimeoutError);
+    expect((error as PbxProvisioningTimeoutError).customer.provisioningState).toBe("pending");
+  });
+
+  it("refuses to wait for a customer with no phone system", async () => {
+    server.use(http.get(CUSTOMER_URL, () => HttpResponse.json({ data: customerResource({ pbx: false, provisioningState: null }) })));
+
+    await expect(client().customers.waitForPbx(CUSTOMER_ID)).rejects.toThrow(/enablePbx\(\) first/);
   });
 });

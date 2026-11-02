@@ -26,6 +26,7 @@ import {
   MAX_SENDER_LABEL_CODE_POINTS,
   RECORD_MIN_TIMEOUT_MS,
   Ringivo,
+  ApiTimeoutError,
   isRetryable,
   senderLabel,
 } from "./index.js";
@@ -415,7 +416,7 @@ describe("the record's timeout", () => {
     await expect(ringivo.messages.record(options())).resolves.toMatchObject({ status: "sent" });
 
     const timedOut = await ringivo.faxes.get("slow").catch((caught: unknown) => caught);
-    expect((timedOut as Error).name).toBe("TimeoutError");
+    expect(timedOut).toBeInstanceOf(ApiTimeoutError);
     expect(isRetryable(timedOut)).toBe(true);
   });
 });

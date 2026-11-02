@@ -58,6 +58,8 @@
  */
 import type { components, paths } from "./_generated/schema.js";
 import { JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
+import { callOptions, type RequestOptions, sendThrough } from "./client.js";
+import { type PagePromise, paginate } from "./pagination.js";
 import {
   type FaxAccount,
   type FaxAccountNumber,
@@ -122,6 +124,14 @@ export interface ListFaxAccountsOptions {
    * rows that arrived since your last read. Cannot be combined with `after`.
    */
   before?: string;
+  /**
+   * The order of the list: a field name, or several separated by commas,
+   * with a leading `-` to reverse one (`-createdAt`). Newest first
+   * (`-createdAt,-id`) by default. Each list takes the fields its API
+   * reference names; any other is refused with a 400. A cursor belongs to the
+   * order that made it, so keep `sort` the same while you walk a list.
+   */
+  sort?: string;
   /** Rows per page. The default is 25 and the ceiling is 100. */
   pageSize?: number;
 }
@@ -202,20 +212,27 @@ export class FaxAccounts {
    *
    * Needs `fax:read`.
    */
-  async list(options: ListFaxAccountsOptions = {}): Promise<FaxAccountPage> {
-    const { data } = await transportOf(this.client)["/v1/fax-accounts"].GET({
-      params: {
-        query: {
-          "page[after]": options.after,
-          "page[before]": options.before,
-          "page[size]": options.pageSize,
-          "filter[customer]": options.customer,
-          "filter[status]": options.status as ListFaxAccountsQuery["filter[status]"],
-        },
-      },
-    });
+  list(options: ListFaxAccountsOptions = {}, requestOptions?: RequestOptions): PagePromise<FaxAccount> {
+    return paginate(
+      async (after) => {
+        const { data } = await transportOf(this.client)["/v1/fax-accounts"].GET({
+          params: {
+            query: {
+              "page[after]": after,
+              "page[before]": options.before,
+              "page[size]": options.pageSize,
+              sort: options.sort,
+              "filter[customer]": options.customer,
+              "filter[status]": options.status as ListFaxAccountsQuery["filter[status]"],
+            },
+          },
+          ...callOptions(this.client, requestOptions),
+        });
 
-    return faxAccountPageFromDocument(isRecord(data) ? data : {});
+        return faxAccountPageFromDocument(isRecord(data) ? data : {});
+      },
+      { after: options.after, backward: options.before !== undefined },
+    );
   }
 
   /**
@@ -227,8 +244,9 @@ export class FaxAccounts {
    *
    * Needs `fax:read`.
    */
-  async get(faxAccountId: string): Promise<FaxAccount> {
+  async get(faxAccountId: string, requestOptions?: RequestOptions): Promise<FaxAccount> {
     const { data } = await transportOf(this.client)["/v1/fax-accounts/{faxAccount}"].GET({
+      ...callOptions(this.client, requestOptions),
       params: { path: { faxAccount: faxAccountIdParam(faxAccountId) } },
     });
 
@@ -257,7 +275,7 @@ export class FaxAccounts {
    *
    * Needs `fax:read`.
    */
-  async numbers(faxAccountId: string): Promise<readonly FaxAccountNumber[]> {
+  async numbers(faxAccountId: string, requestOptions?: RequestOptions): Promise<readonly FaxAccountNumber[]> {
     const account = faxAccountIdParam(faxAccountId);
     const found: FaxAccountNumber[] = [];
     const seen = new Set<string>();
@@ -267,6 +285,7 @@ export class FaxAccounts {
       const { data } = await transportOf(this.client)[
         "/v1/fax-accounts/{faxAccount}/numbers"
       ].GET({
+      ...callOptions(this.client, requestOptions),
         params: {
           path: { faxAccount: account },
           query: { "page[size]": MAX_PAGE_SIZE, "page[after]": cursor },
@@ -305,7 +324,7 @@ export class FaxAccounts {
    *
    * Needs `fax-accounts:write`.
    */
-  async create(options: CreateFaxAccountOptions): Promise<FaxAccount> {
+  async create(options: CreateFaxAccountOptions, requestOptions?: RequestOptions): Promise<FaxAccount> {
     const document: CreateRequest = {
       data: {
         type: "fax-accounts",
@@ -316,13 +335,11 @@ export class FaxAccounts {
       },
     };
 
-    const response = await this.client.request(
-      new Request(`${this.client.baseUrl}/v1/fax-accounts`, {
+    const response = await sendThrough(this.client, new Request(`${this.client.baseUrl}/v1/fax-accounts`, {
         method: "POST",
         headers: jsonApiHeaders(),
         body: JSON.stringify(document),
-      }),
-    );
+      }), requestOptions ?? {}, false);
 
     return faxAccountFromResource(dataObject(await response.json()));
   }
@@ -339,7 +356,7 @@ export class FaxAccounts {
    *
    * Needs `fax-accounts:write`.
    */
-  async update(faxAccountId: string, options: UpdateFaxAccountOptions): Promise<FaxAccount> {
+  async update(faxAccountId: string, options: UpdateFaxAccountOptions, requestOptions?: RequestOptions): Promise<FaxAccount> {
     const attributes = writableAttributes(options);
     if (Object.keys(attributes).length === 0) {
       throw new Error(
@@ -353,14 +370,12 @@ export class FaxAccounts {
       data: { type: "fax-accounts", id: faxAccountId, attributes },
     };
 
-    const response = await this.client.request(
-      new Request(
+    const response = await sendThrough(this.client, new Request(
         `${this.client.baseUrl}/v1/fax-accounts/${encodeURIComponent(
           faxAccountIdParam(faxAccountId),
         )}`,
         { method: "PATCH", headers: jsonApiHeaders(), body: JSON.stringify(document) },
-      ),
-    );
+      ), requestOptions ?? {}, true);
 
     return faxAccountFromResource(dataObject(await response.json()));
   }
@@ -383,8 +398,9 @@ export class FaxAccounts {
    *
    * Needs `fax-accounts:write`.
    */
-  async delete(faxAccountId: string): Promise<void> {
+  async delete(faxAccountId: string, requestOptions?: RequestOptions): Promise<void> {
     await transportOf(this.client)["/v1/fax-accounts/{faxAccount}"].DELETE({
+      ...callOptions(this.client, requestOptions),
       params: { path: { faxAccount: faxAccountIdParam(faxAccountId) } },
     });
   }
