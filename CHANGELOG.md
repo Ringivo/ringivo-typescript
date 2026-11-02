@@ -1,5 +1,51 @@
 # Release notes
 
+## Unreleased (0.26.0) — Breaking
+
+This release brings the client in line with the conventions most TypeScript
+API clients share. Each change below says what to change in your code.
+
+- **The client retries for you.** Up to 2 more times by default
+  (`maxRetries` on the client or on one call; `0` turns it off), with the
+  server's `Retry-After` (up to 60 s) or a backoff from 0.5 s to 8 s with
+  jitter. Only requests that are safe to send twice are retried: reads,
+  deletes, PATCH updates, and the writes that carry an `Idempotency-Key`. A
+  create without a key is still sent once. Only transient answers are
+  retried: no answer, 408, 429, 5xx, and the 409 `idempotency_key_in_use`.
+  Migration: if you retried in-process yourself, remove that loop or set
+  `maxRetries: 0`.
+- **Every list answers a `PagePromise`, and every page has one shape.**
+  `await client.x.list()` is still one page; `for await (const item of
+  client.x.list())` walks every page. **The items are now `page.data` on every
+  list** — `page.faxes`, `page.accounts`, `page.grants`, `page.endpoints`,
+  `page.deliveries`, `page.subscribers`, `page.devices`, `page.callRecords`,
+  `page.customers` and `page.messages` are gone. A page also has `total`
+  (`null` where the API reports none), `hasNextPage()`, `getNextPage()` and
+  `iterPages()`. The `XPage` type names remain, as `Page<X>`. Migration:
+  rename the member to `data`.
+- **A refusal's class says its status**: `BadRequestError` (400),
+  `PermissionDeniedError` (403), `NotFoundError` (404), `ConflictError`
+  (409), `UnprocessableEntityError` (422), `RateLimitError` (429) and
+  `InternalServerError` (5xx), all `ApiError`s, beside the existing
+  `AuthenticationError`. The three transcript classes now extend their
+  status's class. `ApiError.headers` holds the response headers. Migration:
+  none unless you compared `error.constructor === ApiError`.
+- **No answer is wrapped.** A refused or reset connection, a DNS or TLS
+  failure is an `ApiConnectionError`, a timeout an `ApiTimeoutError`, and an
+  aborted `signal` a `RequestAbortedError` — all `RingivoError`s, with the
+  platform's error on `cause`. Migration: if you caught Node's `TypeError` or
+  a `TimeoutError` `DOMException`, catch these instead. `isRetryable()` reads
+  both.
+- **Every method takes a last `RequestOptions` argument**: `timeoutMs`,
+  `maxRetries`, `signal` and `headers`, for that call alone.
+- **New client options**: `fetch` (your own `fetch`, for a proxy agent or a
+  test double), `defaultHeaders`, and `maxRetries`.
+- **Security fix: the client no longer prints its credential.** The client
+  secret and the bearer token were ordinary properties, so
+  `console.log(client)` or a logger that serialised the client printed them.
+  They are now held where no printout reaches. If you logged a client
+  object, rotate that client secret.
+
 ## 0.25.0 (2026-10-23) — Added
 
 - **Download the media of a received MMS.** Each media item of

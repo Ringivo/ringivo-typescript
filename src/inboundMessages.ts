@@ -2,7 +2,7 @@
  * Read the text messages (SMS and MMS) somebody sent to your numbers.
  *
  *     const page = await client.inboundMessages.list({ number: "+13215550101" });
- *     for (const message of page.messages) {
+ *     for (const message of page.data) {
  *       console.log(message.from, message.body);
  *     }
  *

@@ -13,8 +13,10 @@ your numbers, and parses the `message.*` webhooks.
 npm install ringivo
 ```
 
-Node 20 or newer. The only runtime dependency is `openapi-fetch`. The package
-ships both ES modules and CommonJS, with types for each.
+Node 20 or newer (Node 22 or 24 recommended: Node 20 left upstream support on
+2026-04-30). The only runtime dependency is `openapi-fetch`. The package ships
+both ES modules and CommonJS, with types for each, and has no side effects on
+import.
 
 **Webhook verification needs Node.** `verifyWebhook()` uses `node:crypto`,
 so it runs on a server. That is where it belongs: the signing secret is a
@@ -163,18 +165,9 @@ if (fax.idempotentReplay) {
 ```ts
 const fax = await client.faxes.get(faxId);
 
-const page = await client.faxes.list({
-  direction: "inbound",
-  read: false,
-  tags: { clinic: "north" },
-});
-for (const one of page.faxes) {
+// Every item on every page, newest first: the client follows the cursor.
+for await (const one of client.faxes.list({ direction: "inbound", read: false })) {
   console.log(one.id, one.from, one.pagesTotal);
-}
-
-if (page.nextCursor) {
-  // newest first; follow the server's own cursor
-  const next = await client.faxes.list({ after: page.nextCursor });
 }
 
 await client.faxes.cancel(faxId); // before the far end answers
@@ -190,6 +183,28 @@ the document's `id`, `kind` and `contentType` (`null` against an older API).
 
 `thumbnailLink()` mints the same kind of link for the first-page preview, a
 PNG — the one a list screen shows beside each fax.
+
+### Lists and pages
+
+Every `list()` works the same way, whatever it lists. `for await` it for
+every item on every page, or `await` it for one page:
+
+```ts
+const page = await client.faxes.list({ pageSize: 50 });
+page.data; // this page's faxes
+page.nextCursor; // pass it as `after` for the next page; null on the last one
+page.hasNextPage(); // and page.getNextPage() reads it
+page.total; // the size of the whole list, on the lists that report one; else null
+
+for await (const each of page.iterPages()) {
+  // page by page, from this one on
+}
+```
+
+The next page is the same query with `after` set to the server's cursor —
+never one this client built. A list asked for with `before` (the polling read:
+"what arrived since this cursor") is one page, and `for await` over it stops
+there.
 
 ## Fax accounts
 
@@ -208,7 +223,7 @@ const account = await client.faxAccounts.create({
 const page = await client.faxAccounts.list({
   customer: "0198c4a1-4d5e-7f60-a172-3c4d5e6f7081",
 });
-for (const one of page.accounts) {
+for (const one of page.data) {
   console.log(one.id, one.name, one.status);
 }
 
@@ -320,7 +335,7 @@ const grant = await client.faxAccountUsers.create({
 });
 
 const page = await client.faxAccountUsers.list({ faxAccount });
-for (const one of page.grants) {
+for (const one of page.data) {
   console.log(one.userEmail, one.userId);
 }
 
@@ -498,7 +513,7 @@ succeeds.
 
 ```ts
 const missed = await client.webhookDeliveries.list({ status: "dead" });
-for (const delivery of missed.deliveries) {
+for (const delivery of missed.data) {
   console.log(delivery.eventType, delivery.eventId, delivery.statusCode, delivery.error);
 }
 ```
@@ -686,7 +701,7 @@ if (clinic) {
   console.log(clinic.name, clinic.pbx, clinic.effectiveRegion);
 
   const calls = await client.pbx.callRecords.list({ customer: clinic.id });
-  console.log(calls.callRecords.length);
+  console.log(calls.data.length);
 }
 ```
 
@@ -735,7 +750,7 @@ const page = await client.pbx.callRecords.list({
   direction: "inbound",
 });
 
-for (const call of page.callRecords) {
+for (const call of page.data) {
   console.log(call.startedAt, call.fromNumber, call.answeringExtension, call.durationSeconds);
 }
 ```
@@ -947,14 +962,14 @@ moves from `requested` to `processing` to `available` or `failed`.
 
 ```ts
 const people = await client.pbx.subscribers.list({ customer: clinic, search: "perkins" });
-for (const person of people.subscribers) {
+for (const person of people.data) {
   console.log(person.user, person.displayName, person.kind);
 }
 
-const [person] = people.subscribers;
+const [person] = people.data;
 if (person) {
   const phones = await client.pbx.devices.list({ subscriber: person.id, registered: true });
-  for (const phone of phones.devices) {
+  for (const phone of phones.data) {
     console.log(phone.aor, phone.userAgent, phone.registrationExpiresAt);
   }
 }
@@ -1086,7 +1101,7 @@ const call = await client.pbx.subscribers.call(personId, { destination: "+130255
 
 // Later, once the call has ended — and inside the date range, see below:
 const records = await client.pbx.callRecords.list({ callId: call.id });
-for (const record of records.callRecords) {
+for (const record of records.data) {
   console.log(record.disposition, record.talkSeconds);
 }
 ```
@@ -1223,7 +1238,7 @@ let page = await client.inboundMessages.list({
   number: "+13215550101", // your number: the one it was sent TO
   receivedAfter: "2026-09-01T00:00:00Z",
 });
-for (const message of page.messages) {
+for (const message of page.data) {
   console.log(message.from, message.kind, message.body, message.receivedAt);
 }
 
@@ -1231,7 +1246,7 @@ if (page.nextCursor) {
   page = await client.inboundMessages.list({ number: "+13215550101", after: page.nextCursor });
 }
 
-const first = page.messages[0]; // a page can be empty
+const first = page.data[0]; // a page can be empty
 if (first) {
   const message = await client.inboundMessages.get(first.id);
 }
@@ -1313,28 +1328,54 @@ for (const [index, item] of message.media.entries()) {
 
 ## When something is refused
 
+Every refusal is an `ApiError`, and its class says which kind. Catch the class
+you can act on; branch on `code` when one status covers several cases.
+
 ```ts
-import { ApiError, AuthenticationError } from "ringivo";
+import { ApiError, NotFoundError, RateLimitError, UnprocessableEntityError } from "ringivo";
 
 try {
   await client.faxes.send({ faxAccount, to: "not-e164", file: pdf });
 } catch (error) {
-  if (error instanceof ApiError) {
+  if (error instanceof UnprocessableEntityError) {
     error.statusCode; // 422
     error.code; // "validation_failed" — the vocabulary to branch on
     error.errors[0]?.detail; // "The to field format is invalid."
     error.errors[0]?.source; // { parameter: "to" }
+  } else if (error instanceof NotFoundError) {
+    // nothing of yours has that id
+  } else if (error instanceof ApiError) {
+    error.headers.get("retry-after"); // every response header is there
   }
 }
 ```
 
-`AuthenticationError` (a subclass) means the credential itself was refused —
-the client had already replaced its token and retried once by then. Three
-transcript refusals have subclasses of their own:
-`RecordingAudioMissingError`, `TranscriptionCappedError` and
-`TranscriptRequestLimitedError`.
-Connection failures, timeouts and TLS errors are the platform's own
-exceptions and are deliberately not wrapped.
+| Class | Status | Means |
+|---|---|---|
+| `BadRequestError` | 400 | a query parameter, header or body this API does not take |
+| `AuthenticationError` | 401 | the credential was refused (the client had already minted a new token and tried once more) |
+| `PermissionDeniedError` | 403 | the credential is good and does not allow this — most often a missing scope |
+| `NotFoundError` | 404 | nothing of yours has that id, including a row that belongs to somebody else |
+| `ConflictError` | 409 | the state refused a well-formed request; `code` or `errors[0].title` says which state |
+| `UnprocessableEntityError` | 422 | a member of the body was refused; `errors[n].source.pointer` names it |
+| `RateLimitError` | 429 | too many requests; `retryAfter` says how long to wait |
+| `InternalServerError` | 5xx | the API, or a system behind it, failed |
+| `ApiError` | any other | the base class of all of the above |
+
+Three transcript refusals have classes of their own, under their status's:
+`RecordingAudioMissingError` (a `ConflictError`), `TranscriptionCappedError`
+and `TranscriptRequestLimitedError` (both `RateLimitError`s).
+
+A request that got **no answer** is not an `ApiError`:
+
+| Class | Means |
+|---|---|
+| `ApiConnectionError` | the connection was refused or reset, a name did not resolve, TLS failed; the platform's error is `cause` |
+| `ApiTimeoutError` | an `ApiConnectionError`: the attempt took longer than `timeoutMs` |
+| `RequestAbortedError` | the `signal` you passed was aborted |
+
+Every class here extends `RingivoError`, so `catch (e) { if (e instanceof
+RingivoError) … }` catches everything this package throws on purpose.
 
 A refusal from the **token exchange** is the same `ApiError`, and `code`
 carries OAuth's vocabulary rather than the API's: `invalid_client` for a wrong
@@ -1352,55 +1393,70 @@ two causes wearing that code.
 
 **Branch on `code`, never on the status.** Four of those five are a **400** —
 every one but `invalid_client` — which is what RFC 6749 prescribes for a token
-endpoint. `unauthorized_client` was a 403 until 2026-08-21; if you branched on
-that status, move to `code`.
+endpoint.
 
-### Being rate-limited
+### Retries
 
-A **429** carries `error.retryAfter` — the seconds the server asked you to
-wait, or `undefined` if it did not say:
+**The client retries for you**, up to 2 more times by default. It retries only
+what is safe to send twice, and only an answer that may be different next time:
+
+- **What:** reads, deletes, the PATCH updates, and the writes that carry an
+  `Idempotency-Key` (`faxes.send()` and `pbx.subscribers.call()`; the same key
+  goes out on every attempt). A create with no key is sent **once**: if its
+  answer is lost, a second POST could make a second row.
+- **When:** no answer (a refused or reset connection, a timeout), 408, 429,
+  any 5xx, and the 409 `idempotency_key_in_use`.
+- **How long:** the server's `Retry-After` when it sends one of up to 60
+  seconds; otherwise 0.5 s, then 1 s, doubling to at most 8 s, less up to 25 %
+  random jitter. A longer `Retry-After` (a daily cap) is not waited out: the
+  error is thrown at once, with `retryAfter` set.
+
+A 401 is not a retry: the client mints a new token and sends the request once
+more, whatever `maxRetries` says. A second 401 is thrown.
 
 ```ts
-if (error instanceof ApiError && error.statusCode === 429) {
-  const wait = error.retryAfter ?? 30; // your own backoff when it said nothing
-  await new Promise((resume) => setTimeout(resume, wait * 1000));
-}
+const client = new Ringivo({ ...credentials, maxRetries: 5 }); // or 0 to turn retries off
+await client.faxes.get(faxId, {}, { maxRetries: 0 }); // for one call
 ```
 
-Read it rather than the body. The rate limiter sits in front of the mint and
-answers an **HTML page**, so `code` is null and `errors` is empty there — the
-status and this number are the whole machine-readable answer. Both forms the
-standard allows are handled for you, a count of seconds and an absolute date,
-and you get seconds either way.
+### Per-call options
 
-**This client does not retry for you.** It replaces an expired token and
-retries once on a 401, and `webhookTestDeliveries.wait()` sleeps through a 429
-with `Retry-After` while it polls; those are the only retries it performs. Any
-other 429 is handed to you to back off from, because how long a fax send may
-sit is your decision and not a library's.
+Every method takes one more argument, last, that changes that call only:
+
+```ts
+const controller = new AbortController();
+
+await client.customers.get(customerId, {
+  timeoutMs: 5_000, // each attempt
+  maxRetries: 1,
+  signal: controller.signal, // stops the call, or the wait before a retry
+  headers: { "X-Correlation-Id": jobId },
+});
+```
+
+A client-wide `defaultHeaders` and your own `fetch` (a proxy agent, a test
+double) go to the constructor:
+
+```ts
+const client = new Ringivo({ ...credentials, fetch: myFetch, defaultHeaders: { "X-Team": "billing" } });
+```
 
 ### Retrying from a queue
 
-`isRetryable(error)` is the API's retry contract — `true` for no answer
-(Node's `fetch` timed out, or got no response: a refused connection, a reset,
-a DNS or TLS failure), for 408, 429 and every 5xx, and for a 409 whose `code`
-is `idempotency_key_in_use`. `false` for every other refusal (400, 401, 403,
-404, every other 409, 422): the same request gets the same answer until
-something changes first. `false` too for a `fetch` failure this client
-caused (an unknown URL scheme, a forbidden port, a URL that does not parse),
-and for anything this package did not throw for the API — a refusal before
-any request included. Fix the request for a 400, another 409 or a 422 — never
-retry those unchanged. A 401, 403 or 404 can be an account setting that is
-fixed later, such as a missing scope. A queue may retry those slowly, after
-the change.
+The client's retries are short, inside one call. For anything longer, use
+your own queue, and `isRetryable(error)` as the API's retry contract —
+`true` for no answer (`ApiConnectionError`, `ApiTimeoutError`), for 408, 429
+and every 5xx, and for a 409 whose `code` is `idempotency_key_in_use`. `false`
+for every other refusal (400, 401, 403, 404, every other 409, 422): the same
+request gets the same answer until something changes first. `false` for
+`RequestAbortedError`, and for anything this package did not throw for the
+API. A 401, 403 or 404 can be an account setting that is fixed later, such as
+a missing scope; a queue may retry those slowly, after the change.
 
 **Retry with the same `Idempotency-Key`.** For `faxes.send()` and
 `pbx.subscribers.call()`, a retry is safe only when it sends the key the first
 attempt sent: pass your own `idempotencyKey` and keep it with the queued job.
-A 409 `idempotency_key_in_use` means the first request with that key still
-runs. Send the same request with the same key after `retryAfter`, and you get
-the first request's answer. A new key can send the fax or ring the phone a
-second time.
+A new key can send the fax or ring the phone a second time.
 
 ```ts
 import { ApiError, isRetryable } from "ringivo";
@@ -1422,29 +1478,38 @@ try {
 }
 ```
 
+**The rate limiter in front of the mint answers an HTML page**, so on a 429
+from the mint `code` is null and `errors` is empty: the status and
+`retryAfter` are the whole machine-readable answer. Both forms the standard
+allows are read for you, a count of seconds and an absolute date.
+
 ## What is in the box
+
+Every method below also takes a last, optional `RequestOptions` argument
+(`timeoutMs`, `maxRetries`, `signal`, `headers`) for that call alone. Every
+`list()` answers a `PagePromise`.
 
 | | Scope | |
 |---|---|---|
-| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant, customer?, timeoutMs? })` | — | The client. `tenant` is required; `scopes` may not be empty. |
+| `new Ringivo({ baseUrl, clientId, clientSecret, scopes, tenant, customer?, timeoutMs?, maxRetries?, fetch?, defaultHeaders? })` | — | The client. `tenant` is required; `scopes` may not be empty. |
 | `client.faxes.send({ faxAccount, to, file \| urls, … })` | `fax:write` | Send one fax. Resolves to the accepted `Fax`. |
 | `client.faxes.get(faxId, { include? })` | `fax:read` | One fax, complete. |
-| `client.faxes.list({ …filters, after?, before?, pageSize? })` | `fax:read` | A `FaxPage`: `faxes` plus `nextCursor`. |
+| `client.faxes.list({ …filters, after?, before?, pageSize? })` | `fax:read` | A `PagePromise`: one `FaxPage` (`data`, `nextCursor`), or every item with `for await`. |
 | `client.faxes.cancel(faxId)` | `fax:write` | Withdraw a fax before it is answered. |
 | `client.faxes.media(faxId, { format? })` | `fax:read` | The document's bytes, as a `Uint8Array`. |
 | `client.faxes.mediaLink(faxId, { format? })` | `fax:read` | The URL and its expiry, as a `MediaLink`. |
 | `client.faxes.thumbnailLink(faxId)` | `fax:read` | The first-page preview (a PNG): its URL and expiry, as a `MediaLink`. |
-| `client.faxAccounts.list({ customer?, status?, after?, before?, pageSize? })` | `fax:read` | A `FaxAccountPage`: `accounts` plus `nextCursor`. |
+| `client.faxAccounts.list({ customer?, status?, after?, before?, pageSize? })` | `fax:read` | A `PagePromise`: one `FaxAccountPage` (`data`, `nextCursor`), or every item with `for await`. |
 | `client.faxAccounts.get(faxAccountId)` | `fax:read` | One `FaxAccount`. |
 | `client.faxAccounts.numbers(faxAccountId)` | `fax:read` | Every `FaxAccountNumber` routed to it, all pages walked. |
 | `client.faxAccounts.create({ customer, name, headerText?, defaultFromE164?, retentionDays?, retentionPages? })` | `fax-accounts:write` | Open an account for a customer. |
 | `client.faxAccounts.update(faxAccountId, { … })` | `fax-accounts:write` | A sparse PATCH: only what you pass. |
 | `client.faxAccounts.delete(faxAccountId)` | `fax-accounts:write` | Delete the account and its pages. 409 while numbers route to it. |
-| `client.faxAccountUsers.list({ faxAccount?, user?, after?, before?, pageSize? })` | `fax:read` | A `FaxAccountUserPage`: `grants` plus `nextCursor`. Filter by the account, by the person, or by neither. |
+| `client.faxAccountUsers.list({ faxAccount?, user?, after?, before?, pageSize? })` | `fax:read` | A `PagePromise`: one `FaxAccountUserPage` (`data`, `nextCursor`), or every item with `for await`. Filter by the account, by the person, or by neither. |
 | `client.faxAccountUsers.get(faxAccountUserId)` | `fax:read` | One `FaxAccountUser` — the grant's own id, not the account's or the person's. |
 | `client.faxAccountUsers.create({ faxAccount, user })` | `fax-accounts:write` | Grant one person access to one account's faxes. |
 | `client.faxAccountUsers.delete(faxAccountUserId)` | `fax-accounts:write` | Withdraw a grant. Nothing else changes. |
-| `client.webhookEndpoints.list({ scopeType?, scopeId?, active?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookEndpointPage`: `endpoints` plus `nextCursor`. `fax:read` sees fax-account scopes only. |
+| `client.webhookEndpoints.list({ scopeType?, scopeId?, active?, after?, before?, pageSize? })` | `webhooks:read` | A `PagePromise`: one `WebhookEndpointPage` (`data`, `nextCursor`), or every item with `for await`. `fax:read` sees fax-account scopes only. |
 | `client.webhookEndpoints.get(webhookEndpointId)` | `webhooks:read` | One `WebhookEndpoint`. Its `secret` is always `null` here. |
 | `client.webhookEndpoints.create({ url, scopeType, scopeId, events, active? })` | `webhooks:write` | Register one. **The only response carrying the secret.** `events` names at least one type. `fax:write` may register a `fax_account` scope only. |
 | `client.webhookEndpoints.update(webhookEndpointId, { url?, events?, active? })` | `webhooks:write` | A sparse PATCH: only what you pass. The event list replaces the old one and must name at least one type. |
@@ -1456,21 +1521,21 @@ try {
 | `client.webhookTestDeliveries.wait(test \| id, { intervalMs?, timeoutMs? })` | `webhooks:read` | Reads the result again until it is not `pending`, waiting out a 429's `Retry-After`. Throws `WebhookTestTimeoutError` past `timeoutMs` (150 s by default). |
 | `client.webhookDeliveries.list({ endpoint?, eventType?, status?, after?, before?, pageSize? })` | `webhooks:read` | A `WebhookDeliveryPage`: what we still owe you (`pending`) and what we gave up on (`dead`). |
 | `client.webhookDeliveries.get(webhookDeliveryId)` | `webhooks:read` | One `WebhookDelivery`. |
-| `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `CustomerPage`: `customers` plus `nextCursor`. `ids` reads several customers by id in one request; `code` finds one customer. |
+| `client.customers.list({ ids?, code?, after?, before?, pageSize? })` | `customers:read` | A `PagePromise`: one `CustomerPage` (`data`, `nextCursor`), or every item with `for await`. `ids` reads several customers by id in one request; `code` finds one customer. |
 | `client.customers.get(customerId)` | `customers:read` | One `Customer`. Its `id` is what the `client.pbx` lists take as `customer`. |
-| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `CallRecordPage`: `callRecords` plus `nextCursor`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds the records that carry one call id: what a click-to-dial became, a leg's SIP Call-ID, or a recording webhook's `callId`. |
+| `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `PagePromise`: one `CallRecordPage` (`data`, `nextCursor`), or every item with `for await`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds the records that carry one call id: what a click-to-dial became, a leg's SIP Call-ID, or a recording webhook's `callId`. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
 | `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "not_requested"` or `"pending"` and every other field `null` for one with no words yet. Also NOT paginated. |
 | `client.pbx.callRecords.transcript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript`, with its `segments`. A 404 `code` says whether it was not requested, is pending, or failed. |
 | `client.pbx.callRecords.requestTranscript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:write` | Ask for one capture's transcript. Resolves to the `pending` (202) or `ready` (200) `Transcript`. Safe to repeat. |
-| `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxSubscriberPage`: `subscribers` plus `nextCursor`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
+| `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PagePromise`: one `PbxSubscriberPage` (`data`, `nextCursor`), or every item with `for await`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
 | `client.pbx.subscribers.get(subscriberId)` | `pbx-users:read` | One `PbxSubscriber`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
 | `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device?, idempotencyKey? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. Sends an `Idempotency-Key` on every request (yours, or a fresh UUID); `idempotentReplay` says when the answer replays an earlier call. |
-| `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PbxDevicePage`: `devices` plus `nextCursor`. `subscriber` is a subscribers id, not an extension. |
+| `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PagePromise`: one `PbxDevicePage` (`data`, `nextCursor`), or every item with `for await`. `subscriber` is a subscribers id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.messages.record({ from, to, senderLabel, providerMessageId, providerPartIds, sentAt, body?, mediaUrls?, markConversationRead? })` | `messages:record` | Record a text you already sent. Resolves to an `OutboundMessage`; `replayed` is `true` on a repeat. |
-| `client.inboundMessages.list({ number?, from?, kind?, receivedAfter?, receivedBefore?, ids?, after?, before?, pageSize? })` | `numbers:read` or `numbers:messaging` | An `InboundMessagePage`: `messages` plus `nextCursor`. |
+| `client.inboundMessages.list({ number?, from?, kind?, receivedAfter?, receivedBefore?, ids?, after?, before?, pageSize? })` | `numbers:read` or `numbers:messaging` | A `PagePromise`: one `InboundMessagePage` (`data`, `nextCursor`), or every item with `for await`. |
 | `client.inboundMessages.get(inboundMessageId)` | `numbers:read` or `numbers:messaging` | One `InboundMessage`. |
 | `client.inboundMessages.downloadMedia(item)` | — (the link is signed) | The bytes of one media item, as a `Uint8Array`. Follows `item.contentUrl` with no bearer token; refuses an item whose `contentUrl` is `null`. |
 | `client.request(request, { timeoutMs? })` | — | Any endpoint this client does not wrap yet, with your credential. `timeoutMs` replaces the client's for this one request. |

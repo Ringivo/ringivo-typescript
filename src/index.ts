@@ -64,12 +64,18 @@
  * variant: branch on `event.type`, or route on `INBOUND_MESSAGE_EVENT_TYPES`
  * (texts sent to you) and `OUTBOUND_MESSAGE_EVENT_TYPES` (texts sent from you).
  *
- * `isRetryable(error)` says whether the API's contract allows the same call
- * again (no answer, 408, 429, 5xx, and a 409 `idempotency_key_in_use`);
- * `ApiError.retryAfter` says how long the server asked you to wait. The
- * client never retries by itself, apart from one resend with a fresh token
- * after a 401, and `webhookTestDeliveries.wait()`, which sleeps through a 429
- * with `Retry-After` while it polls.
+ * Every `list()` answers a `PagePromise`: `await` it for one `Page` (its
+ * items are `page.data`), or `for await` it for every item on every page.
+ *
+ * Every method takes a last `RequestOptions` argument — `timeoutMs`,
+ * `maxRetries`, `signal`, `headers` — for that call alone.
+ *
+ * A refusal is an `ApiError` subclass by status (`NotFoundError`,
+ * `UnprocessableEntityError`, `RateLimitError`, …); no answer at all is an
+ * `ApiConnectionError` or `ApiTimeoutError`. The client retries what is safe
+ * to send twice, up to `maxRetries` (2) times, with backoff and the server's
+ * `Retry-After`. `isRetryable(error)` says whether the API's contract allows
+ * the same call again later, from your own queue.
  */
 export { DEFAULT_MAX_RETRIES, Ringivo } from "./client.js";
 export type { HeadersLike, RequestOptions, RingivoOptions } from "./client.js";

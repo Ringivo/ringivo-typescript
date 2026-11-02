@@ -22,6 +22,11 @@ jobs:
       # requirement and not a preference.
       - run: npm run build
       - run: npm test
+      # The PACKAGE, as npm would publish it: exports/main/types point at
+      # files that exist and carry the right format. Pinned, like the
+      # generator, so a new rule lands as a reviewed bump and not as a red
+      # build nobody changed anything for.
+      - run: npx --yes publint@0.3.15 --strict
   # The same gates on Node 20, the oldest line `engines` allows: isRetryable()
   # reads the shape of the errors Node's own fetch throws, and that shape
   # belongs to the runtime. A SEPARATE JOB rather than a matrix on `test`, on
@@ -35,6 +40,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm test
+  # Node 24, the active LTS line (Node 20 left upstream support on
+  # 2026-04-30, and is kept above only while `engines` still names it). Not a
+  # required check: it is the line the next `engines` floor will move to.
+  test-node24:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
