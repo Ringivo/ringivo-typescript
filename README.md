@@ -246,21 +246,17 @@ to move it and no option that would try.
 
 **Numbers are attached through the routing API, not here.** A number points
 at one destination, and that rule belongs to the number:
-`POST /v1/phone-numbers/{id}/routing` with `targetType: fax` and the
-account's id in `faxAccount`, through `client.request()`. `numbers()` reads
+`client.phoneNumbers.route()` with a fax target. `numbers()` reads
 back what is pointed at this account — all of them, walking the pages for
 you, because a half-list of a fax account's numbers looks exactly like a
 full one.
 
 ```ts
-await client.request(
-  new Request(`${client.baseUrl}/v1/phone-numbers/${numberId}/routing`, {
-    method: "POST",
-    headers: { Accept: "application/vnd.api+json", "Content-Type": "application/json" },
-    body: JSON.stringify({ targetType: "fax", faxAccount: account.id }),
-  }),
-);
+await client.phoneNumbers.route(numberId, { targetType: "fax", faxAccount: account.id });
 ```
+
+Give each fax line its own account: access to faxes is granted per account,
+so one number per account keeps each line's inbox separate.
 
 Send these camelCase names. The API refuses the old
 `target_type`/`fax_account` body with a 422 rather than routing the number to the PBX. **The body is not
@@ -1578,6 +1574,9 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.faxes.media(faxId, { format? })` | `fax:read` | The document's bytes, as a `Uint8Array`. |
 | `client.faxes.mediaLink(faxId, { format? })` | `fax:read` | The URL and its expiry, as a `MediaLink`. |
 | `client.faxes.thumbnailLink(faxId)` | `fax:read` | The first-page preview (a PNG): its URL and expiry, as a `MediaLink`. |
+| `client.faxes.thumbnail(faxId)` | `fax:read` | The first-page preview's bytes, as a `Uint8Array`. |
+| `client.faxes.update(faxId, { read?, archived?, tags? })` | `fax:write` | A sparse PATCH of the three reader fields; `tags` replaces the old ones. |
+| `client.faxes.delete(faxId)` | `fax:write` | Purge the fax's pages now; the record stays. |
 | `client.faxAccounts.list({ customer?, status?, after?, before?, pageSize? })` | `fax:read` | A `PagePromise`: one `FaxAccountPage` (`data`, `nextCursor`), or every item with `for await`. |
 | `client.faxAccounts.get(faxAccountId)` | `fax:read` | One `FaxAccount`. |
 | `client.faxAccounts.numbers(faxAccountId)` | `fax:read` | Every `FaxAccountNumber` routed to it, all pages walked. |
@@ -1616,6 +1615,7 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `PagePromise`: one `CallRecordPage` (`data`, `nextCursor`), or every item with `for await`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds the records that carry one call id: what a click-to-dial became, a leg's SIP Call-ID, or a recording webhook's `callId`. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
+| `client.pbx.callRecords.downloadRecording(recording)` | — (the link is signed) | One recording's audio, as a `Uint8Array`. Follows `recording.contentUrl` with no bearer token. |
 | `client.pbx.callRecords.transcripts(callRecordId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript` per capture — `status: "not_requested"` or `"pending"` and every other field `null` for one with no words yet. Also NOT paginated. |
 | `client.pbx.callRecords.transcript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:read` | One `Transcript`, with its `segments`. A 404 `code` says whether it was not requested, is pending, or failed. |
 | `client.pbx.callRecords.requestTranscript(callRecordId, recordingId)` | `pbx-call-records:read` + `pbx-transcripts:write` | Ask for one capture's transcript. Resolves to the `pending` (202) or `ready` (200) `Transcript`. Safe to repeat. |
@@ -1628,7 +1628,20 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.inboundMessages.list({ number?, from?, kind?, receivedAfter?, receivedBefore?, ids?, after?, before?, pageSize? })` | `numbers:read` or `numbers:messaging` | A `PagePromise`: one `InboundMessagePage` (`data`, `nextCursor`), or every item with `for await`. |
 | `client.inboundMessages.get(inboundMessageId)` | `numbers:read` or `numbers:messaging` | One `InboundMessage`. |
 | `client.inboundMessages.downloadMedia(item)` | — (the link is signed) | The bytes of one media item, as a `Uint8Array`. Follows `item.contentUrl` with no bearer token; refuses an item whose `contentUrl` is `null`. |
-| `client.request(request, { timeoutMs? })` | — | Any endpoint this client does not wrap yet, with your credential. `timeoutMs` replaces the client's for this one request. |
+| `client.sipTrunks.list({ customer?, mode?, enabled?, region?, ids?, sort?, after?, before?, pageSize? })` / `get(id)` | `sip-trunks:read` | SIP trunks. `password` is always `null` on a read. |
+| `client.sipTrunks.create({ customer, name, domainLabel, primaryRegion, mode, … })` / `update(id, { … })` / `delete(id)` | `sip-trunks:write` | Create (sent once), a sparse PATCH, delete. |
+| `client.sipTrunks.revealPassword(id)` / `regeneratePassword(id)` | `sip-trunks:admin` | The trunk with its live `password`. Audited; sent once. |
+| `client.sipTrunks.addresses(id)` / `destinations(id)` | `sip-trunks:read` | One trunk's address ranges or destinations. |
+| `client.sipTrunkAddresses.list/get/create/update/delete` | `sip-trunks:read` / `:write` | The address ranges a `static` trunk's calls are trusted from (`sip-trunk-ips`). |
+| `client.sipTrunkDestinations.list/get/create/update/delete` | `sip-trunks:read` / `:write` | The hosts a trunk's inbound calls go to (`sip-trunk-targets`). |
+| `client.ztpDevices.list/get` | `ztp-devices:read` | Phone MACs registered with a vendor's redirect service. |
+| `client.ztpDevices.create({ mac, label?, customer? })` / `update(id, { label?, customer? })` / `delete(id)` / `retry(id)` | `ztp-devices:write` | Register (sent once), change, deregister, re-drive a `failed` one. |
+| `client.messagingEnablements.list({ status?, e164?, phoneNumber?, … })` / `get(id)` | `numbers:read` or `numbers:messaging` | Requests to turn text messaging on. Making one needs a person. |
+| `client.hostedMessagingOrders.list/get` | `port-orders:read` | Orders that bring a number in for text messaging alone. |
+| `client.hostedMessagingOrders.create({ e164, endUser: { name, email }, customer? })` | `port-orders:hosted-messaging` | Place one. Sent once. |
+| `client.portOrders.list({ status?, … })` / `get(id)` | `port-orders:read` | Port orders. Their writes need a person's token. |
+| `client.tenants.get(tenantId)` / `update(tenantId, { brandColorPrimary?, brandColorAccent?, supportEmail?, supportPhone? })` | `tenants:read` / `tenants:write` | Your own account; a sparse PATCH. |
+| `client.request(request, { timeoutMs? })` | — | The escape hatch for an endpoint the API adds before this package names it. Every operation the API description documents for a client credential has a method above, as of the description vendored in this release (`tests/coverage.test.ts` checks it); operations that take only a person's token are left out. |
 | `verifyWebhook(payload, header, secret, { toleranceSeconds?, now? })` | — | Throws unless the body is genuine and fresh. |
 | `parseMessageEvent(payload)` | — | A decoded `message.*` body as its own `MessageEvent` variant, told apart by `type`. Never throws. |
 | `INBOUND_MESSAGE_EVENT_TYPES`, `OUTBOUND_MESSAGE_EVENT_TYPES` | — | The message event types by direction, for routing. |
@@ -1640,10 +1653,11 @@ Every method below also takes a last, optional `RequestOptions` argument
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `InboundMessage`,
 `InboundMessageMediaItem`, `InboundMessageMediaWithLink`,
-`InboundMessagePage`, `MediaLink`, `MessageEvent`
+`InboundMessagePage`, `HostedMessagingOrder`, `MediaLink`, `MessageEvent`, `MessagingEnablement`
 (each of its variants), `MessageSender`, `OutboundMessage`,
 `OutboundMessageMediaItem`, `PbxCall`,
-`PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `Recording`,
+`PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `PortOrder`, `Recording`,
+`SipTrunk`, `SipTrunkAddress`, `SipTrunkDestination`, `Tenant`, `ZtpDevice`,
 `Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint`,
 `WebhookEndpointPage`, `WebhookTestDelivery` and `WebhookTestDeliveryPage` are frozen plain objects, and each keeps the JSON it was
 built from in `.raw` — so a member the API adds after this release reaches

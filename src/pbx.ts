@@ -71,6 +71,7 @@ import {
   transcriptFromResource,
   transcriptsFromDocument,
 } from "./models.js";
+import { downloadUnauthenticated } from "./download.js";
 import { pathSegment } from "./pathSegment.js";
 
 /** What `pbx.callRecords.list()` accepts. Every member narrows the log. */
@@ -406,6 +407,26 @@ export class CallRecords {
     });
 
     return recordingsFromDocument(isRecord(data) ? data : {});
+  }
+
+  /**
+   * One recording's audio: follows `recording.contentUrl` with NO bearer
+   * token — the link is pre-signed — through the same path as
+   * `faxes.media()`. The link expires (`recording.expiresAt`); read
+   * `recordings()` again for a fresh one. `recording.contentType` names the
+   * format of the bytes.
+   *
+   * Needs nothing beyond the link: the scope was spent minting it.
+   */
+  async downloadRecording(recording: Pick<Recording, "contentUrl">, requestOptions?: RequestOptions): Promise<Uint8Array> {
+    const contentUrl: unknown = recording.contentUrl;
+    if (typeof contentUrl !== "string" || contentUrl === "") {
+      throw new Error(
+        "this recording has no contentUrl, so there is nothing to download: read it with " +
+          "callRecords.recordings() for a fresh link.",
+      );
+    }
+    return downloadUnauthenticated(this.client, contentUrl, requestOptions);
   }
 
   /**

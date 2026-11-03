@@ -134,6 +134,7 @@ export type {
   MediaFormat,
   SendFaxOptions,
   FaxUpload,
+  UpdateFaxOptions,
 } from "./faxes.js";
 export { InboundMessages } from "./inboundMessages.js";
 export type { ListInboundMessagesOptions } from "./inboundMessages.js";
@@ -200,6 +201,15 @@ export type {
   WebhookEndpointPage,
   WebhookTestDelivery,
   WebhookTestDeliveryPage,
+  HostedMessagingOrder,
+  MessagingEnablement,
+  PortOrder,
+  SipTrunk,
+  SipTrunkAddress,
+  SipTrunkDestination,
+  SipTrunkRegistration,
+  Tenant,
+  ZtpDevice,
 } from "./models.js";
 export { Page, PagePromise } from "./pagination.js";
 export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
@@ -212,6 +222,30 @@ export type {
   ListPbxSubscribersOptions,
   PlaceCallOptions,
 } from "./pbx.js";
+export { HostedMessagingOrders, MessagingEnablements } from "./messagingRequests.js";
+export type {
+  CreateHostedMessagingOrderOptions,
+  ListHostedMessagingOrdersOptions,
+  ListMessagingEnablementsOptions,
+} from "./messagingRequests.js";
+export { PortOrders } from "./portOrders.js";
+export type { ListPortOrdersOptions } from "./portOrders.js";
+export { SipTrunkAddresses, SipTrunkDestinations, SipTrunks } from "./sipTrunks.js";
+export type {
+  CreateSipTrunkAddressOptions,
+  CreateSipTrunkDestinationOptions,
+  CreateSipTrunkOptions,
+  ListSipTrunkAddressesOptions,
+  ListSipTrunkDestinationsOptions,
+  ListSipTrunksOptions,
+  SipTrunkDestinationSettings,
+  SipTrunkSettings,
+  UpdateSipTrunkAddressOptions,
+} from "./sipTrunks.js";
+export { Tenants } from "./tenants.js";
+export type { UpdateTenantOptions } from "./tenants.js";
+export { ZtpDevices } from "./ztpDevices.js";
+export type { CreateZtpDeviceOptions, ListZtpDevicesOptions, UpdateZtpDeviceOptions } from "./ztpDevices.js";
 export { VERSION } from "./version.js";
 export { WebhookDeliveries } from "./webhookDeliveries.js";
 export type { ListWebhookDeliveriesOptions } from "./webhookDeliveries.js";

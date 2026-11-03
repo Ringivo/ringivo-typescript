@@ -2091,3 +2091,25 @@ describe("subscribers.call", () => {
     ).rejects.toThrow(/a pbx subscriber id is required/);
   });
 });
+
+describe("callRecords.downloadRecording()", () => {
+  it("follows the recording's signed link with no bearer token", async () => {
+    const downloads = new Calls();
+    const contentUrl = `${BASE_URL}/v1/pbx/recordings/0198c4a1-rec/content?expires=1787057037&signature=abc`;
+    server.use(
+      http.get(`${BASE_URL}/v1/pbx/recordings/0198c4a1-rec/content`, async ({ request }) => {
+        await downloads.record(request);
+        return new HttpResponse(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "audio/webm" } });
+      }),
+    );
+
+    const bytes = await client().pbx.callRecords.downloadRecording({ contentUrl });
+
+    expect([...bytes]).toEqual([1, 2, 3]);
+    expect(downloads.last.request.headers.get("authorization")).toBeNull();
+  });
+
+  it("refuses a recording with no link before anything is sent", async () => {
+    await expect(client().pbx.callRecords.downloadRecording({ contentUrl: null })).rejects.toThrow(/no contentUrl/);
+  });
+});

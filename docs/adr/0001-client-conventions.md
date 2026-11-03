@@ -79,6 +79,34 @@ anthropic-sdk-typescript `ea8d7de`, stripe-node `6d5ed96` (all read
    boundary (see `src/models.ts`). A full generator (Stainless, Speakeasy)
    would give the conventions above for free, but not this API's grey-label
    and scope rules, or the hand-written documentation of every refusal.
+7. **Every operation a client credential can make has a named method**
+   (added 0.27.0). `client.request()` is the escape hatch for an operation
+   the API adds before a release names it, never the documented way to reach
+   one. An operation has no method for one of three written reasons only: the
+   API takes a person's token for it and refuses a client credential (port
+   order writes, buying numbers, a text-messaging create); it is the bytes
+   behind a signed link, followed by a named method (`faxes.media()`,
+   `faxes.thumbnail()`, `inboundMessages.downloadMedia()`,
+   `pbx.callRecords.downloadRecording()`); or it is the token mint.
+   `tests/coverage.test.ts` holds the table, exact both ways against the
+   vendored spec, looks each method up on a real client, and checks each
+   `PAT` exclusion against the operation's `security` in the spec.
+
+   **When the API gains an operation, the spec sync stops landing — on
+   purpose.** The upstream spec-sync job force-pushes the rolling `spec-sync`
+   branch with the new spec and regenerated code; this gate then fails on that
+   branch, so `spec-sync-land.yml` (which lands only a green ci) leaves it
+   open. A fix pushed onto `spec-sync` is wiped by the next sync, so the
+   procedure is a separate pull request:
+   1. Branch from `main`. Copy the API description at the revision the
+      rolling pull request names into `spec/openapi.yaml`, and run
+      `npm run generate`.
+   2. Add the method (or a written exclusion), its row in the coverage table,
+      wire tests, and the README and CHANGELOG lines.
+   3. Merge it. The next spec sync then finds `main` already carries that
+      revision and either closes with no change or lands green. Until then the
+      red rolling pull request is expected, not a fault.
+   The same procedure covers an operation that changes shape.
 
 ## Alternatives rejected
 
