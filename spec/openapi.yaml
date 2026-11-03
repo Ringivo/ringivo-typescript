@@ -71,11 +71,19 @@ info:
     6. **`POST /v1/phone-numbers/{phoneNumber}/customer`** with `{"customerId": "<id>"}`, then
        **`POST /v1/phone-numbers/{phoneNumber}/routing`** with no body. The number's calls now reach
        the customer's phone system.
+    7. **`POST /v1/pbx-numbers`** naming the number — this adds it to the phone system, the step the
+       portal calls "Add to PBX". It answers 201 with `state: pending`; read
+       `GET /v1/pbx-numbers/{pbxNumber}` until `state` is `active`.
 
-    **A call is answered only after two more steps, which this credential cannot make.** The
-    phone system must know the number: add it to the customer's phone system in the portal ("Add
-    to PBX"). Then point it at a user or an auto attendant in the phone system itself. Until both
-    are done, a call to the number reaches the phone system and is not answered.
+    **Then point the number at a user or an auto attendant in the phone system itself.** Until that
+    is done, a call to the number reaches the phone system and is not answered.
+
+    **To send a number to fax instead**, skip steps 3, 4 and 7: create a fax account for the
+    customer with **`POST /v1/fax-accounts`** (scope `fax-accounts:write`), then route the number
+    with **`POST /v1/phone-numbers/{phoneNumber}/routing`** and the body
+    `{"targetType": "fax", "faxAccount": "<fax account id>"}`. Give each fax line its own fax
+    account: access to faxes is granted per fax account, so one number per account keeps each
+    line's inbox separate. A number routes to one place at a time, the phone system or fax.
 
     ## Pagination
 
@@ -222,6 +230,16 @@ tags:
       **Buying is two calls.** `GET /v1/available-numbers` offers numbers, each with an
       `offerToken`; `POST /v1/number-orders` spends the tokens. The rest of the inventory — the
       list, one number and releasing — is documented as it is written up.
+  - name: PBX numbers
+    description: |
+      A number inside a customer's phone system. Routing a number to the phone system
+      (`POST /v1/phone-numbers/{phoneNumber}/routing`) sends its calls there; adding it here makes
+      the phone system know the number, so the call can be pointed at a user or an auto attendant.
+      The two are separate writes because each can fail, be retried and be read on its own.
+
+      Reading needs `numbers:read`; adding, removing and retrying need `numbers:route`, the same
+      scope the routing request takes. A credential issued for one customer reaches that customer's
+      PBX numbers only.
   - name: Webhook endpoints
     description: |
       Where you want to be called back, and with what signing secret.
@@ -4411,7 +4429,9 @@ paths:
       summary: List text-messaging requests
       description: |
         Every request you have made to turn text messaging on, newest first — in flight and
-        historical, because a request is a permanent record of an attempt.
+        historical, because a request is a permanent record of an attempt. A credential issued for
+        one customer sees the requests for that customer's numbers only; a request whose number
+        was released is seen by your whole-account credentials only.
 
         `stage` is a 0-4 progress counter and is what to branch on; `stageWord` and `detail` are the
         sentences to show a person. `stage` is a HIGH-WATER MARK, not a position: a failed request
@@ -5564,6 +5584,229 @@ paths:
                   - status: '422'
                     title: Text messaging refused
                     detail: '+13215550101 does not have text messaging.'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/pbx-numbers:
+    get:
+      tags: [PBX numbers]
+      operationId: listPbxNumbers
+      summary: List the numbers in your customers' phone systems
+      description: |
+        Newest first. Filter by `phoneNumber` to ask whether one number is in its phone system yet,
+        or by `state` to find the ones that failed.
+      security:
+        - bearerAuth: [numbers:read]
+      parameters:
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/PageAfter'
+        - $ref: '#/components/parameters/PageBefore'
+        - name: sort
+          in: query
+          required: false
+          description: |
+            Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+            `-createdAt,-id`, newest first. Any other field is refused with a 400.
+          schema: { type: string }
+          example: -createdAt
+        - name: filter[phoneNumber]
+          in: query
+          required: false
+          description: The PBX number of this phone number (its `id` in `/v1/phone-numbers`).
+          schema: { type: string, format: uuid }
+        - name: filter[state]
+          in: query
+          required: false
+          description: The PBX numbers in this state.
+          schema:
+            $ref: '#/components/schemas/ProvisioningState'
+        - name: filter[id][]
+          in: query
+          required: false
+          description: |
+            One or more PBX number ids. Repeat the parameter once per id:
+            `filter[id][]=<first>&filter[id][]=<second>`.
+          schema:
+            type: array
+            items: { type: string, format: uuid }
+      responses:
+        '200':
+          description: A page of PBX numbers.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PbxNumberCollectionDocument'
+        '400':
+          $ref: '#/components/responses/BadQuery'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    post:
+      tags: [PBX numbers]
+      operationId: createPbxNumber
+      summary: Add a number to its customer's phone system
+      description: |
+        The number must already belong to a customer, be routed to that customer's phone system,
+        and the phone system must be `active`. Each refusal is a **409** whose `detail` names the
+        step to take first.
+
+        The row is created `pending` and the phone-system write is queued, so read `state` back
+        until it is `active`. A `failed` row carries the reason in `stateDetail`; retry it with
+        `POST /v1/pbx-numbers/{pbxNumber}/retry`.
+
+        **A `pending` number can be added too**, such as one that is still porting in. The phone
+        system then knows the number before its calls arrive, so it can be pointed at a user or an
+        auto attendant ahead of the port completing.
+
+        A credential issued for one customer may add that customer's own numbers only. A number
+        that is not yours answers **404**.
+      security:
+        - bearerAuth: [numbers:route]
+      requestBody:
+        required: true
+        content:
+          application/vnd.api+json:
+            schema:
+              $ref: '#/components/schemas/PbxNumberCreateRequest'
+            example:
+              data:
+                type: pbx-numbers
+                relationships:
+                  phoneNumber:
+                    data:
+                      type: phone-numbers
+                      id: 0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70
+      responses:
+        '201':
+          description: The PBX number, `pending` while the phone-system write is queued.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PbxNumberDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: The `phoneNumber` relationship names a number that is not yours.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '404'
+                    title: Phone number not found
+                    detail: No number of yours has that id.
+        '409':
+          description: |
+            The number cannot join the phone system yet: it is not assigned to a customer, not
+            routed to that customer's phone system, the phone system is not active, or the number
+            is already in it.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: Cannot join the PBX
+                    detail: +13025550100 is not routed to Acme Dental's PBX yet. Route it first.
+        '422':
+          $ref: '#/components/responses/UnprocessableDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/pbx-numbers/{pbxNumber}:
+    parameters:
+      - $ref: '#/components/parameters/PbxNumberId'
+    get:
+      tags: [PBX numbers]
+      operationId: getPbxNumber
+      summary: Read one PBX number
+      description: A PBX number that is not yours answers **404**.
+      security:
+        - bearerAuth: [numbers:read]
+      responses:
+        '200':
+          description: The PBX number.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/PbxNumberDocumentResponse'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    delete:
+      tags: [PBX numbers]
+      operationId: deletePbxNumber
+      summary: Remove a number from its customer's phone system
+      description: |
+        The PBX number is gone when this returns, and its removal from the phone system is queued
+        behind it. There is no precondition: a PBX number stuck in `failed` is the one you most need
+        to be able to remove.
+
+        The number still routes to the phone system until you remove the routing with
+        `DELETE /v1/phone-numbers/{phoneNumber}/routing`, which is allowed once the PBX number is
+        gone.
+      security:
+        - bearerAuth: [numbers:route]
+      responses:
+        '204':
+          description: Removed.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /v1/pbx-numbers/{pbxNumber}/retry:
+    parameters:
+      - $ref: '#/components/parameters/PbxNumberId'
+    post:
+      tags: [PBX numbers]
+      operationId: retryPbxNumber
+      summary: Try a failed phone-system write again
+      description: |
+        Only a `failed` PBX number can be retried. The phone-system write is queued again and the
+        row stays `failed` until the queued write starts, so this answers **204**; read `state` back
+        to see where it got to.
+
+        Any other state is a **409**: a `pending` or `provisioning` row already has a write on its
+        way, and an `active` one has nothing to re-do.
+      security:
+        - bearerAuth: [numbers:route]
+      responses:
+        '204':
+          description: Queued.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The PBX number has not failed, so there is nothing to retry.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '409'
+                    title: Nothing to retry
+                    detail: +13025550100 has no failed PBX write to retry.
         '429':
           $ref: '#/components/responses/RateLimited'
 
@@ -9567,6 +9810,12 @@ components:
       required: true
       description: The webhook endpoint's id.
       schema: { type: string, format: uuid }
+    PbxNumberId:
+      name: pbxNumber
+      in: path
+      required: true
+      description: The PBX number's id.
+      schema: { type: string, format: uuid }
     ZtpDeviceId:
       name: ztpDevice
       in: path
@@ -13034,6 +13283,83 @@ components:
               type: object
               properties:
                 customer:
+                  type: object
+                  required: [data]
+                  properties:
+                    data:
+                      $ref: '#/components/schemas/ResourceIdentifier'
+    PbxNumberAttributes:
+      type: object
+      properties:
+        netsapiensNumber:
+          type: string
+          description: The number as the phone system spells it — the E.164 form without its `+`.
+          example: '13025550100'
+        state:
+          $ref: '#/components/schemas/ProvisioningState'
+        stateDetail:
+          type: [string, 'null']
+          description: While provisioning, the step we reached; after a failure, the reason.
+        stateChangedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: [string, 'null'], format: date-time }
+        updatedAt: { type: [string, 'null'], format: date-time }
+    PbxNumberRelationships:
+      type: object
+      properties:
+        phoneNumber:
+          $ref: '#/components/schemas/RelationshipToOne'
+        customer:
+          $ref: '#/components/schemas/RelationshipToOne'
+    PbxNumberResource:
+      type: object
+      required: [type, id]
+      properties:
+        type: { type: string, enum: [pbx-numbers] }
+        id: { type: string, format: uuid }
+        attributes:
+          $ref: '#/components/schemas/PbxNumberAttributes'
+        relationships:
+          $ref: '#/components/schemas/PbxNumberRelationships'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/ResourceMeta'
+    PbxNumberDocumentResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/PbxNumberResource'
+        links:
+          $ref: '#/components/schemas/ResourceLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    PbxNumberCollectionDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/PbxNumberResource'
+        links:
+          $ref: '#/components/schemas/CollectionLinks'
+        meta:
+          $ref: '#/components/schemas/DocumentMeta'
+    PbxNumberCreateRequest:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, relationships]
+          properties:
+            type: { type: string, enum: [pbx-numbers] }
+            relationships:
+              type: object
+              required: [phoneNumber]
+              properties:
+                phoneNumber:
                   type: object
                   required: [data]
                   properties:

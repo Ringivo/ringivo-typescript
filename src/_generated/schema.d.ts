@@ -1580,7 +1580,9 @@ export interface paths {
         /**
          * List text-messaging requests
          * @description Every request you have made to turn text messaging on, newest first — in flight and
-         *     historical, because a request is a permanent record of an attempt.
+         *     historical, because a request is a permanent record of an attempt. A credential issued for
+         *     one customer sees the requests for that customer's numbers only; a request whose number
+         *     was released is seen by your whole-account credentials only.
          *
          *     `stage` is a 0-4 progress counter and is what to branch on; `stageWord` and `detail` are the
          *     sentences to show a person. `stage` is a HIGH-WATER MARK, not a position: a failed request
@@ -2060,6 +2062,105 @@ export interface paths {
          *     refused with a 401.
          */
         delete: operations["disableNumberMessaging"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx-numbers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the numbers in your customers' phone systems
+         * @description Newest first. Filter by `phoneNumber` to ask whether one number is in its phone system yet,
+         *     or by `state` to find the ones that failed.
+         */
+        get: operations["listPbxNumbers"];
+        put?: never;
+        /**
+         * Add a number to its customer's phone system
+         * @description The number must already belong to a customer, be routed to that customer's phone system,
+         *     and the phone system must be `active`. Each refusal is a **409** whose `detail` names the
+         *     step to take first.
+         *
+         *     The row is created `pending` and the phone-system write is queued, so read `state` back
+         *     until it is `active`. A `failed` row carries the reason in `stateDetail`; retry it with
+         *     `POST /v1/pbx-numbers/{pbxNumber}/retry`.
+         *
+         *     **A `pending` number can be added too**, such as one that is still porting in. The phone
+         *     system then knows the number before its calls arrive, so it can be pointed at a user or an
+         *     auto attendant ahead of the port completing.
+         *
+         *     A credential issued for one customer may add that customer's own numbers only. A number
+         *     that is not yours answers **404**.
+         */
+        post: operations["createPbxNumber"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx-numbers/{pbxNumber}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX number's id. */
+                pbxNumber: components["parameters"]["PbxNumberId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read one PBX number
+         * @description A PBX number that is not yours answers **404**.
+         */
+        get: operations["getPbxNumber"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a number from its customer's phone system
+         * @description The PBX number is gone when this returns, and its removal from the phone system is queued
+         *     behind it. There is no precondition: a PBX number stuck in `failed` is the one you most need
+         *     to be able to remove.
+         *
+         *     The number still routes to the phone system until you remove the routing with
+         *     `DELETE /v1/phone-numbers/{phoneNumber}/routing`, which is allowed once the PBX number is
+         *     gone.
+         */
+        delete: operations["deletePbxNumber"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx-numbers/{pbxNumber}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX number's id. */
+                pbxNumber: components["parameters"]["PbxNumberId"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Try a failed phone-system write again
+         * @description Only a `failed` PBX number can be retried. The phone-system write is queued again and the
+         *     row stays `failed` until the queued write starts, so this answers **204**; read `state` back
+         *     to see where it got to.
+         *
+         *     Any other state is a **409**: a `pending` or `provisioning` row already has a write on its
+         *     way, and an `active` one has nothing to re-do.
+         */
+        post: operations["retryPbxNumber"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6528,6 +6629,57 @@ export interface components {
                 };
             };
         };
+        PbxNumberAttributes: {
+            /**
+             * @description The number as the phone system spells it — the E.164 form without its `+`.
+             * @example 13025550100
+             */
+            netsapiensNumber?: string;
+            state?: components["schemas"]["ProvisioningState"];
+            /** @description While provisioning, the step we reached; after a failure, the reason. */
+            stateDetail?: string | null;
+            /** Format: date-time */
+            stateChangedAt?: string | null;
+            /** Format: date-time */
+            createdAt?: string | null;
+            /** Format: date-time */
+            updatedAt?: string | null;
+        };
+        PbxNumberRelationships: {
+            phoneNumber?: components["schemas"]["RelationshipToOne"];
+            customer?: components["schemas"]["RelationshipToOne"];
+        };
+        PbxNumberResource: {
+            /** @enum {string} */
+            type: "pbx-numbers";
+            /** Format: uuid */
+            id: string;
+            attributes?: components["schemas"]["PbxNumberAttributes"];
+            relationships?: components["schemas"]["PbxNumberRelationships"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["ResourceMeta"];
+        };
+        PbxNumberDocumentResponse: {
+            data: components["schemas"]["PbxNumberResource"];
+            links?: components["schemas"]["ResourceLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        PbxNumberCollectionDocument: {
+            data: components["schemas"]["PbxNumberResource"][];
+            links?: components["schemas"]["CollectionLinks"];
+            meta?: components["schemas"]["DocumentMeta"];
+        };
+        PbxNumberCreateRequest: {
+            data: {
+                /** @enum {string} */
+                type: "pbx-numbers";
+                relationships: {
+                    phoneNumber: {
+                        data: components["schemas"]["ResourceIdentifier"];
+                    };
+                };
+            };
+        };
         ZtpDeviceAttributes: {
             /**
              * @description 12 lowercase hexadecimal characters — always, on the way out. On the way in, any of
@@ -8569,6 +8721,8 @@ export interface components {
         FaxAccountId: string;
         /** @description The webhook endpoint's id. */
         WebhookEndpointId: string;
+        /** @description The PBX number's id. */
+        PbxNumberId: string;
         /** @description The registered device's id. */
         ZtpDeviceId: string;
         /** @description The port order's id. */
@@ -13865,6 +14019,251 @@ export interface operations {
                      *           "status": "422",
                      *           "title": "Text messaging refused",
                      *           "detail": "+13215550101 does not have text messaging."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    listPbxNumbers: {
+        parameters: {
+            query?: {
+                /**
+                 * @description Rows per page. The default is 25 and the ceiling is 100. A size past the ceiling, or one
+                 *     that is not a positive whole number, is refused with a 400 whose error carries
+                 *     `meta: {page: {maxSize: 100}}` — never clamped, because a clamped page looks like a short
+                 *     one and a caller cannot tell the two apart.
+                 */
+                "page[size]"?: components["parameters"]["PageSize"];
+                /**
+                 * @description Return the page that FOLLOWS this cursor — an opaque cursor from `meta.page.nextCursor`, a
+                 *     resource's `meta.page.cursor`, or a pagination link; never build or edit one. A cursor
+                 *     replayed under a different `filter` or `sort` is refused with a 400. Cannot be combined with
+                 *     `page[before]`.
+                 */
+                "page[after]"?: components["parameters"]["PageAfter"];
+                /**
+                 * @description Return the page that PRECEDES this cursor — this is how you poll for rows that arrived since
+                 *     your last read. An opaque cursor from `meta.page.nextCursor`, a resource's
+                 *     `meta.page.cursor`, or a pagination link; never build or edit one. A cursor replayed under a
+                 *     different `filter` or `sort` is refused with a 400. Cannot be combined with `page[after]`.
+                 */
+                "page[before]"?: components["parameters"]["PageBefore"];
+                /**
+                 * @description Sortable fields: `createdAt`, `id`. Prefix with `-` to reverse. The default is
+                 *     `-createdAt,-id`, newest first. Any other field is refused with a 400.
+                 * @example -createdAt
+                 */
+                sort?: string;
+                /** @description The PBX number of this phone number (its `id` in `/v1/phone-numbers`). */
+                "filter[phoneNumber]"?: string;
+                /** @description The PBX numbers in this state. */
+                "filter[state]"?: components["schemas"]["ProvisioningState"];
+                /**
+                 * @description One or more PBX number ids. Repeat the parameter once per id:
+                 *     `filter[id][]=<first>&filter[id][]=<second>`.
+                 */
+                "filter[id][]"?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of PBX numbers. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PbxNumberCollectionDocument"];
+                };
+            };
+            400: components["responses"]["BadQuery"];
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    createPbxNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "data": {
+                 *         "type": "pbx-numbers",
+                 *         "relationships": {
+                 *           "phoneNumber": {
+                 *             "data": {
+                 *               "type": "phone-numbers",
+                 *               "id": "0198c4a1-3c4d-7e5f-9061-2b3c4d5e6f70"
+                 *             }
+                 *           }
+                 *         }
+                 *       }
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["PbxNumberCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description The PBX number, `pending` while the phone-system write is queued. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PbxNumberDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            /** @description The `phoneNumber` relationship names a number that is not yours. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "404",
+                     *           "title": "Phone number not found",
+                     *           "detail": "No number of yours has that id."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The number cannot join the phone system yet: it is not assigned to a customer, not
+             *     routed to that customer's phone system, the phone system is not active, or the number
+             *     is already in it.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Cannot join the PBX",
+                     *           "detail": "+13025550100 is not routed to Acme Dental's PBX yet. Route it first."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            422: components["responses"]["UnprocessableDocument"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    getPbxNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX number's id. */
+                pbxNumber: components["parameters"]["PbxNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The PBX number. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["PbxNumberDocumentResponse"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    deletePbxNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX number's id. */
+                pbxNumber: components["parameters"]["PbxNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+        };
+    };
+    retryPbxNumber: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX number's id. */
+                pbxNumber: components["parameters"]["PbxNumberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Queued. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The PBX number has not failed, so there is nothing to retry. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "title": "Nothing to retry",
+                     *           "detail": "+13025550100 has no failed PBX write to retry."
                      *         }
                      *       ]
                      *     }
