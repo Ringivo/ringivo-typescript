@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased (0.26.0) — Breaking
+## 0.26.0 (2026-11-03) — Breaking
 
 This release adds the customer lifecycle and the phone-number verbs, and
 brings the client in line with the conventions most TypeScript API clients
