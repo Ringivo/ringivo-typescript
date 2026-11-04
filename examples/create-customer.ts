@@ -92,9 +92,13 @@ async function main(): Promise<void> {
     throw error;
   }
   console.log("routed", number.e164, "to", customer.name);
-  // The calls now reach the phone system. For one to be answered, add the
-  // number to the phone system in the portal ("Add to PBX") and point it at a
-  // user or auto attendant there: this credential cannot do either yet.
+
+  // The calls now reach the phone system; this makes the phone system know the
+  // number ("Add to PBX"). It answers `pending` while the write is queued.
+  const added = await client.pbxNumbers.create({ phoneNumberId: number.id });
+  console.log("added to the phone system:", added.state);
+  // For a call to be answered, point the number at a user or an auto
+  // attendant in the phone system itself.
 }
 
 main().catch((error: unknown) => {

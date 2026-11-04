@@ -733,12 +733,14 @@ const [number] = (await client.phoneNumbers.list({ e164: "+13025550100" })).data
 // 6. ...given to the customer, and pointed at its phone system.
 await client.phoneNumbers.assign(number.id, customer.id);
 await client.phoneNumbers.route(number.id);
+
+// 7. The phone system learns the number ("Add to PBX"); `pending` until the write lands.
+await client.pbxNumbers.create({ phoneNumberId: number.id });
 ```
 
-**After step 6 the number's calls reach the phone system; nobody answers them
-yet.** Two more steps, which this client's credential cannot make: add the
-number to the customer's phone system in the portal ("Add to PBX"), then point
-it at a user or an auto attendant in the phone system itself.
+**After step 7 the phone system knows the number; nobody answers it yet.**
+Point it at a user or an auto attendant in the phone system itself. A failed
+add carries the reason in `stateDetail`; `pbxNumbers.retry()` re-drives it.
 
 **The service address is checked**, as one postal address, and the customer
 keeps the corrected spelling: read `addressLines` off the answer. An address
@@ -1612,6 +1614,8 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.phoneNumbers.get(phoneNumberId)` | `numbers:read` | One `PhoneNumber`. |
 | `client.phoneNumbers.assign(phoneNumberId, customerId)` / `unassign(phoneNumberId)` | `numbers:assign` | Give a number to a customer, or take it back. |
 | `client.phoneNumbers.route(phoneNumberId, target?)` / `unroute(phoneNumberId)` | `numbers:route` | Point a number at its customer's phone system (the default), a fax account or a SIP trunk, or stop it. |
+| `client.pbxNumbers.list({ phoneNumber?, state?, ids?, sort?, after?, before?, pageSize? })` / `get(id)` | `numbers:read` | Numbers inside your customers' phone systems. |
+| `client.pbxNumbers.create({ phoneNumberId })` / `delete(id)` / `retry(id)` | `numbers:route` | Add a routed number to its customer's phone system ("Add to PBX"; sent once), remove it, re-drive a `failed` add. |
 | `client.pbx.callRecords.list({ customer?, startedAfter?, startedBefore?, direction?, fields?, subscriber?, callId?, includeHidden?, after?, before?, pageSize? })` | `pbx-call-records:read` | A `PagePromise`: one `CallRecordPage` (`data`, `nextCursor`), or every item with `for await`. The date range picks which months are read. `fields` asks for the extended tier (it narrows). `callId` finds the records that carry one call id: what a click-to-dial became, a leg's SIP Call-ID, or a recording webhook's `callId`. |
 | `client.pbx.callRecords.get(callRecordId)` | `pbx-call-records:read` | One `CallRecord`. Serves a hidden record, which the list leaves out. |
 | `client.pbx.callRecords.recordings(callRecordId)` | `pbx-call-records:read` | Every capture of that call, as a plain `readonly Recording[]` — NOT paginated: this is the captures of one call, not a walk over a table. Each `Recording.contentUrl` is a freshly minted, short-lived link. |
@@ -1656,7 +1660,7 @@ Every method below also takes a last, optional `RequestOptions` argument
 `InboundMessagePage`, `HostedMessagingOrder`, `MediaLink`, `MessageEvent`, `MessagingEnablement`
 (each of its variants), `MessageSender`, `OutboundMessage`,
 `OutboundMessageMediaItem`, `PbxCall`,
-`PbxDevice`, `PbxDevicePage`, `PbxSubscriber`, `PbxSubscriberPage`, `PortOrder`, `Recording`,
+`PbxDevice`, `PbxDevicePage`, `PbxNumber`, `PbxSubscriber`, `PbxSubscriberPage`, `PortOrder`, `Recording`,
 `SipTrunk`, `SipTrunkAddress`, `SipTrunkDestination`, `Tenant`, `ZtpDevice`,
 `Transcript`, `TranscriptChannel`, `TranscriptSegment`, `WebhookDelivery`, `WebhookDeliveryPage`, `WebhookEndpoint`,
 `WebhookEndpointPage`, `WebhookTestDelivery` and `WebhookTestDeliveryPage` are frozen plain objects, and each keeps the JSON it was

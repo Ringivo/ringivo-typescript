@@ -112,6 +112,11 @@ const COVERAGE: Record<string, string | { reason: typeof PAT | "SIGNED" | "MINT"
   unroutePhoneNumber: "phoneNumbers.unroute",
   disableNumberMessaging: { reason: PAT, note: "needs a person who can answer for the number" },
   listRegions: "regions.list",
+  listPbxNumbers: "pbxNumbers.list",
+  createPbxNumber: "pbxNumbers.create",
+  getPbxNumber: "pbxNumbers.get",
+  deletePbxNumber: "pbxNumbers.delete",
+  retryPbxNumber: "pbxNumbers.retry",
 
   // ZTP devices
   listZtpDevices: "ztpDevices.list",
