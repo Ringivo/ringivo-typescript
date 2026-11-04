@@ -202,6 +202,7 @@ export type {
   WebhookTestDelivery,
   WebhookTestDeliveryPage,
   HostedMessagingOrder,
+  PbxNumber,
   MessagingEnablement,
   PortOrder,
   SipTrunk,
@@ -213,6 +214,8 @@ export type {
 } from "./models.js";
 export { Page, PagePromise } from "./pagination.js";
 export { CallRecords, Pbx, PbxDevices, PbxSubscribers } from "./pbx.js";
+export { PbxNumbers } from "./pbxNumbers.js";
+export type { CreatePbxNumberOptions, ListPbxNumbersOptions } from "./pbxNumbers.js";
 export { PhoneNumbers } from "./phoneNumbers.js";
 export type { ListPhoneNumbersOptions, RouteTarget } from "./phoneNumbers.js";
 export { Regions } from "./regions.js";

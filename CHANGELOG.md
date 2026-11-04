@@ -3,8 +3,7 @@
 ## Unreleased (0.27.0) — Added
 
 Every operation a client credential can make now has a method of its own;
-none needs `client.request()`. `tests/coverage.test.ts` checks this against
-the API description on every build.
+none needs `client.request()`. A check on every build keeps it so.
 
 - **`client.sipTrunks`**: `list()`, `get()`, `create()`, `update()` (a sparse
   PATCH), `delete()`, `revealPassword()` and `regeneratePassword()` (audited,
@@ -18,13 +17,17 @@ the API description on every build.
 - **`client.hostedMessagingOrders`**: `list()`, `get()`, `create()`.
 - **`client.portOrders`**: `list()`, `get()`.
 - **`client.tenants`**: `get()`, `update()`.
+- **`client.pbxNumbers`**: `list()`, `get()`, `create({ phoneNumberId })` (add a
+  routed number to its customer's phone system — the portal's "Add to PBX"),
+  `delete()` and `retry()`. With `phoneNumbers.route()` an API credential now
+  takes a number all the way into the phone system.
 - **`client.faxes`**: `update()` (`read`, `archived`, `tags`), `delete()` and
   `thumbnail()` (the preview's bytes).
 - **`client.pbx.callRecords.downloadRecording(recording)`**: a recording's
   audio, through its signed link.
 - Types `SipTrunk`, `SipTrunkAddress`, `SipTrunkDestination`,
   `SipTrunkRegistration`, `ZtpDevice`, `MessagingEnablement`,
-  `HostedMessagingOrder`, `PortOrder` and `Tenant`, each with `raw`.
+  `HostedMessagingOrder`, `PortOrder`, `Tenant` and `PbxNumber`, each with `raw`.
 
 Not offered, because the API refuses a client credential for them: buying
 numbers, number lookups and rates, a text-messaging create or retry, and every

@@ -59,6 +59,7 @@ import { InboundMessages } from "./inboundMessages.js";
 import { Messages } from "./messages.js";
 import { HostedMessagingOrders, MessagingEnablements } from "./messagingRequests.js";
 import { Pbx } from "./pbx.js";
+import { PbxNumbers } from "./pbxNumbers.js";
 import { PhoneNumbers } from "./phoneNumbers.js";
 import { PortOrders } from "./portOrders.js";
 import { Regions } from "./regions.js";
@@ -304,6 +305,9 @@ export class Ringivo {
   /** Your own account: brand colors and support contact. */
   readonly tenants: Tenants;
 
+  /** Numbers inside your customers' phone systems ("Add to PBX"). */
+  readonly pbxNumbers: PbxNumbers;
+
   constructor(options: RingivoOptions) {
     if (!options.baseUrl) {
       throw new Error("baseUrl is required");
@@ -412,6 +416,7 @@ export class Ringivo {
     this.hostedMessagingOrders = new HostedMessagingOrders(this);
     this.portOrders = new PortOrders(this);
     this.tenants = new Tenants(this);
+    this.pbxNumbers = new PbxNumbers(this);
   }
 
   toString(): string {

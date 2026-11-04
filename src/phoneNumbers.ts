@@ -168,9 +168,9 @@ export class PhoneNumbers {
    *
    * A phone system route makes the number's calls REACH the phone system;
    * it does not make them ring anyone. The phone system must also know the
-   * number (the portal's "Add to PBX" — there is no request for it this
-   * credential can make yet), and the number must be pointed at a user or an
-   * auto attendant in the phone system itself.
+   * number (`pbxNumbers.create()`, the portal's "Add to PBX"), and the
+   * number must be pointed at a user or an auto attendant in the phone
+   * system itself.
    *
    * Needs `numbers:route`.
    */
@@ -198,6 +198,10 @@ export class PhoneNumbers {
   /**
    * Stop a number pointing anywhere. Calls to it stop ringing at the edge's
    * next reconcile.
+   *
+   * A number that is still in its customer's phone system is refused with a
+   * `ConflictError` (`Still in the PBX`): remove it with `pbxNumbers.delete()`
+   * first.
    *
    * Needs `numbers:route`.
    */

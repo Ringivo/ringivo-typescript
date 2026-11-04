@@ -2313,7 +2313,7 @@ export interface SipTrunk {
   readonly codecs: readonly string[] | null;
   /** `null` on a `static` trunk, which never registers. */
   readonly registration: SipTrunkRegistration | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly customerId: string | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
@@ -2361,7 +2361,7 @@ export interface SipTrunkAddress {
   /** An IPv4 address or CIDR range, such as `203.0.113.10/32`. */
   readonly cidr: string | null;
   readonly description: string | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly sipTrunkId: string | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
@@ -2397,7 +2397,7 @@ export interface SipTrunkDestination {
   /** Lower is tried first. */
   readonly preference: number | null;
   readonly enabled: boolean | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly sipTrunkId: string | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
@@ -2434,7 +2434,7 @@ export interface ZtpDevice {
   readonly vendor: string | null;
   readonly label: string | null;
   /** `pending`, `provisioning`, `active` or `failed`. */
-  readonly state: string | null;
+  readonly state: ProvisioningState | null;
   /** While provisioning, the step reached; after a failure, the reason. */
   readonly stateDetail: string | null;
   readonly stateChangedAt: Date | null;
@@ -2442,7 +2442,7 @@ export interface ZtpDevice {
   readonly lastConnectedAt: Date | null;
   readonly lastIp: string | null;
   readonly observedAt: Date | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly customerId: string | null;
   readonly createdAt: Date | null;
   readonly updatedAt: Date | null;
@@ -2492,9 +2492,9 @@ export interface MessagingEnablement {
   readonly completedAt: Date | null;
   readonly failedAt: Date | null;
   readonly retryAllowedAt: Date | null;
-  /** Present when the read included it; `null` once the number is released. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly phoneNumberId: string | null;
-  /** Present when the read included it; `null` when no port order is involved. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly portOrderId: string | null;
   readonly createdAt: Date | null;
   readonly raw: RawJson;
@@ -2535,11 +2535,11 @@ export interface HostedMessagingOrder {
   readonly status: string | null;
   /** `claimed` or `enabled`. */
   readonly mechanism: string | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly phoneNumberId: string | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly messagingEnablementId: string | null;
-  /** Present when the read included it. */
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
   readonly customerId: string | null;
   readonly createdAt: Date | null;
   readonly raw: RawJson;
@@ -2651,4 +2651,50 @@ export function tenantFromResource(resource: RawJson): Tenant {
     createdAt: instant(attributes.createdAt),
     raw: resource,
   });
+}
+
+/**
+ * A number inside a customer's phone system — the second of the two writes
+ * that make a routed number ring (`phoneNumbers.route()` is the first).
+ */
+export interface PbxNumber {
+  readonly id: string;
+  /**
+   * The number as the phone system spells it: the E.164 form without its
+   * `+` (`13025550100`).
+   */
+  readonly number: string | null;
+  /** `pending`, `provisioning`, `active` or `failed`. */
+  readonly state: ProvisioningState | null;
+  /** While provisioning, the step reached; after a failure, the reason. */
+  readonly stateDetail: string | null;
+  readonly stateChangedAt: Date | null;
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
+  readonly phoneNumberId: string | null;
+  /** `null` for now: the API does not send this relationship's id yet. Read it from `raw` when it does. */
+  readonly customerId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function pbxNumberFromResource(resource: RawJson): PbxNumber {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    number: text(attributes, "netsapiensNumber"),
+    state: text(attributes, "state"),
+    stateDetail: text(attributes, "stateDetail"),
+    stateChangedAt: instant(attributes.stateChangedAt),
+    phoneNumberId: relationshipId(resource, "phoneNumber"),
+    customerId: relationshipId(resource, "customer"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function pbxNumberPageFromDocument(document: RawJson): PageParts<PbxNumber> {
+  return pageOf(document, pbxNumberFromResource);
 }
