@@ -1136,3 +1136,72 @@ describe("the renamed response members", () => {
     });
   });
 });
+
+describe("the reader's writes and the thumbnail bytes", () => {
+  it("updates read, archived and tags sparsely, and refuses an empty update", async () => {
+    const calls = new Calls();
+    server.use(
+      http.patch(FAX_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({
+          data: { type: "faxes", id: FAX_ID, attributes: { status: "delivered", read: true, archived: false, tags: { clinic: "north" } } },
+        });
+      }),
+    );
+
+    const fax = await client().faxes.update(FAX_ID, { read: true, tags: { clinic: "north" } });
+
+    expect(calls.last.request.headers.get("Content-Type")).toBe("application/vnd.api+json");
+    expect(JSON.parse(calls.last.body)).toEqual({
+      data: { type: "faxes", id: FAX_ID, attributes: { read: true, tags: { clinic: "north" } } },
+    });
+    expect(fax.id).toBe(FAX_ID);
+    await expect(client().faxes.update(FAX_ID, {})).rejects.toThrow(/at least one field/);
+    expect(calls.count).toBe(1);
+  });
+
+  it("sends tags: null to clear them", async () => {
+    const calls = new Calls();
+    server.use(
+      http.patch(FAX_URL, async ({ request }) => {
+        await calls.record(request);
+        return HttpResponse.json({ data: { type: "faxes", id: FAX_ID, attributes: { status: "delivered" } } });
+      }),
+    );
+
+    await client().faxes.update(FAX_ID, { tags: null });
+    expect(JSON.parse(calls.last.body).data.attributes).toEqual({ tags: null });
+  });
+
+  it("deletes a fax by id", async () => {
+    const calls = new Calls();
+    server.use(
+      http.delete(FAX_URL, async ({ request }) => {
+        await calls.record(request);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    await client().faxes.delete(FAX_ID);
+    expect(calls.count).toBe(1);
+  });
+
+  it("downloads the thumbnail by following its signed link with no bearer token", async () => {
+    const downloads = new Calls();
+    server.use(
+      http.get(`${FAX_URL}/thumbnail`, () =>
+        HttpResponse.json({ url: `${FAX_URL}/thumbnail/content?expires=1787057037&signature=abc`, expiresAt: null }),
+      ),
+      http.get(`${FAX_URL}/thumbnail/content`, async ({ request }) => {
+        await downloads.record(request);
+        return new HttpResponse(new Uint8Array([0x89, 0x50, 0x4e, 0x47]), { headers: { "Content-Type": "image/png" } });
+      }),
+    );
+
+    const bytes = await client().faxes.thumbnail(FAX_ID);
+
+    expect([...bytes]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+    expect(downloads.last.request.headers.get("authorization")).toBeNull();
+    expect(downloads.last.url.searchParams.get("signature")).toBe("abc");
+  });
+});

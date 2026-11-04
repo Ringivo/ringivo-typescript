@@ -144,7 +144,18 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.faxes))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["cancel", "get", "list", "media", "mediaLink", "send", "thumbnailLink"]);
+    ).toEqual([
+      "cancel",
+      "delete",
+      "get",
+      "list",
+      "media",
+      "mediaLink",
+      "send",
+      "thumbnail",
+      "thumbnailLink",
+      "update",
+    ]);
   });
 
   it("exposes the whole fax-account surface", async () => {
@@ -261,7 +272,15 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.callRecords))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["get", "list", "recordings", "requestTranscript", "transcript", "transcripts"]);
+    ).toEqual([
+      "downloadRecording",
+      "get",
+      "list",
+      "recordings",
+      "requestTranscript",
+      "transcript",
+      "transcripts",
+    ]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.subscribers))
         .filter((name) => name !== "constructor")

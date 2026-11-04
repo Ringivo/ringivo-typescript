@@ -1,5 +1,35 @@
 # Release notes
 
+## Unreleased (0.27.0) — Added
+
+Every operation a client credential can make now has a method of its own;
+none needs `client.request()`. `tests/coverage.test.ts` checks this against
+the API description on every build.
+
+- **`client.sipTrunks`**: `list()`, `get()`, `create()`, `update()` (a sparse
+  PATCH), `delete()`, `revealPassword()` and `regeneratePassword()` (audited,
+  sent once), and `addresses()` / `destinations()` for one trunk.
+- **`client.sipTrunkAddresses`** (the API's `sip-trunk-ips`) and
+  **`client.sipTrunkDestinations`** (`sip-trunk-targets`): `list()`, `get()`,
+  `create()`, `update()`, `delete()`.
+- **`client.ztpDevices`**: `list()`, `get()`, `create()`, `update()`,
+  `delete()`, `retry()`.
+- **`client.messagingEnablements`**: `list()`, `get()`.
+- **`client.hostedMessagingOrders`**: `list()`, `get()`, `create()`.
+- **`client.portOrders`**: `list()`, `get()`.
+- **`client.tenants`**: `get()`, `update()`.
+- **`client.faxes`**: `update()` (`read`, `archived`, `tags`), `delete()` and
+  `thumbnail()` (the preview's bytes).
+- **`client.pbx.callRecords.downloadRecording(recording)`**: a recording's
+  audio, through its signed link.
+- Types `SipTrunk`, `SipTrunkAddress`, `SipTrunkDestination`,
+  `SipTrunkRegistration`, `ZtpDevice`, `MessagingEnablement`,
+  `HostedMessagingOrder`, `PortOrder` and `Tenant`, each with `raw`.
+
+Not offered, because the API refuses a client credential for them: buying
+numbers, number lookups and rates, a text-messaging create or retry, and every
+port-order write.
+
 ## 0.26.0 (2026-11-03) — Breaking
 
 This release adds the customer lifecycle and the phone-number verbs, and

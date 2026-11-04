@@ -57,14 +57,19 @@ import { FaxAccounts } from "./faxAccounts.js";
 import { Faxes } from "./faxes.js";
 import { InboundMessages } from "./inboundMessages.js";
 import { Messages } from "./messages.js";
+import { HostedMessagingOrders, MessagingEnablements } from "./messagingRequests.js";
 import { Pbx } from "./pbx.js";
 import { PhoneNumbers } from "./phoneNumbers.js";
+import { PortOrders } from "./portOrders.js";
 import { Regions } from "./regions.js";
+import { SipTrunkAddresses, SipTrunkDestinations, SipTrunks } from "./sipTrunks.js";
+import { Tenants } from "./tenants.js";
 import { type Fetch, send } from "./transport.js";
 import { VERSION } from "./version.js";
 import { WebhookDeliveries } from "./webhookDeliveries.js";
 import { WebhookEndpoints } from "./webhookEndpoints.js";
 import { WebhookTestDeliveries } from "./webhookTestDeliveries.js";
+import { ZtpDevices } from "./ztpDevices.js";
 
 /** What the JSON:API resource endpoints send and accept. */
 export const JSONAPI_MEDIA_TYPE = "application/vnd.api+json";
@@ -275,6 +280,30 @@ export class Ringivo {
   /** Read the texts somebody sent to your numbers: list them, read one. */
   readonly inboundMessages: InboundMessages;
 
+  /** SIP trunks: a customer's own PBX connected through this platform. */
+  readonly sipTrunks: SipTrunks;
+
+  /** The address ranges a `static` SIP trunk's calls are trusted from. */
+  readonly sipTrunkAddresses: SipTrunkAddresses;
+
+  /** The hosts a SIP trunk's inbound calls are sent to. */
+  readonly sipTrunkDestinations: SipTrunkDestinations;
+
+  /** Phone MACs registered with a vendor's zero-touch redirect service. */
+  readonly ztpDevices: ZtpDevices;
+
+  /** Requests to turn text messaging on for your numbers (read only). */
+  readonly messagingEnablements: MessagingEnablements;
+
+  /** Orders that bring a number in for text messaging alone. */
+  readonly hostedMessagingOrders: HostedMessagingOrders;
+
+  /** Port orders (read only: their writes need a person). */
+  readonly portOrders: PortOrders;
+
+  /** Your own account: brand colors and support contact. */
+  readonly tenants: Tenants;
+
   constructor(options: RingivoOptions) {
     if (!options.baseUrl) {
       throw new Error("baseUrl is required");
@@ -375,6 +404,14 @@ export class Ringivo {
     this.phoneNumbers = new PhoneNumbers(this);
     this.messages = new Messages(this);
     this.inboundMessages = new InboundMessages(this);
+    this.sipTrunks = new SipTrunks(this);
+    this.sipTrunkAddresses = new SipTrunkAddresses(this);
+    this.sipTrunkDestinations = new SipTrunkDestinations(this);
+    this.ztpDevices = new ZtpDevices(this);
+    this.messagingEnablements = new MessagingEnablements(this);
+    this.hostedMessagingOrders = new HostedMessagingOrders(this);
+    this.portOrders = new PortOrders(this);
+    this.tenants = new Tenants(this);
   }
 
   toString(): string {
@@ -394,14 +431,14 @@ export class Ringivo {
    * more with a fresh token.
    *
    * This is also the ESCAPE HATCH, and it is public for that reason: an
-   * endpoint this client does not wrap yet is still reachable with your
-   * credential, your timeout, your retries, your User-Agent and the same
-   * typed errors:
+   * endpoint the API adds before a release of this package names it is
+   * still reachable with your credential, your timeout, your retries, your
+   * User-Agent and the same typed errors. Every operation the API documents
+   * for a client credential already has a method (tests/coverage.test.ts):
    *
-   *     // Every SIP trunk your credential can reach. This client does not
-   *     // wrap trunks yet.
+   *     // An endpoint newer than this package.
    *     const response = await client.request(
-   *       new Request(`${client.baseUrl}/v1/sip-trunks`, {
+   *       new Request(`${client.baseUrl}/v1/some-new-resource`, {
    *         headers: { Accept: "application/vnd.api+json" },
    *       }),
    *     );

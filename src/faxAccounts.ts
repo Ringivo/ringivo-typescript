@@ -266,8 +266,7 @@ export class FaxAccounts {
    *
    * Attaching a number is NOT done here. A number points at one destination
    * and that rule belongs to the number, so routing is
-   * `POST /v1/phone-numbers/{id}/routing` — reachable through
-   * `client.request()`.
+   * `client.phoneNumbers.route(numberId, { targetType: "fax", faxAccount })`.
    *
    * @throws Error when the server serves the same cursor twice. A walk that
    *   trusted it would never end, and a hang is the one failure a caller

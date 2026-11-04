@@ -2256,3 +2256,399 @@ export function phoneNumberPageFromDocument(document: RawJson): PageParts<PhoneN
     raw: document,
   };
 }
+
+// ---------------------------------------------------------------------------
+// The operations that had no method before 0.27.0: SIP trunks and their
+// addresses and destinations, ZTP devices, text-messaging requests, hosted
+// messaging orders, port orders and the tenant. Each model reads the members
+// the API documents and keeps the whole resource in `raw`, so a member the
+// API adds later is readable before this package names it.
+// ---------------------------------------------------------------------------
+
+/** The documents of every resource below, one page at a time. */
+function pageOf<T>(document: RawJson, read: (resource: RawJson) => T): PageParts<T> {
+  const data = document.data;
+  return {
+    data: (Array.isArray(data) ? data : []).filter(isRecord).map(read),
+    nextUrl: nextLink(document),
+    nextCursor: nextCursorOf(document),
+    raw: document,
+  };
+}
+
+/** Whether the phone system behind a `register` trunk is signed in now. */
+export interface SipTrunkRegistration {
+  /** `registered` or `not_registered`. */
+  readonly state: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * A customer's SIP trunk: a PBX of their own that sends and receives calls
+ * through this platform.
+ */
+export interface SipTrunk {
+  readonly id: string;
+  readonly name: string | null;
+  /** The label that names the trunk's SIP host. */
+  readonly domainLabel: string | null;
+  /** `use1` or `usw1`. */
+  readonly primaryRegion: string | null;
+  readonly enabled: boolean | null;
+  /** `static` (address-trusted) or `register` (the PBX signs in). */
+  readonly mode: string | null;
+  readonly username: string | null;
+  /**
+   * `null` on every read. Only `sipTrunks.revealPassword()` and
+   * `regeneratePassword()` answer the live password, and both are audited.
+   */
+  readonly password: string | null;
+  readonly registrationMode: string | null;
+  readonly registrationExpires: number | null;
+  readonly localization: string | null;
+  readonly aniFormat: string | null;
+  readonly dnisFormat: string | null;
+  readonly dialPolicy: string | null;
+  readonly mediaMode: string | null;
+  readonly codecs: readonly string[] | null;
+  /** `null` on a `static` trunk, which never registers. */
+  readonly registration: SipTrunkRegistration | null;
+  /** Present when the read included it. */
+  readonly customerId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function sipTrunkFromResource(resource: RawJson): SipTrunk {
+  const attributes = nested(resource, "attributes") ?? {};
+  const registration = nested(attributes, "registration");
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    name: text(attributes, "name"),
+    domainLabel: text(attributes, "domainLabel"),
+    primaryRegion: text(attributes, "primaryRegion"),
+    enabled: boolean(attributes, "enabled"),
+    mode: text(attributes, "mode"),
+    username: text(attributes, "username"),
+    password: text(attributes, "password"),
+    registrationMode: text(attributes, "registrationMode"),
+    registrationExpires: integer(attributes, "registrationExpires"),
+    localization: text(attributes, "localization"),
+    aniFormat: text(attributes, "aniFormat"),
+    dnisFormat: text(attributes, "dnisFormat"),
+    dialPolicy: text(attributes, "dialPolicy"),
+    mediaMode: text(attributes, "mediaMode"),
+    codecs: textList(attributes, "codecs"),
+    registration: registration
+      ? Object.freeze({ state: text(registration, "state"), raw: registration })
+      : null,
+    customerId: relationshipId(resource, "customer"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function sipTrunkPageFromDocument(document: RawJson): PageParts<SipTrunk> {
+  return pageOf(document, sipTrunkFromResource);
+}
+
+/** One address range a `static` trunk's calls are trusted from. */
+export interface SipTrunkAddress {
+  readonly id: string;
+  /** An IPv4 address or CIDR range, such as `203.0.113.10/32`. */
+  readonly cidr: string | null;
+  readonly description: string | null;
+  /** Present when the read included it. */
+  readonly sipTrunkId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function sipTrunkAddressFromResource(resource: RawJson): SipTrunkAddress {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    cidr: text(attributes, "cidr"),
+    description: text(attributes, "description"),
+    sipTrunkId: relationshipId(resource, "sipTrunk"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function sipTrunkAddressPageFromDocument(document: RawJson): PageParts<SipTrunkAddress> {
+  return pageOf(document, sipTrunkAddressFromResource);
+}
+
+/** One host a trunk's inbound calls are sent to. */
+export interface SipTrunkDestination {
+  readonly id: string;
+  readonly host: string | null;
+  /** `null` uses the transport's own default port. */
+  readonly port: number | null;
+  /** `udp`, `tcp` or `tls`. */
+  readonly transport: string | null;
+  /** Lower is tried first. */
+  readonly preference: number | null;
+  readonly enabled: boolean | null;
+  /** Present when the read included it. */
+  readonly sipTrunkId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function sipTrunkDestinationFromResource(resource: RawJson): SipTrunkDestination {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    host: text(attributes, "host"),
+    port: integer(attributes, "port"),
+    transport: text(attributes, "transport"),
+    preference: integer(attributes, "preference"),
+    enabled: boolean(attributes, "enabled"),
+    sipTrunkId: relationshipId(resource, "sipTrunk"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function sipTrunkDestinationPageFromDocument(document: RawJson): PageParts<SipTrunkDestination> {
+  return pageOf(document, sipTrunkDestinationFromResource);
+}
+
+/** A phone MAC registered with a vendor's zero-touch redirect service. */
+export interface ZtpDevice {
+  readonly id: string;
+  /** 12 lowercase hexadecimal characters. */
+  readonly mac: string | null;
+  /** `yealink`. */
+  readonly vendor: string | null;
+  readonly label: string | null;
+  /** `pending`, `provisioning`, `active` or `failed`. */
+  readonly state: string | null;
+  /** While provisioning, the step reached; after a failure, the reason. */
+  readonly stateDetail: string | null;
+  readonly stateChangedAt: Date | null;
+  readonly registeredAt: Date | null;
+  readonly lastConnectedAt: Date | null;
+  readonly lastIp: string | null;
+  readonly observedAt: Date | null;
+  /** Present when the read included it. */
+  readonly customerId: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function ztpDeviceFromResource(resource: RawJson): ZtpDevice {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    mac: text(attributes, "mac"),
+    vendor: text(attributes, "vendor"),
+    label: text(attributes, "label"),
+    state: text(attributes, "state"),
+    stateDetail: text(attributes, "stateDetail"),
+    stateChangedAt: instant(attributes.stateChangedAt),
+    registeredAt: instant(attributes.registeredAt),
+    lastConnectedAt: instant(attributes.lastConnectedAt),
+    lastIp: text(attributes, "lastIp"),
+    observedAt: instant(attributes.observedAt),
+    customerId: relationshipId(resource, "customer"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function ztpDevicePageFromDocument(document: RawJson): PageParts<ZtpDevice> {
+  return pageOf(document, ztpDeviceFromResource);
+}
+
+/** One request to turn text messaging on for a number. */
+export interface MessagingEnablement {
+  readonly id: string;
+  readonly e164: string | null;
+  /** `awaiting_signature`, `scheduled`, `submitted`, `completed` or `failed`. */
+  readonly status: string | null;
+  /** A 0-4 progress counter: the stage REACHED, kept after a failure. */
+  readonly stage: number | null;
+  /** `stage` as words to show a person. */
+  readonly stageWord: string | null;
+  readonly detail: string | null;
+  readonly failedCause: string | null;
+  readonly scheduledFor: Date | null;
+  readonly submittedAt: Date | null;
+  readonly completedAt: Date | null;
+  readonly failedAt: Date | null;
+  readonly retryAllowedAt: Date | null;
+  /** Present when the read included it; `null` once the number is released. */
+  readonly phoneNumberId: string | null;
+  /** Present when the read included it; `null` when no port order is involved. */
+  readonly portOrderId: string | null;
+  readonly createdAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function messagingEnablementFromResource(resource: RawJson): MessagingEnablement {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    e164: text(attributes, "e164"),
+    status: text(attributes, "status"),
+    stage: integer(attributes, "stage"),
+    stageWord: text(attributes, "stageWord"),
+    detail: text(attributes, "detail"),
+    failedCause: text(attributes, "failedCause"),
+    scheduledFor: instant(attributes.scheduledFor),
+    submittedAt: instant(attributes.submittedAt),
+    completedAt: instant(attributes.completedAt),
+    failedAt: instant(attributes.failedAt),
+    retryAllowedAt: instant(attributes.retryAllowedAt),
+    phoneNumberId: relationshipId(resource, "phoneNumber"),
+    portOrderId: relationshipId(resource, "portOrder"),
+    createdAt: instant(attributes.createdAt),
+    raw: resource,
+  });
+}
+
+export function messagingEnablementPageFromDocument(document: RawJson): PageParts<MessagingEnablement> {
+  return pageOf(document, messagingEnablementFromResource);
+}
+
+/** An order to host text messaging for a number whose calls stay elsewhere. */
+export interface HostedMessagingOrder {
+  readonly id: string;
+  readonly e164: string | null;
+  /** `claimed`, `awaiting_signature`, `submitted` or `failed`. */
+  readonly status: string | null;
+  /** `claimed` or `enabled`. */
+  readonly mechanism: string | null;
+  /** Present when the read included it. */
+  readonly phoneNumberId: string | null;
+  /** Present when the read included it. */
+  readonly messagingEnablementId: string | null;
+  /** Present when the read included it. */
+  readonly customerId: string | null;
+  readonly createdAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function hostedMessagingOrderFromResource(resource: RawJson): HostedMessagingOrder {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    e164: text(attributes, "e164"),
+    status: text(attributes, "status"),
+    mechanism: text(attributes, "mechanism"),
+    phoneNumberId: relationshipId(resource, "phoneNumber"),
+    messagingEnablementId: relationshipId(resource, "messagingEnablement"),
+    customerId: relationshipId(resource, "customer"),
+    createdAt: instant(attributes.createdAt),
+    raw: resource,
+  });
+}
+
+export function hostedMessagingOrderPageFromDocument(document: RawJson): PageParts<HostedMessagingOrder> {
+  return pageOf(document, hostedMessagingOrderFromResource);
+}
+
+/**
+ * A request to move numbers to this platform from another provider. The
+ * common members are named here; the documents, the signing link, the task
+ * list and the per-number states are in `raw`.
+ */
+export interface PortOrder {
+  readonly id: string;
+  readonly label: string | null;
+  readonly country: string | null;
+  /**
+   * `draft`, `awaiting_signature`, `awaiting_review`, `submitted`,
+   * `foc_assigned`, `completed` or `failed`.
+   */
+  readonly status: string | null;
+  /** The numbers being moved, in E.164. */
+  readonly numbers: readonly string[] | null;
+  readonly endUserName: string | null;
+  readonly currentProvider: string | null;
+  readonly portType: string | null;
+  readonly requestedFocDate: string | null;
+  readonly correctionsRequired: boolean | null;
+  readonly correctionsNote: string | null;
+  readonly createdAt: Date | null;
+  readonly updatedAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function portOrderFromResource(resource: RawJson): PortOrder {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    label: text(attributes, "label"),
+    country: text(attributes, "country"),
+    status: text(attributes, "status"),
+    numbers: textList(attributes, "numbers"),
+    endUserName: text(attributes, "endUserName"),
+    currentProvider: text(attributes, "currentProvider"),
+    portType: text(attributes, "portType"),
+    requestedFocDate: text(attributes, "requestedFocDate"),
+    correctionsRequired: boolean(attributes, "correctionsRequired"),
+    correctionsNote: text(attributes, "correctionsNote"),
+    createdAt: instant(attributes.createdAt),
+    updatedAt: instant(attributes.updatedAt),
+    raw: resource,
+  });
+}
+
+export function portOrderPageFromDocument(document: RawJson): PageParts<PortOrder> {
+  return pageOf(document, portOrderFromResource);
+}
+
+/** Your own account with the provider: its brand and support contacts. */
+export interface Tenant {
+  readonly id: string;
+  readonly brandName: string | null;
+  readonly legalName: string | null;
+  readonly status: string | null;
+  /** What onboarding still needs before this account may write. Empty when done. */
+  readonly onboardingRequirements: readonly string[] | null;
+  readonly brandColorPrimary: string | null;
+  readonly brandColorAccent: string | null;
+  readonly supportEmail: string | null;
+  readonly supportPhone: string | null;
+  readonly includedDomain: string | null;
+  readonly createdAt: Date | null;
+  readonly raw: RawJson;
+}
+
+export function tenantFromResource(resource: RawJson): Tenant {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    brandName: text(attributes, "brandName"),
+    legalName: text(attributes, "legalName"),
+    status: text(attributes, "status"),
+    onboardingRequirements: textList(attributes, "onboardingRequirements"),
+    brandColorPrimary: text(attributes, "brandColorPrimary"),
+    brandColorAccent: text(attributes, "brandColorAccent"),
+    supportEmail: text(attributes, "supportEmail"),
+    supportPhone: text(attributes, "supportPhone"),
+    includedDomain: text(attributes, "includedDomain"),
+    createdAt: instant(attributes.createdAt),
+    raw: resource,
+  });
+}

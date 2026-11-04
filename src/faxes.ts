@@ -34,7 +34,7 @@
  * in faxes.test.ts, where a regression is visible as a diff rather than as a
  * fax that arrives without its tags.
  */
-import type { paths } from "./_generated/schema.js";
+import type { components, paths } from "./_generated/schema.js";
 import { JSON_MEDIA_TYPE, JSONAPI_MEDIA_TYPE, type Ringivo, transportOf } from "./client.js";
 import { callOptions, type RequestOptions, sendThrough } from "./client.js";
 import { PagePromise, paginate } from "./pagination.js";
@@ -401,7 +401,71 @@ export class Faxes {
     const link = await this.mediaLink(faxId, options, requestOptions);
     return downloadUnauthenticated(this.client, link.url, requestOptions);
   }
+
+  /**
+   * The first page's thumbnail (a PNG): mint the link, then follow it with
+   * no bearer token, exactly as `media()` does.
+   *
+   * Needs `fax:read`.
+   */
+  async thumbnail(faxId: string, requestOptions?: RequestOptions): Promise<Uint8Array> {
+    const link = await this.thumbnailLink(faxId, requestOptions);
+    return downloadUnauthenticated(this.client, link.url, requestOptions);
+  }
+
+  /**
+   * Change the three fields that belong to the reader: `read`, `archived`
+   * and `tags`. A SPARSE PATCH: only the members you pass are sent. `tags`
+   * REPLACES the fax's tags wholesale; `null` clears them.
+   *
+   * @throws Error when no member was named.
+   *
+   * Needs `fax:write`.
+   */
+  async update(faxId: string, options: UpdateFaxOptions, requestOptions?: RequestOptions): Promise<Fax> {
+    const id = faxIdParam(faxId);
+    const attributes: NonNullable<FaxUpdateRequest["data"]["attributes"]> = {};
+    if (options.read !== undefined) attributes.read = options.read;
+    if (options.archived !== undefined) attributes.archived = options.archived;
+    if (options.tags !== undefined) attributes.tags = options.tags === null ? null : { ...options.tags };
+    if (Object.keys(attributes).length === 0) {
+      throw new Error("update() needs at least one field to change: read, archived or tags.");
+    }
+
+    const body: FaxUpdateRequest = { data: { type: "faxes", id, attributes } };
+    const { data } = await transportOf(this.client)["/v1/faxes/{fax}"].PATCH({
+      // Resendable: marking a fax read twice leaves it read once.
+      ...callOptions(this.client, requestOptions, true),
+      headers: { "Content-Type": JSONAPI_MEDIA_TYPE },
+      params: { path: { fax: id } },
+      body,
+    });
+    return faxFromAnswer(dataObject(data));
+  }
+
+  /**
+   * Delete a fax. Its pages are PURGED at once and cannot be recovered; the
+   * record stays as the evidence that the transmission happened.
+   *
+   * Needs `fax:write`.
+   */
+  async delete(faxId: string, requestOptions?: RequestOptions): Promise<void> {
+    await transportOf(this.client)["/v1/faxes/{fax}"].DELETE({
+      ...callOptions(this.client, requestOptions),
+      params: { path: { fax: faxIdParam(faxId) } },
+    });
+  }
 }
+
+/** What `faxes.update()` accepts — a SPARSE patch. */
+export interface UpdateFaxOptions {
+  read?: boolean;
+  archived?: boolean;
+  /** Replaces the fax's tags wholesale. `null` clears them. */
+  tags?: Record<string, string | null> | null;
+}
+
+type FaxUpdateRequest = components["schemas"]["FaxUpdateRequest"];
 
 /**
  * One path segment, escaped so an id cannot steer the request.
