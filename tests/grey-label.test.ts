@@ -43,24 +43,41 @@ const rot13 = (s: string): string =>
 // and its device and media products, the rating engine, the speech, AI and
 // email providers, the clouds, the edge, the error inbox, the identity check,
 // the number-lookup and porting services). Carriers are allowed and are not
-// here. A short or common token is matched as a whole word only.
+// here. The acronyms count only in capitals, and a short name only where no
+// letter touches it, the same rule the API's own check applies.
 const VENDOR_NAMES = [
-  "argfncvraf", "fancfbyhgvba", "fanczbovyr", "ptengrf", "yvirxvg", "bcranv",
-  "naguebcvp", "pynhqr", "ryriraynof", "pybhqsyner", "xnznvyvb", "serrfjvgpu",
-  "egcratvar", "zrvyvfrnepu", "cbegpbageby", "qvqvg", "fxlfjvgpu", "fragel",
-  "cbfgznex", "benpyr", "nznmba",
+  "argfncvraf", "arg-fncvraf", "fancfbyhgvba", "fanczbovyr", "fancohvyqre",
+  "ptengrf", "yvirxvg", "bcranv", "naguebcvp", "pynhqr", "ryriraynof",
+  "pybhqsyner", "pybhqsebag", "xnznvyvb", "serrfjvgpu", "egcratvar",
+  "zrvyvfrnepu", "cbegpbageby", "qvqvg", "fxlfjvgpu", "fragel", "cbfgznex",
+  "benpyr", "nznmba",
 ].map(rot13);
-const VENDOR_WORDS = ["gryvdhr", "aqc", "azf", "bpv", "bpve", "njf", "frf"].map(rot13);
 const FORBIDDEN = new RegExp(
   [
     `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|${rot13("qrrctenz")}|\\b${rot13("abin")}|ringivo\\.com`,
     ...VENDOR_NAMES,
+    `${rot13("fanc")}\\.${rot13("uq")}`,
     `${rot13("cbegvat")}\\.com`,
     `${rot13("cynva")}\\.com`,
-    ...VENDOR_WORDS.map((word) => `\\b${word}\\b`),
+    `(?<![A-Za-z])${rot13("gryvdhr")}(?![A-Za-z])`,
   ].join("|"),
   "gi",
 );
+const VENDOR_ACRONYMS = new RegExp(
+  `(?<![A-Za-z])(?:${["aqc", "azf", "bpve", "bpv", "njf", "frf"].map((word) => rot13(word).toUpperCase()).join("|")})(?![A-Za-z])`,
+  "g",
+);
+
+/** Every forbidden brand, host or vendor in `text`, lowercased and deduplicated. */
+function forbiddenIn(text: string): string[] {
+  return [
+    ...new Set(
+      [...text.matchAll(FORBIDDEN), ...text.matchAll(VENDOR_ACRONYMS)].map((match) =>
+        match[0].toLowerCase(),
+      ),
+    ),
+  ].sort();
+}
 
 const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -98,13 +115,7 @@ describe("the published tarball", () => {
 
     const offenders = new Map<string, string[]>();
     for (const path of files) {
-      const found = [
-        ...new Set(
-          Array.from(readFileSync(path, "utf8").matchAll(FORBIDDEN), (match) =>
-            match[0].toLowerCase(),
-          ),
-        ),
-      ].sort();
+      const found = forbiddenIn(readFileSync(path, "utf8"));
       if (found.length > 0) {
         offenders.set(path, found);
       }
@@ -132,7 +143,7 @@ describe("the published tarball", () => {
 
     const offenders = Object.fromEntries(
       files
-        .map((path) => [path, [...new Set(Array.from(readFileSync(path, "utf8").matchAll(FORBIDDEN), (match) => match[0].toLowerCase()))]] as const)
+        .map((path) => [path, forbiddenIn(readFileSync(path, "utf8"))] as const)
         .filter(([, found]) => found.length > 0),
     );
 
@@ -140,11 +151,14 @@ describe("the published tarball", () => {
   });
 
   it("refuses the vendor names and passes the carriers (the control for both scans)", () => {
-    const once = new RegExp(FORBIDDEN.source, "i");
-    expect(once.test(`${rot13("argfncvraf")}Number`)).toBe(true);
-    expect(once.test(`the ${rot13("aqc").toUpperCase()} login`)).toBe(true);
-    expect(once.test(`${rot13("pybhqsyner").toUpperCase()} token`)).toBe(true);
-    expect(once.test("Bandwidth, Sinch, Telnyx, Twilio and Inteliquent carry calls; uses a session")).toBe(false);
+    expect(forbiddenIn(`${rot13("argfncvraf")}Number`)).toHaveLength(1);
+    expect(forbiddenIn(`the ${rot13("aqc").toUpperCase()} login`)).toHaveLength(1);
+    expect(forbiddenIn(`${rot13("njf").toUpperCase()}_REGION`)).toHaveLength(1);
+    expect(forbiddenIn(`${rot13("pybhqsyner").toUpperCase()} token`)).toHaveLength(1);
+    expect(forbiddenIn(`${rot13("fanc").toUpperCase()}.HD`)).toHaveLength(1);
+    expect(
+      forbiddenIn("Bandwidth, Sinch, Telnyx, Twilio and Inteliquent carry calls; uses a session, aws-free"),
+    ).toEqual([]);
   });
 
   it("compiles in no base URL of its own", () => {
