@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased (0.27.0) — Added
+## 0.27.0 (2026-11-04) — Added
 
 Every operation a client credential can make now has a method of its own;
 none needs `client.request()`. A check on every build keeps it so.
@@ -20,7 +20,9 @@ none needs `client.request()`. A check on every build keeps it so.
 - **`client.pbxNumbers`**: `list()`, `get()`, `create({ phoneNumberId })` (add a
   routed number to its customer's phone system — the portal's "Add to PBX"),
   `delete()` and `retry()`. With `phoneNumbers.route()` an API credential now
-  takes a number all the way into the phone system.
+  takes a number all the way into the phone system. `create()` takes an
+  options object, so a member the API adds to it later is not a breaking
+  change.
 - **`client.faxes`**: `update()` (`read`, `archived`, `tags`), `delete()` and
   `thumbnail()` (the preview's bytes).
 - **`client.pbx.callRecords.downloadRecording(recording)`**: a recording's
