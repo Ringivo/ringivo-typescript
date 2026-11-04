@@ -13,6 +13,10 @@
  * spec's own descriptions as doc comments, and tsup copies whatever of them
  * reaches the public types into `dist/index.d.ts`.
  *
+ * The same scan holds the API's vendor rule: the SDK names no vendor the
+ * platform is built on — only carriers may be named. It reads the built `dist/` and the README and
+ * examples, which npm and GitHub show to every integrator.
+ *
  * Cheap and durable on purpose: it costs milliseconds, it needs no network,
  * and it fails on the next `scripts/generate.sh` run that pulls a branded
  * string out of a spec.
@@ -35,12 +39,31 @@ const rot13 = (s: string): string =>
   s.replace(/[a-z]/g, (c) =>
     String.fromCharCode(((c.charCodeAt(0) - 97 + 13) % 26) + 97),
   );
+// The third group is the vendors the platform is built on (the phone system
+// and its device and media products, the rating engine, the speech, AI and
+// email providers, the clouds, the edge, the error inbox, the identity check,
+// the number-lookup and porting services). Carriers are allowed and are not
+// here. A short or common token is matched as a whole word only.
+const VENDOR_NAMES = [
+  "argfncvraf", "fancfbyhgvba", "fanczbovyr", "ptengrf", "yvirxvg", "bcranv",
+  "naguebcvp", "pynhqr", "ryriraynof", "pybhqsyner", "xnznvyvb", "serrfjvgpu",
+  "egcratvar", "zrvyvfrnepu", "cbegpbageby", "qvqvg", "fxlfjvgpu", "fragel",
+  "cbfgznex", "benpyr", "nznmba",
+].map(rot13);
+const VENDOR_WORDS = ["gryvdhr", "aqc", "azf", "bpv", "bpve", "njf", "frf"].map(rot13);
 const FORBIDDEN = new RegExp(
-  `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|${rot13("qrrctenz")}|\\b${rot13("abin")}|ringivo\\.com`,
+  [
+    `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|${rot13("qrrctenz")}|\\b${rot13("abin")}|ringivo\\.com`,
+    ...VENDOR_NAMES,
+    `${rot13("cbegvat")}\\.com`,
+    `${rot13("cynva")}\\.com`,
+    ...VENDOR_WORDS.map((word) => `\\b${word}\\b`),
+  ].join("|"),
   "gi",
 );
 
 const DIST = fileURLToPath(new URL("../dist", import.meta.url));
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 function distFiles(directory: string = DIST): string[] {
   let entries: string[];
@@ -99,6 +122,29 @@ describe("the published tarball", () => {
     expect(once.test(`made by ${rot13("qrrctenz").toUpperCase()}`)).toBe(true);
     expect(once.test(`model: ${rot13("abin")}-3`)).toBe(true);
     expect(once.test("an innovation in transcripts")).toBe(false);
+  });
+
+  it("names no vendor in the README or the examples", () => {
+    const files = [join(ROOT, "README.md"), ...distFiles(join(ROOT, "examples"))];
+
+    // The denominator: the README and at least one example were read.
+    expect(files.filter((path) => path.endsWith(".ts")).length).toBeGreaterThan(0);
+
+    const offenders = Object.fromEntries(
+      files
+        .map((path) => [path, [...new Set(Array.from(readFileSync(path, "utf8").matchAll(FORBIDDEN), (match) => match[0].toLowerCase()))]] as const)
+        .filter(([, found]) => found.length > 0),
+    );
+
+    expect(offenders, "the README or an example names a forbidden brand, host or vendor").toEqual({});
+  });
+
+  it("refuses the vendor names and passes the carriers (the control for both scans)", () => {
+    const once = new RegExp(FORBIDDEN.source, "i");
+    expect(once.test(`${rot13("argfncvraf")}Number`)).toBe(true);
+    expect(once.test(`the ${rot13("aqc").toUpperCase()} login`)).toBe(true);
+    expect(once.test(`${rot13("pybhqsyner").toUpperCase()} token`)).toBe(true);
+    expect(once.test("Bandwidth, Sinch, Telnyx, Twilio and Inteliquent carry calls; uses a session")).toBe(false);
   });
 
   it("compiles in no base URL of its own", () => {
