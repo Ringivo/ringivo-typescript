@@ -4647,6 +4647,11 @@ export interface components {
              */
             retentionPages?: number | null;
             status?: components["schemas"]["FaxAccountStatus"];
+            /**
+             * @description Whether this line accepts faxes sent by email from the confirmed addresses of the people
+             *     granted it. Default false.
+             */
+            emailToFax?: boolean;
             /** Format: date-time */
             createdAt?: string | null;
             /** Format: date-time */
@@ -4697,6 +4702,11 @@ export interface components {
             retentionDays?: number | null;
             retentionPages?: number | null;
             status?: components["schemas"]["FaxAccountStatus"];
+            /**
+             * @description Whether this line accepts faxes sent by email from the confirmed addresses of the people
+             *     granted it. Default false.
+             */
+            emailToFax?: boolean;
         };
         FaxAccountCreateAttributes: {
             name: string;
@@ -4708,6 +4718,11 @@ export interface components {
             retentionDays?: number | null;
             retentionPages?: number | null;
             status?: components["schemas"]["FaxAccountStatus"];
+            /**
+             * @description Whether this line accepts faxes sent by email from the confirmed addresses of the people
+             *     granted it. Default false.
+             */
+            emailToFax?: boolean;
         };
         FaxAccountCreateRequest: {
             data: {

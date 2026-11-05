@@ -10838,6 +10838,11 @@ components:
             **Null means there is no limit.**
         status:
           $ref: '#/components/schemas/FaxAccountStatus'
+        emailToFax:
+          type: boolean
+          description: |
+            Whether this line accepts faxes sent by email from the confirmed addresses of the people
+            granted it. Default false.
         createdAt: { type: [string, 'null'], format: date-time }
         updatedAt: { type: [string, 'null'], format: date-time }
     FaxAccountRelationships:
@@ -10907,6 +10912,11 @@ components:
         retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
         status:
           $ref: '#/components/schemas/FaxAccountStatus'
+        emailToFax:
+          type: boolean
+          description: |
+            Whether this line accepts faxes sent by email from the confirmed addresses of the people
+            granted it. Default false.
     # A FLAT OBJECT, NOT AN `allOf` OVER THE WRITABLE SCHEMA: a TypedDict cannot re-require an
     # inherited key; both generators want a flat object here.
     FaxAccountCreateAttributes:
@@ -10922,6 +10932,11 @@ components:
         retentionPages: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
         status:
           $ref: '#/components/schemas/FaxAccountStatus'
+        emailToFax:
+          type: boolean
+          description: |
+            Whether this line accepts faxes sent by email from the confirmed addresses of the people
+            granted it. Default false.
     FaxAccountCreateRequest:
       type: object
       required: [data]
