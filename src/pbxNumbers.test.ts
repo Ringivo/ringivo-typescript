@@ -41,7 +41,7 @@ function resource(state = "pending"): object {
     type: "pbx-numbers",
     id: PBX_NUMBER_ID,
     attributes: {
-      netsapiensNumber: "13025550100",
+      phoneSystemNumber: "13025550100",
       state,
       stateDetail: state === "failed" ? "The phone system refused the number." : null,
       stateChangedAt: "2026-11-03T22:00:00.000000Z",

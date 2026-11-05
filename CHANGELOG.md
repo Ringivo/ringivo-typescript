@@ -1,5 +1,17 @@
 # Release notes
 
+## 0.28.0 (2026-11-05) — Changed
+
+A wire rename in the API, so a minor release before 1.0.
+
+- **`PbxNumber.number`** reads the API's `phoneSystemNumber` attribute, the
+  new name of the PBX number's number (the value is unchanged: the E.164 form
+  without its `+`). 0.27.0 reads the old name and, against the renamed API,
+  returns `null` for it. Upgrade together with the API change.
+- A failed PBX number's `stateDetail` now reads the step and a neutral reason.
+- The check on every build that keeps platform names out of the package also
+  keeps vendor names out of it, and out of the README and the examples.
+
 ## 0.27.0 (2026-11-04) — Added
 
 Every operation a client credential can make now has a method of its own;

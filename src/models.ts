@@ -2683,7 +2683,7 @@ export function pbxNumberFromResource(resource: RawJson): PbxNumber {
 
   return Object.freeze({
     id: text(resource, "id") ?? "",
-    number: text(attributes, "netsapiensNumber"),
+    number: text(attributes, "phoneSystemNumber"),
     state: text(attributes, "state"),
     stateDetail: text(attributes, "stateDetail"),
     stateChangedAt: instant(attributes.stateChangedAt),
