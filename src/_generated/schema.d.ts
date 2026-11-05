@@ -6659,7 +6659,7 @@ export interface components {
              */
             phoneSystemNumber?: string;
             state?: components["schemas"]["ProvisioningState"];
-            /** @description While provisioning, the step we reached; after a failure, the step and the reason. A reason the phone system gave reads as a neutral sentence with its HTTP status. */
+            /** @description While provisioning, the step we reached. After a failure, the step and the reason. A reason the phone system gave reads "the phone system did not accept the change", with its HTTP status. A refusal of ours reads as written, or "a setup step this needs is not complete yet". Any other failure reads "the change could not be completed". */
             stateDetail?: string | null;
             /** Format: date-time */
             stateChangedAt?: string | null;
