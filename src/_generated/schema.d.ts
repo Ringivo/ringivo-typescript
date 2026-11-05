@@ -1635,7 +1635,8 @@ export interface paths {
          * @description One request and where it has got to. `include=phoneNumber` side-loads the number if you still
          *     hold it — a request outlives the number it was for, so this is null once a number is released.
          *     `include=portOrder` side-loads the port order a request rides, and is null for a request made
-         *     directly against a number already in your inventory.
+         *     directly against a number already in your inventory. It is also null, and nothing is
+         *     side-loaded, when your credential may not read port orders (`port-orders:read`).
          */
         get: operations["getMessagingEnablement"];
         put?: never;
@@ -1907,9 +1908,9 @@ export interface paths {
          * Read one phone number
          * @description A number you just bought reads `pending` until the carrier activates it, then `active`.
          *
-         *     **To see which customer holds it, send `include=customer`.** `relationships.customer.data`
-         *     is then that customer's identifier, or `null` while the number is in your own pool, and the
-         *     customer itself is in `included`. Without `include`, a relationship carries only its links.
+         *     **`relationships.customer.data` says which customer holds it:** that customer's identifier,
+         *     or `null` while the number is in your own pool. Send `include=customer` to get the customer
+         *     itself in `included` as well.
          *
          *     A number that is not yours answers **404**.
          */
@@ -2193,9 +2194,9 @@ export interface paths {
          *     **The number is an attribute, not a link.** Every other endpoint here points at a number you
          *     already hold; this one is how a number arrives, so there is no id to name yet.
          *
-         *     **Add `?include=phoneNumber` to get the number back in the same response.** Relationships
-         *     carry their links always and their linkage only when you ask, so without the include you get
-         *     the order and follow a link for the number it made.
+         *     **Add `?include=phoneNumber` to get the number back in the same response.** Without the
+         *     include, `relationships.phoneNumber.data` still carries the new number's identifier, so you
+         *     can read it with `GET /v1/phone-numbers/{id}`.
          *
          *     **Name who will authorize it.** The number's calls are carried by another provider, so the
          *     authorization has to come from whoever that provider bills rather than from you. Send their
@@ -4242,12 +4243,17 @@ export interface components {
             [key: string]: unknown;
         };
         /**
-         * @description A to-one relationship. `data` is present only when the relationship was resolved — a plain
-         *     read that included nothing gives `links` alone.
+         * @description A to-one relationship. `data` is ALWAYS present, also on a plain read that included nothing:
+         *     the related resource's identifier, or `null` when there is none or it was deleted. It is
+         *     also `null` when the related resource is outside your credential's reach — for example a
+         *     number that has since moved to another customer, read with a credential issued for the
+         *     first one — so an identifier never names another customer's resource. Reading the related
+         *     resource itself still needs that resource's own scope. Send `include` to get it in
+         *     `included`.
          */
         RelationshipToOne: {
             links?: components["schemas"]["ResourceLinks"];
-            data?: components["schemas"]["ResourceIdentifier"] | null;
+            data: components["schemas"]["ResourceIdentifier"] | null;
         };
         /** @description A to-many relationship. */
         RelationshipToMany: {
@@ -6354,7 +6360,9 @@ export interface components {
             phoneNumber?: components["schemas"]["RelationshipToOne"];
             /**
              * @description The port order this request rides, or null when it was made directly against a number
-             *     already in your inventory. This is what tells the two kinds apart.
+             *     already in your inventory. This is what tells the two kinds apart — but only to a
+             *     credential that may read port orders (`port-orders:read`). To any other credential it
+             *     is always null, because the order is one it may not read.
              */
             portOrder?: components["schemas"]["RelationshipToOne"];
         };
