@@ -6634,9 +6634,9 @@ export interface components {
              * @description The number as the phone system spells it — the E.164 form without its `+`.
              * @example 13025550100
              */
-            netsapiensNumber?: string;
+            phoneSystemNumber?: string;
             state?: components["schemas"]["ProvisioningState"];
-            /** @description While provisioning, the step we reached; after a failure, the reason. */
+            /** @description While provisioning, the step we reached; after a failure, the step and the reason. A reason the phone system gave reads as a neutral sentence with its HTTP status. */
             stateDetail?: string | null;
             /** Format: date-time */
             stateChangedAt?: string | null;

@@ -13291,7 +13291,7 @@ components:
     PbxNumberAttributes:
       type: object
       properties:
-        netsapiensNumber:
+        phoneSystemNumber:
           type: string
           description: The number as the phone system spells it — the E.164 form without its `+`.
           example: '13025550100'
@@ -13299,7 +13299,7 @@ components:
           $ref: '#/components/schemas/ProvisioningState'
         stateDetail:
           type: [string, 'null']
-          description: While provisioning, the step we reached; after a failure, the reason.
+          description: While provisioning, the step we reached; after a failure, the step and the reason. A reason the phone system gave reads as a neutral sentence with its HTTP status.
         stateChangedAt: { type: [string, 'null'], format: date-time }
         createdAt: { type: [string, 'null'], format: date-time }
         updatedAt: { type: [string, 'null'], format: date-time }
