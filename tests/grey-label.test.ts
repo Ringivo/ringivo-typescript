@@ -43,25 +43,30 @@ const rot13 = (s: string): string =>
 // and its device and media products, the rating engine, the speech, AI and
 // email providers, the clouds, the edge, the error inbox, the identity check,
 // the number-lookup and porting services). Carriers are allowed and are not
-// here. The acronyms count only in capitals, and a short name only where no
-// letter touches it, the same rule the API's own check applies.
+// here. The rule is the API's own check: a name counts on a word or camelCase
+// boundary in any case (`xNumber`, `isX`, `x_state`), never run into other
+// letters (so a carrier such as Inteliquent, or a schema named AddressEntry,
+// passes), and an acronym counts only in capitals.
 const VENDOR_NAMES = [
   "argfncvraf", "arg-fncvraf", "fancfbyhgvba", "fanczbovyr", "fancohvyqre",
-  "ptengrf", "yvirxvg", "bcranv", "naguebcvp", "pynhqr", "ryriraynof",
-  "pybhqsyner", "pybhqsebag", "xnznvyvb", "serrfjvgpu", "egcratvar",
-  "zrvyvfrnepu", "cbegpbageby", "qvqvg", "fxlfjvgpu", "fragel", "cbfgznex",
-  "benpyr", "nznmba",
+  "fanc.uq", "ptengrf", "yvirxvg", "bcranv", "naguebcvp", "pynhqr",
+  "ryriraynof", "pybhqsyner", "pybhqsebag", "xnznvyvb", "serrfjvgpu",
+  "egcratvar", "zrvyvfrnepu", "cbegpbageby", "cbegvat.pbz", "qvqvg",
+  "gryvdhr", "fxlfjvgpu", "fragel", "cbfgznex", "benpyr", "nznmba",
+  "nznmbanjf", "cynva.pbz",
 ].map(rot13);
 const FORBIDDEN = new RegExp(
-  [
-    `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|${rot13("qrrctenz")}|\\b${rot13("abin")}|ringivo\\.com`,
-    ...VENDOR_NAMES,
-    `${rot13("fanc")}\\.${rot13("uq")}`,
-    `${rot13("cbegvat")}\\.com`,
-    `${rot13("cynva")}\\.com`,
-    `(?<![A-Za-z])${rot13("gryvdhr")}(?![A-Za-z])`,
-  ].join("|"),
+  `${rot13("gryanzvp")}|${rot13("gryvzngvp")}|${rot13("qrrctenz")}|\\b${rot13("abin")}|ringivo\\.com`,
   "gi",
+);
+/** `name` as a case-insensitive pattern built letter by letter, so the boundaries stay case-sensitive. */
+const anyCase = (name: string): string =>
+  name.replace(/[a-z]|[^a-z]/g, (c) =>
+    /[a-z]/.test(c) ? `[${c}${c.toUpperCase()}]` : c.replace(/[.\\-]/g, "\\$&"),
+  );
+const VENDOR_PATTERN = new RegExp(
+  `(?:(?<![A-Za-z])|(?<=[a-z])(?=[A-Z]))(?:${VENDOR_NAMES.map(anyCase).join("|")})(?![a-z])`,
+  "g",
 );
 const VENDOR_ACRONYMS = new RegExp(
   `(?<![A-Za-z])(?:${["aqc", "azf", "bpve", "bpv", "njf", "frf"].map((word) => rot13(word).toUpperCase()).join("|")})(?![A-Za-z])`,
@@ -72,7 +77,7 @@ const VENDOR_ACRONYMS = new RegExp(
 function forbiddenIn(text: string): string[] {
   return [
     ...new Set(
-      [...text.matchAll(FORBIDDEN), ...text.matchAll(VENDOR_ACRONYMS)].map((match) =>
+      [...text.matchAll(FORBIDDEN), ...text.matchAll(VENDOR_PATTERN), ...text.matchAll(VENDOR_ACRONYMS)].map((match) =>
         match[0].toLowerCase(),
       ),
     ),
@@ -156,8 +161,9 @@ describe("the published tarball", () => {
     expect(forbiddenIn(`${rot13("njf").toUpperCase()}_REGION`)).toHaveLength(1);
     expect(forbiddenIn(`${rot13("pybhqsyner").toUpperCase()} token`)).toHaveLength(1);
     expect(forbiddenIn(`${rot13("fanc").toUpperCase()}.HD`)).toHaveLength(1);
+    expect(forbiddenIn(`is${rot13("argfncvraf").replace(/^./, (c) => c.toUpperCase())}Enabled`)).toHaveLength(1);
     expect(
-      forbiddenIn("Bandwidth, Sinch, Telnyx, Twilio and Inteliquent carry calls; uses a session, aws-free"),
+      forbiddenIn("Bandwidth, Sinch, Telnyx, Twilio and Inteliquent carry calls; uses a session, aws-free, AddressEntry, whoDidItems"),
     ).toEqual([]);
   });
 
