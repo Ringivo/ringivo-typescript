@@ -6329,9 +6329,10 @@ export interface components {
              */
             stage?: number;
             /**
-             * @description The one word to print beneath a progress meter — `Scheduled`, `Submitted`, `In review`,
-             *     `Active`, `Removed`, `Failed` or `Confirming` (a request that was sent and whose arrival is
-             *     still being confirmed).
+             * @description The one word to print beneath a progress meter — `Scheduled`, `Waiting for the voice port`
+             *     (a request on a number port that has not completed yet, or that ended), `Submitted`,
+             *     `In review`, `Active`, `Removed`, `Failed` or `Confirming` (a request that was sent and whose
+             *     arrival is still being confirmed).
              *
              *     **Display copy, not a vocabulary to branch on**; use `stage` and `status` for that. It is
              *     deliberately not an enum here, because it is wording we may improve.
@@ -6340,7 +6341,9 @@ export interface components {
             stageWord?: string;
             /**
              * @description One sentence you can show a person, or null when the status already says everything —
-             *     a scheduled request and a plain submitted one have nothing to add.
+             *     a plain submitted request, and a scheduled one that nothing holds, have nothing to add. A
+             *     request on a number port says why it waits: it is sent only once the port completes, and
+             *     never once the port ended.
              * @example Submitted 2026-09-01. The losing provider is reviewing the authorization.
              */
             detail?: string | null;
