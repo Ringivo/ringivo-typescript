@@ -2283,7 +2283,7 @@ export interface paths {
          *     ```
          *     draft  →  awaiting_review  →  submitted  →  foc_assigned  →  completed
          *       │                                                     →  failed
-         *       └ reads awaiting_signature while the letter is out
+         *       └ reads awaiting_signature while the letter is out and not signed yet
          *     ```
          *
          *     A port order starts as a **`draft`**: yours to edit, yours to throw away, and not yet with
@@ -2292,7 +2292,10 @@ export interface paths {
          *     discard it exactly as before the hand-over. An edit to a field the letter prints replaces
          *     the letter your customer is reading, and cancels a signed one; an edit that would cancel a
          *     signed letter is refused until you confirm it. The order reads `awaiting_signature` from the
-         *     hand-over until it is submitted, whether or not your customer has signed yet.
+         *     hand-over until your customer signs. **A signed order reads `draft` again**: it is yours to
+         *     submit, and `documents.loa` holds the signed letter. An edit that cancels the signed letter
+         *     puts the order back to `awaiting_signature`, because your customer still holds the link.
+         *     Until 2026-11-07 a signed order went on reading `awaiting_signature` until it was submitted.
          *     **`awaiting_review`** is our desk's: the request is in, and from here on it is worked rather
          *     than edited. Our desk can return it to `draft` with a note, which is the one edge in this
          *     lifecycle that goes backwards. Everything past it — `submitted` to a carrier,
@@ -2301,7 +2304,8 @@ export interface paths {
          *
          *     **No operation on this API hands the letter over.** An order reads `awaiting_signature`
          *     after the hand-over in the portal, and `port_order.status_changed` reports the move
-         *     (`draft` → `awaiting_signature`) like any other.
+         *     (`draft` → `awaiting_signature`) like any other. It reports the signature too
+         *     (`awaiting_signature` → `draft`).
          *
          *     **The numbers share the lifecycle, except `awaiting_signature`.** A port splits — a carrier
          *     can commit to three lines and refuse the fourth — so each number carries its own status in
@@ -2450,9 +2454,10 @@ export interface paths {
          *     background, whether your numbers can move — which is not a thing to put behind a field
          *     assignment.
          *
-         *     **Legal from `draft`** — including an order that reads `awaiting_signature` — and from
-         *     nowhere else: a 409 otherwise. Signing does not submit an order for you; you still send
-         *     this, from wherever the order stands.
+         *     **Legal from `draft`**, and from nowhere else: a 409 otherwise. An order that reads
+         *     `awaiting_signature` is refused until the signed letter is on it (a 422 naming the signed
+         *     LOA), because its letter is not signed yet. Signing does not submit an order for you; you
+         *     still send this once the order reads `draft` with `documents.loa` set.
          *
          *     It answers **200 and not 202**. The transition is finished by the time you read the
          *     response: the order is in `awaiting_review`. The carrier questions are asked in the background
@@ -3707,8 +3712,14 @@ export interface webhooks {
          * @description Fired when an existing order changes status, with both ends of the move in the body. A
          *     CREATED ORDER FIRES NOTHING: there is no `from` to name. Both ends are the `status` the
          *     order reads on `GET /v1/port-orders/{portOrder}`, so handing the Letter of Authorization to
-         *     your customer fires `draft` → `awaiting_signature`, and submitting that order fires
-         *     `awaiting_signature` → `awaiting_review`.
+         *     your customer fires `draft` → `awaiting_signature`, your customer's signature fires
+         *     `awaiting_signature` → `draft`, and submitting the signed order fires `draft` →
+         *     `awaiting_review`. An edit, a regenerated letter (`generate-loa`) or a removed document
+         *     that cancels a signed letter fires `draft` → `awaiting_signature`, because your customer
+         *     still holds the link.
+         *
+         *     **`awaiting_signature` → `draft` means "signed" from 2026-11-07.** Before 2026-09-29 the
+         *     same move meant the order was reopened and its letters discarded; that act no longer exists.
          *
          *     **Four keys, and never the contents of the order.** No customer name, no numbers, no
          *     port-out PIN. Read `GET /v1/port-orders/{portOrder}` with your own credential when you want
@@ -6802,17 +6813,18 @@ export interface components {
             };
         };
         /**
-         * @description Where an order stands. `draft` is yours to edit; `awaiting_signature` is a draft whose
-         *     Letter of Authorization is with your customer to sign — still yours to edit, and it reads
-         *     this way from the hand-over until you submit it; `awaiting_review` is with our desk;
+         * @description Where an order stands. `draft` is yours to edit and to submit; `awaiting_signature` is a
+         *     draft whose Letter of Authorization is with your customer and not signed yet — still yours
+         *     to edit, and it reads this way from the hand-over until your customer signs, when it reads
+         *     `draft` again (`documents.loa` then holds the signed letter); `awaiting_review` is with our desk;
          *     `submitted` means the paperwork went to a carrier; `foc_assigned` means one committed to a
          *     cutover date; `completed` and `failed` are the two ends.
          *
          *     **The order and each of its numbers share this vocabulary, except `awaiting_signature`.**
          *     That one is the order's alone: it is a fact about the paperwork, and a number has none of
          *     its own — so a number stays `draft` until the order enters review. `filter[status]` takes
-         *     the same words: `awaiting_signature` selects the drafts whose letter is out, and `draft`
-         *     the ones whose letter is not.
+         *     the same words: `awaiting_signature` selects the drafts whose letter is out and not signed
+         *     yet, and `draft` every other draft — also a signed one.
          * @enum {string}
          */
         PortOrderStatus: "draft" | "awaiting_signature" | "awaiting_review" | "submitted" | "foc_assigned" | "completed" | "failed";
@@ -7114,7 +7126,8 @@ export interface components {
             /**
              * Format: date-time
              * @description When the letter went to your customer — the moment the order started to read
-             *     `awaiting_signature`. Not the request link's own age: a link is minted for the bill task
+             *     `awaiting_signature`. It stays set after your customer signs, when the order reads
+             *     `draft` again. Not the request link's own age: a link is minted for the bill task
              *     days earlier. It clears when our desk returns the order to `draft`, because the letter
              *     it dated is no longer out.
              */
