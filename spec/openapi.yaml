@@ -12148,7 +12148,7 @@ components:
         answeredAt: { type: [string, 'null'], format: date-time, description: 'Null when nobody answered.' }
         releasedAt: { type: [string, 'null'], format: date-time }
         durationSeconds: { type: [integer, 'null'], description: 'Seconds, end to end.' }
-        talkSeconds: { type: [integer, 'null'], description: 'Seconds anybody was actually talking.' }
+        talkSeconds: { type: [integer, 'null'], description: 'Seconds the phone system counts as talk. It counts from the first answer by anything (a person, an auto attendant, a forward or a voicemail greeting), so a `missed` call can have talk time.' }
         releaseCode: { type: [string, 'null'], description: "The phone system's own code for how the call ended." }
         releaseText: { type: [string, 'null'], description: "The phone system's own sentence for how the call ended." }
         hidden: { type: boolean, description: 'Does the phone system hide this record from its own call log?' }
@@ -15028,7 +15028,18 @@ components:
       enum: [inbound, outbound, internal]
     CallDisposition:
       type: [string, 'null']
-      description: Whether anybody answered. Derived from the same integer as `direction`.
+      description: |
+        Whether anybody answered. Derived from the same integer as `direction`, and from
+        `terminatedTo`.
+
+        An inbound call that ends in voicemail is `missed`. This includes a call that ended while the
+        greeting played, with no message left. To tell the two apart, ask for the extended member
+        `terminatedTo`: `VMail` means the caller left a message, and `SpeakAccount` means the call
+        ended while the greeting played and no message was left. A `missed` record can have
+        `talkSeconds` above zero: talk time counts from the first answer by anything, such as an
+        auto attendant, a forward, or a person who then transferred the caller to a voicemail. An
+        outbound call that reaches a greeting is `answered`. A user who calls a voicemail inside
+        their own domain is an `internal` call, and it is `answered`.
       enum: [answered, missed]
     # -- Click-to-dial (POST /v1/pbx/subscribers/{subscriber}/calls) -------------------------------
     PbxCallRequest:
@@ -15364,7 +15375,7 @@ components:
           example: '2026-09-12T14:00:04Z'
         releasedAt: { type: [string, 'null'], format: date-time, example: '2026-09-12T14:01:04Z' }
         durationSeconds: { type: [integer, 'null'], description: 'Seconds, end to end.' }
-        talkSeconds: { type: [integer, 'null'], description: 'Seconds anybody was actually talking.' }
+        talkSeconds: { type: [integer, 'null'], description: 'Seconds the phone system counts as talk. It counts from the first answer by anything (a person, an auto attendant, a forward or a voicemail greeting), so a `missed` call can have talk time.' }
         releaseCode:
           type: [string, 'null']
           description: The phone system's own code for how the call ended.

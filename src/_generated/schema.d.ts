@@ -5716,7 +5716,7 @@ export interface components {
             releasedAt?: string | null;
             /** @description Seconds, end to end. */
             durationSeconds?: number | null;
-            /** @description Seconds anybody was actually talking. */
+            /** @description Seconds the phone system counts as talk. It counts from the first answer by anything (a person, an auto attendant, a forward or a voicemail greeting), so a `missed` call can have talk time. */
             talkSeconds?: number | null;
             /** @description The phone system's own code for how the call ended. */
             releaseCode?: string | null;
@@ -7952,7 +7952,17 @@ export interface components {
          */
         CallDirection: "inbound" | "outbound" | "internal" | null;
         /**
-         * @description Whether anybody answered. Derived from the same integer as `direction`.
+         * @description Whether anybody answered. Derived from the same integer as `direction`, and from
+         *     `terminatedTo`.
+         *
+         *     An inbound call that ends in voicemail is `missed`. This includes a call that ended while the
+         *     greeting played, with no message left. To tell the two apart, ask for the extended member
+         *     `terminatedTo`: `VMail` means the caller left a message, and `SpeakAccount` means the call
+         *     ended while the greeting played and no message was left. A `missed` record can have
+         *     `talkSeconds` above zero: talk time counts from the first answer by anything, such as an
+         *     auto attendant, a forward, or a person who then transferred the caller to a voicemail. An
+         *     outbound call that reaches a greeting is `answered`. A user who calls a voicemail inside
+         *     their own domain is an `internal` call, and it is `answered`.
          * @enum {string|null}
          */
         CallDisposition: "answered" | "missed" | null;
@@ -8262,7 +8272,7 @@ export interface components {
             releasedAt?: string | null;
             /** @description Seconds, end to end. */
             durationSeconds?: number | null;
-            /** @description Seconds anybody was actually talking. */
+            /** @description Seconds the phone system counts as talk. It counts from the first answer by anything (a person, an auto attendant, a forward or a voicemail greeting), so a `missed` call can have talk time. */
             talkSeconds?: number | null;
             /**
              * @description The phone system's own code for how the call ended.
