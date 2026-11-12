@@ -9416,9 +9416,21 @@ webhooks:
         `filter[startedAfter]` and `filter[startedBefore]` around the call. Expect a list: one call
         record for each domain that saw the call, and sometimes two in one domain. The list can be
         empty for a few minutes, because the phone system writes the call record when the call ends;
-        ask again until it is not, for up to 10 minutes after `occurredAt`. `callRecordId` is a
-        best-effort value, looked up once when this event was built. It can be null, and it is never
-        sent again. It is deprecated and still sent.
+        ask again until it is not, for up to 10 minutes after `occurredAt`. `callRecordId` is
+        deprecated and still sent.
+
+        **This event waits for its call record, so it can come late, or not at all.** Before we send
+        it to an endpoint that asks for it, we look for the recording's call record. For at least
+        99.9% of recordings it is there at the first look, and the event goes out at once with
+        `callRecordId` set. When it is not there, we look again at once and then 10 s, 70 s,
+        6 min 10 s, 36 min 10 s and 1 h 36 min 10 s later, and send the event, with `callRecordId`
+        set, at the first look that finds it. `occurredAt` and `eventId` stay as they would be on
+        time. A supersede that comes while the first event waits replaces it: you get only the
+        supersede's event. When the call record is still not there after 1 h 36 min 10 s, we do not
+        send the event. The recordings list of the call record holds the recording either way, so do not use
+        this event as the only sign that a recording exists. `callRecordId` can still be null on a
+        format conversion (looked up once, never sent again), when `customerId` is null, and,
+        rarely, when you create the endpoint at the moment the recording reaches us.
 
         **You are told once per change, and never once per retry.** We send this event when a
         recording first arrives, when a supersede changes the audio behind it, and when we convert
@@ -11952,9 +11964,13 @@ components:
             DEPRECATED — find the call record with `filter[callId]` (see the event's description).
             Still sent. The ONE call record this recording belongs to — the `{callRecord}` of
             `GET /v1/pbx/call-records/{callRecord}/recordings`. It is the record in the recording's
-            own domain whose call ids include `callId` and that was up when the capture opened. Null
-            when we did not have the call record yet when this event was built (it normally arrives
-            seconds after the call ends), or could not look it up; `filter[callId]` then finds it.
+            own domain whose call ids include `callId` and that was up when the capture opened. On
+            `pbx.recording.created` the event waits for the call record (up to 1 h 36 min 10 s after
+            `occurredAt`, then it is not sent), so this is set there, except on a format conversion
+            and for a recording of none of your customers. Null on a format conversion when we did
+            not have the call record yet when the event was built, or could not look it up (and,
+            rarely, for an endpoint created at the moment the recording reached us);
+            `filter[callId]` then finds it.
         durationSeconds:
           type: [integer, 'null']
           description: |
