@@ -1614,7 +1614,9 @@ export interface paths {
          *
          *     The refusals worth handling: the number is not yet active (wait), it already has messaging,
          *     or a request for it is already in flight — there is no cancel, so a second request for one
-         *     number is refused rather than queued.
+         *     number is refused rather than queued. A fifth: texting for the number was turned off and that
+         *     removal is still being finished with the provider (a 409 with `code`
+         *     `messaging_removal_still_open`; try again in a few minutes).
          */
         post: operations["createMessagingEnablement"];
         delete?: never;
@@ -2052,8 +2054,19 @@ export interface paths {
         post?: never;
         /**
          * Turn text messaging off for a number
-         * @description Messaging stops for this number. The number's `messaging` object reads `enabled: false`
-         *     immediately, and the removal at the provider follows on its own.
+         * @description Messaging stops for this number. We ask the provider to remove it before we answer, so this
+         *     normally takes about 10 seconds, and at most about 20: use a client timeout of 30 seconds or
+         *     more. On a 204 the number's `messaging` object reads `enabled: false` at once. In most cases
+         *     the provider has removed it; when its answer was lost, we finish the removal for you, so do
+         *     not send the request again.
+         *
+         *     On every refusal nothing changed, and the error has a stable `code`: a 422 when the provider
+         *     refused (`messaging_removal_refused`, or `messaging_removal_too_soon` with
+         *     `meta.retryAllowedAt` when the number was turned on less than 15 minutes ago), a 502 when the
+         *     provider did not answer (repeat the request), a 503 when our own access to the provider failed
+         *     (support is alerted), and a 409 while another request for the same number still runs. A 500
+         *     `messaging_removal_not_recorded` means the provider was asked and we could not record it:
+         *     support finishes it, and repeating the request is safe (it does not ask the provider again).
          *
          *     **This does not undo the request that turned it on.** That request completed, and the record
          *     of it stays in `GET /v1/messaging-enablements` — turning messaging off is a new act, not a
@@ -4355,7 +4368,7 @@ export interface components {
          *     detail.
          * @enum {string}
          */
-        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable" | "media_rejected" | "media_timeout" | "media_unreachable" | "media_store_unavailable" | "idempotency_key_required" | "idempotency_key_invalid" | "idempotency_key_reused" | "idempotency_key_in_use";
+        ErrorCode: "validation_failed" | "unknown_member" | "caller_id_not_permitted" | "document_too_large" | "too_many_pages" | "unsupported_media_type" | "fax_account_suspended" | "fax_account_has_routed_numbers" | "number_is_default_caller_id" | "rate_limited" | "not_found" | "forbidden" | "internal_error" | "sip_trunk_refused" | "transcript_pending" | "transcript_failed" | "transcript_not_requested" | "recording_audio_missing" | "transcription_daily_limit_reached" | "transcript_request_limited" | "transcription_unavailable" | "media_rejected" | "media_timeout" | "media_unreachable" | "media_store_unavailable" | "idempotency_key_required" | "idempotency_key_invalid" | "idempotency_key_reused" | "idempotency_key_in_use" | "messaging_removal_refused" | "messaging_removal_too_soon" | "messaging_provider_unreachable" | "messaging_provider_access_failed" | "messaging_removal_running" | "messaging_removal_still_open" | "messaging_removal_not_recorded";
         ErrorDocument: {
             errors: components["schemas"]["Error"][];
         };
@@ -13141,8 +13154,35 @@ export interface operations {
                 };
             };
             /**
-             * @description The number cannot be text-enabled right now. The message says which of the four reasons
-             *     it is, in words you can show a person.
+             * @description Texting for this number was turned off, and that removal is still being finished with the
+             *     provider (`messaging_removal_still_open`). Nothing was created. Try again in a few minutes.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "409",
+                     *           "code": "messaging_removal_still_open",
+                     *           "title": "Text messaging is still changing",
+                     *           "detail": "Text messaging cannot be turned on for +13215550101 yet: turning it off is still being finished with the provider. Try again in a few minutes, and contact support if this does not clear.",
+                     *           "source": {
+                     *             "pointer": "/data/relationships/phoneNumber"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The number cannot be text-enabled right now. The message says which reason it is, in
+             *     words you can show a person.
              */
             422: {
                 headers: {
@@ -14130,8 +14170,8 @@ export interface operations {
             401: components["responses"]["Unauthenticated"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
-            /** @description The number does not have text messaging, so there is nothing to turn off. */
-            422: {
+            /** @description Another request to turn texting off for this number is still running. Nothing changed. */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -14140,9 +14180,10 @@ export interface operations {
                      * @example {
                      *       "errors": [
                      *         {
-                     *           "status": "422",
-                     *           "title": "Text messaging refused",
-                     *           "detail": "+13215550101 does not have text messaging."
+                     *           "status": "409",
+                     *           "code": "messaging_removal_running",
+                     *           "title": "Text messaging is still changing",
+                     *           "detail": "Text messaging for +13215550101 is already being turned off. Wait a moment, then reload the page to see the result."
                      *         }
                      *       ]
                      *     }
@@ -14150,7 +14191,71 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
+            /**
+             * @description Nothing changed. The number does not have text messaging, or the provider refused
+             *     (`messaging_removal_refused`). A refusal because the number was
+             *     turned on less than 15 minutes ago (`messaging_removal_too_soon`) carries
+             *     `meta.retryAllowedAt`.
+             */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
             429: components["responses"]["RateLimited"];
+            /**
+             * @description The provider was asked to remove texting for the number, but we could not record it
+             *     (`messaging_removal_not_recorded`). Our support has been alerted and will finish it. You
+             *     do not need to send the request again; a repeat is safe and does not ask the provider again.
+             */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description The provider did not answer before the removal was sent (`messaging_provider_unreachable`).
+             *     Nothing changed. Repeat the request in a few minutes.
+             */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "502",
+                     *           "code": "messaging_provider_unreachable",
+                     *           "title": "Text messaging provider unavailable",
+                     *           "detail": "Text messaging was not turned off for +13215550101: the provider did not answer. Nothing was changed. Try again in a few minutes."
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /**
+             * @description We could not reach the provider for this number (`messaging_provider_access_failed`): the
+             *     fault is ours, and our support has been alerted. Nothing changed. A repeat works once
+             *     support has fixed it.
+             */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
         };
     };
     listPbxNumbers: {
