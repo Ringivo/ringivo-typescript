@@ -2398,7 +2398,18 @@ export interface paths {
          *     `serviceStreetNumber`, `serviceStreetName`, `serviceCity`, `serviceState` and `serviceZip`;
          *     the verbatim block a losing carrier reads is written for you on every edit that touches one.
          *     `endUserAddress` stays writable because an order transcribed before the parts existed
-         *     carries a hand-typed block and nothing else.
+         *     carries a hand-typed block and nothing else; on an order that holds all five parts, a
+         *     written `endUserAddress` is replaced by their render.
+         *
+         *     **Each part must be the kind of thing its attribute holds.** `serviceStreetNumber` is the
+         *     house number only (`250`, `111C`, `12-34`); `serviceStreetName` is the street only, with no
+         *     city, state, ZIP or country in it; `serviceCity` is the city only; `serviceState` is a real
+         *     two-letter US state or Canadian province code (`GA`, not `XX` and not `AE`); `serviceZip` is a
+         *     US ZIP or a Canadian postal code. No part may hold a line break. A value that breaks one of
+         *     these is a **422** on its attribute, for example `serviceStreetNumber must be the house
+         *     number only, like 250 or 111C. Put the street in the street name.` The submit gate below
+         *     lists the same problems for a draft saved before these rules, one error each, worded as a
+         *     fix (`serviceStreetName is the same as the city. ...`) rather than as "still needed".
          *
          *     ## Editing a field the letter shows
          *
