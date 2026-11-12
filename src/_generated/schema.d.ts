@@ -3145,6 +3145,9 @@ export interface paths {
          * Read one call record
          * @description A hidden record IS served here — the list leaves it out, a direct read does not, which is
          *     what the phone system's own portal does.
+         *
+         *     **Either id of the call opens it** (see the `callRecord` parameter). `data.id` is the id
+         *     the call has now; `meta.requestedId` is the id you sent, when it is not that one.
          */
         get: operations["getCallRecord"];
         put?: never;
@@ -3914,6 +3917,11 @@ export interface webhooks {
          *     one sends again the events of the last few seconds, and each copy carries the SAME
          *     `eventId`. So does a retry. The id is derived from the call record, never minted per send.
          *
+         *     **`data.id` follows the call-record id change** (see the `id` of a call record). An event for
+         *     a call that starts at or after the cut-over time carries the UUID version 8 id, and its
+         *     `eventId` is derived from that id. An event built for an older call carries the id that call
+         *     has when the event is built. A retry keeps the body it was first built with.
+         *
          *     **Scope: `tenant` and `customer`.** A call record belongs to the customer whose domain it is
          *     on. A call record on a domain that is not one of your customers' raises no event.
          *
@@ -4231,6 +4239,19 @@ export interface components {
         /** @description Document-level metadata. A paged collection carries `page` here. */
         DocumentMeta: {
             page?: components["schemas"]["PageMeta"];
+        } & {
+            [key: string]: unknown;
+        };
+        /** @description Document-level metadata of a read by call-record id. */
+        CallRecordReadMeta: {
+            /**
+             * Format: uuid
+             * @description The call-record id in your request, when the call record carries ANOTHER id now. A
+             *     call record can be read by either of its two ids (see the `callRecord` path parameter);
+             *     `data.id`, and `callRecordId` on each item, are always the id it carries now. Replace
+             *     the id you stored with that one. Absent when you asked with the id it carries now.
+             */
+            requestedId?: string;
         } & {
             [key: string]: unknown;
         };
@@ -8399,8 +8420,19 @@ export interface components {
             type: "call-records";
             /**
              * Format: uuid
-             * @description Computed from the month, the domain and the switch's own call id, so two calls in two
-             *     months can never share one even if the switch reuses its id.
+             * @description The call record's id. Treat it as an opaque string: do not parse it, and do not expect one
+             *     version of UUID.
+             *
+             *     **The id changes shape at a cut-over time.** A call that starts at or after the cut-over
+             *     time has a UUID version 8, the same for the call on each of our phone system platforms.
+             *     A call that started before the cut-over time keeps the id it had before (a UUID version
+             *     5) for 3 days after the cut-over time. After those 3 days, it also has the version 8 id
+             *     on every read and in every new webhook. The date of the cut-over time is in the API
+             *     changelog.
+             *
+             *     **An id you stored keeps working.** `GET /v1/pbx/call-records/{callRecord}` and its
+             *     `/recordings` and `/transcripts` routes accept both ids of a call. The answer carries
+             *     the id the call has now, and `meta.requestedId` holds the id you sent when they differ.
              */
             id: string;
             attributes?: components["schemas"]["CallRecordAttributes"];
@@ -8489,6 +8521,7 @@ export interface components {
              *     parameters and no `meta.page`.
              */
             data: components["schemas"]["RecordingResource"][];
+            meta?: components["schemas"]["CallRecordReadMeta"];
         };
         TranscriptSegment: {
             /**
@@ -8640,17 +8673,20 @@ export interface components {
              *     parameters and no `meta.page`.
              */
             data: components["schemas"]["TranscriptResource"][];
+            meta?: components["schemas"]["CallRecordReadMeta"];
         };
         TranscriptCollectionItemDocument: {
             data: components["schemas"]["TranscriptResource"];
+            meta?: components["schemas"]["CallRecordReadMeta"];
         };
         TranscriptDocumentResponse: {
             data: components["schemas"]["TranscriptWithSegmentsResource"];
+            meta?: components["schemas"]["CallRecordReadMeta"];
         };
         CallRecordDocumentResponse: {
             data: components["schemas"]["CallRecordResource"];
             links?: components["schemas"]["ResourceLinks"];
-            meta?: components["schemas"]["DocumentMeta"];
+            meta?: components["schemas"]["CallRecordReadMeta"];
         };
         CallRecordCollectionDocument: {
             data: components["schemas"]["CallRecordResource"][];
@@ -8797,7 +8833,12 @@ export interface components {
         PbxSubscriberId: string;
         /** @description The device registration's id. */
         PbxDeviceId: string;
-        /** @description The call record's id. */
+        /**
+         * @description The call record's id. Treat it as an opaque string. A call record can have two ids: the id
+         *     it carries now, and the id it carried before the call-record id change (see the `id` of a
+         *     call record). Both open the record, in any letter case. The answer always carries the id the
+         *     record has now; when that is not the id you sent, `meta.requestedId` holds the id you sent.
+         */
         CallRecordId: string;
         /**
          * @description The recording's id, from an item of `GET /v1/pbx/call-records/{callRecord}/recordings`. It
@@ -16716,7 +16757,12 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The call record's id. */
+                /**
+                 * @description The call record's id. Treat it as an opaque string. A call record can have two ids: the id
+                 *     it carries now, and the id it carried before the call-record id change (see the `id` of a
+                 *     call record). Both open the record, in any letter case. The answer always carries the id the
+                 *     record has now; when that is not the id you sent, `meta.requestedId` holds the id you sent.
+                 */
                 callRecord: components["parameters"]["CallRecordId"];
             };
             cookie?: never;
@@ -16743,7 +16789,12 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The call record's id. */
+                /**
+                 * @description The call record's id. Treat it as an opaque string. A call record can have two ids: the id
+                 *     it carries now, and the id it carried before the call-record id change (see the `id` of a
+                 *     call record). Both open the record, in any letter case. The answer always carries the id the
+                 *     record has now; when that is not the id you sent, `meta.requestedId` holds the id you sent.
+                 */
                 callRecord: components["parameters"]["CallRecordId"];
             };
             cookie?: never;
@@ -16914,7 +16965,12 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The call record's id. */
+                /**
+                 * @description The call record's id. Treat it as an opaque string. A call record can have two ids: the id
+                 *     it carries now, and the id it carried before the call-record id change (see the `id` of a
+                 *     call record). Both open the record, in any letter case. The answer always carries the id the
+                 *     record has now; when that is not the id you sent, `meta.requestedId` holds the id you sent.
+                 */
                 callRecord: components["parameters"]["CallRecordId"];
             };
             cookie?: never;
@@ -16984,7 +17040,12 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The call record's id. */
+                /**
+                 * @description The call record's id. Treat it as an opaque string. A call record can have two ids: the id
+                 *     it carries now, and the id it carried before the call-record id change (see the `id` of a
+                 *     call record). Both open the record, in any letter case. The answer always carries the id the
+                 *     record has now; when that is not the id you sent, `meta.requestedId` holds the id you sent.
+                 */
                 callRecord: components["parameters"]["CallRecordId"];
                 /**
                  * @description The recording's id, from an item of
@@ -17074,7 +17135,12 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description The call record's id. */
+                /**
+                 * @description The call record's id. Treat it as an opaque string. A call record can have two ids: the id
+                 *     it carries now, and the id it carried before the call-record id change (see the `id` of a
+                 *     call record). Both open the record, in any letter case. The answer always carries the id the
+                 *     record has now; when that is not the id you sent, `meta.requestedId` holds the id you sent.
+                 */
                 callRecord: components["parameters"]["CallRecordId"];
                 /**
                  * @description The recording's id, from an item of
