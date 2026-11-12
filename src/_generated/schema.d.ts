@@ -3874,6 +3874,13 @@ export interface webhooks {
          *     range around the call. Expect a list, and ask again while it is empty. `callRecordId` is
          *     deprecated and still sent.
          *
+         *     **It waits for the call record.** We write the transcript, and send this event, only once we
+         *     hold the call record of the recording, so the transcript can say who spoke on each channel.
+         *     We almost always hold it already. When we do not, we look again 10 s, 70 s, 6 min 10 s,
+         *     36 min 10 s and 1 h 36 min 10 s later, and send the event at the first look that finds it.
+         *     If it is still not there, we do not send the event, and we get an alert. The phone system's
+         *     own portal can show the transcript before this event reaches you.
+         *
          *     **`durationSeconds` is the audio's length as the transcription measured it**, which can
          *     differ by a second or so from the same figure on `pbx.recording.created` — they are two
          *     measurements of one file, not one number reported twice.
@@ -8372,7 +8379,7 @@ export interface components {
              *     - `processing` — the phone system took the request, or sent us the audio, and the words
              *       are not written yet.
              *     - `requested` — you asked for it and the request has not reached the phone system yet.
-             *     - `failed` — the last request ended without words, or it was still unfinished an hour
+             *     - `failed` — the last request ended without words, or it was still unfinished two hours
              *       after it last moved. You may ask again; the single-transcript endpoint says so if the
              *       transcription gave up for good (`code: transcript_failed`).
              *     - `none` — nobody asked, or there is no recording to transcribe.
