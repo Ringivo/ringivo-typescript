@@ -2488,6 +2488,11 @@ export interface paths {
          *     afterwards, and their answers are for our review desk, not part of this resource, so there is
          *     nothing further for you to wait for or poll. A carrier we cannot reach never fails this call.
          *
+         *     **After a 5xx, send the same request again, with backoff.** When we cannot queue those carrier
+         *     questions, the order stays `draft` and the call answers a 5xx; your retry submits it. If the
+         *     retry answers 409, an earlier request did move the order, and it is in `awaiting_review`. A
+         *     second submit that loses a race with the first is a 409 too, and changes nothing.
+         *
          *     **It shuts your customer's door.** The request link is revoked in the same act: past this
          *     gate there is nothing left for an end user to do on the order, and a capability that
          *     outlives its purpose is one nobody is watching.
