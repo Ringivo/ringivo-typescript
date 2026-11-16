@@ -9611,10 +9611,13 @@ webhooks:
         differ by a second or so from the same figure on `pbx.recording.created` — they are two
         measurements of one file, not one number reported twice.
 
-        **You are told once.** A transcript is written once per recording and never updated, so
-        there is no superseding event here as there is for recordings. If one does reach you twice,
-        both copies carry the same `eventId` — for this event the id is derived from the transcript
-        and its text rather than minted per send. Dedupe on it, as the envelope says.
+        **You are told again when a recording's audio is replaced.** When a longer copy replaces a
+        recording (`pbx.recording.created` with `superseded: true`) and that recording already has
+        a transcript, we transcribe the new audio and send this event again for the same `id`, with
+        a new `eventId`. Read the transcript again; the earlier words are not served any more. The
+        phone system's own portal keeps the earlier transcript. A repeat of one send carries the
+        same `eventId` — for this event the id is derived from the transcript and its text rather
+        than minted per send. Dedupe on it, as the envelope says.
 
         **Scope: `tenant` and `customer`, never `fax_account`** — and always the same pair the
         recording carried, because a transcript's owner is its recording's owner. `data.customerId`
