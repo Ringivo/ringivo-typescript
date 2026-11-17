@@ -5773,6 +5773,10 @@ export interface components {
             fromExtension?: string | null;
             /** @description As on the call-record resource. */
             fromName?: string | null;
+            /** @description As on the call-record resource: true when the caller withheld their caller ID; recorded only on inbound calls, so null (unknown) on outbound and internal calls and where the phone system does not record it. */
+            callerIdRestricted?: boolean | null;
+            /** @description As on the call-record resource: `Anonymous` when `callerIdRestricted` is true, otherwise `fromNumber`. The name stays real in `fromName`. */
+            callerNumberDisplay?: string | null;
             /** @description As on the call-record resource: E.164 or null. */
             toNumber?: string | null;
             /** @description As on the call-record resource: E.164 or null. */
@@ -8295,6 +8299,36 @@ export interface components {
             fromExtension?: string | null;
             /** @description The caller-ID name, as the switch recorded it. */
             fromName?: string | null;
+            /**
+             * @description **Did the caller withhold their caller ID?** True when the caller blocked it, for example
+             *     by dialling `*67` before the number.
+             *
+             *     The phone system records this only on calls your customer **receives**
+             *     (`direction: inbound`). There, false means the caller did not withhold their caller ID.
+             *
+             *     Null means "unknown":
+             *
+             *     - on `outbound` and `internal` calls, because the phone system does not record it for the
+             *       party that placed the call;
+             *     - on calls of the phone systems that do not record it at all.
+             *
+             *     `fromNumber`, `fromName`, `rawFromUri` and `rawFromUser` still carry the real caller ID
+             *     when this is true. If you show the call to an end user, show `callerNumberDisplay` instead
+             *     of `fromNumber`, and do not show `fromName`, `rawFromUri` or `rawFromUser`.
+             * @example false
+             */
+            callerIdRestricted?: boolean | null;
+            /**
+             * @description **The caller's number as the phone system's own API shows it.** When `callerIdRestricted`
+             *     is true, this is the literal string `Anonymous`. Otherwise (false or null) it is the same
+             *     value as `fromNumber`: E.164 or null.
+             *
+             *     It is null when there was no caller at all, also on a withheld call. It masks the number
+             *     only: the caller's name is still in `fromName`. This field is not a `*Number` field,
+             *     because `Anonymous` is not a telephone number.
+             * @example +17406495415
+             */
+            callerNumberDisplay?: string | null;
             /**
              * @description **The number the call was placed to**, in E.164 — on an inbound call the DID the outside
              *     caller dialled, on an outbound call the number your customer rang.
@@ -16846,6 +16880,8 @@ export interface operations {
                      *             "fromNumber": "+13025556789",
                      *             "fromExtension": null,
                      *             "fromName": "Dr Bell",
+                     *             "callerIdRestricted": false,
+                     *             "callerNumberDisplay": "+13025556789",
                      *             "toNumber": "+14075550101",
                      *             "dialedNumber": "+14075550101",
                      *             "routedByExtension": null,
@@ -18195,6 +18231,8 @@ export interface operations {
                  *         "fromNumber": "+17406495415",
                  *         "fromExtension": null,
                  *         "fromName": "WIRELESS CALLER",
+                 *         "callerIdRestricted": false,
+                 *         "callerNumberDisplay": "+17406495415",
                  *         "toNumber": "+17402084385",
                  *         "dialedNumber": "+17402084385",
                  *         "routedByExtension": null,
