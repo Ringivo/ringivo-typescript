@@ -1267,7 +1267,8 @@ export interface paths {
          * Search the numbers you can buy
          * @description Numbers the carriers can sell you now, each with the `offerToken` you spend to buy it with
          *     `POST /v1/number-orders`. An offer is the carriers' answer to this one search, not a stored
-         *     record, so there is no `GET` by id: search again for fresh offers.
+         *     record, so there is no `GET` by id: search again for fresh offers. Only numbers we can sell
+         *     you are listed.
          *
          *     **Search one way at a time.** By area code (`filter[npa]`, and `filter[nxx]` for one
          *     exchange), by place (`filter[state]`, and `filter[rateCenter]` within it), or toll-free
@@ -2943,6 +2944,71 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/customers/{customer}/app-page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a customer's app page
+         * @description Reads the customer's page, from our copy of the phone system's settings. It shows a change a
+         *     few seconds after a set or clear.
+         *
+         *     - `page` is the customer's own page, or `null` when there is none.
+         *     - `complete` is `false` while the three apps do not hold the same page: for a few seconds
+         *       after a change, or after a set or clear that failed part way (send it again). `true` does
+         *       not prove that a set finished: after a **502**, always send the request again, or compare
+         *       `page` with what you sent.
+         *     - `effective` is the page the apps show to a subscriber with no page of its own, or `null`
+         *       when the menu has no entry. `source` says where it comes from: `customer` (this page) or
+         *       `default` (a page our staff set for many customers).
+         */
+        get: operations["getCustomerAppPage"];
+        put?: never;
+        /**
+         * Set a customer's app page
+         * @description Sets or replaces the customer's page: the page of every user of the customer that has none of
+         *     its own. The same page goes to the iOS app, the Android app and the web phone. Safe to repeat: a set that the phone system already holds changes nothing.
+         *
+         *     **The body is flat JSON**, not a JSON:API document (a body with a top-level `data` is a
+         *     **422** on `/data`).
+         *
+         *     | Member | Rule |
+         *     |---|---|
+         *     | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+         *     | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
+         *     | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
+         *
+         *     A refused member is a **422** whose `source.pointer` names it, such as `/url`. Nothing is
+         *     written then.
+         *
+         *     **200** answers what was written. `effective` and `source` say what the apps now show to a
+         *     subscriber with no page of its own; a page that our staff set for many customers outranks
+         *     it, and `GET` shows that. **502**
+         *     (`title: Phone system unreachable`) means the phone system failed part way:
+         *     `errors[0].meta.changedSettings` counts what was already changed (0: nothing). Send the same
+         *     request again to finish it. Until then an app shows the entry only where its address was
+         *     written; for a subscriber, a label written without its address shows beside the customer's
+         *     address. **409** (`title: Change in progress`): another change of the same page is running.
+         */
+        post: operations["setCustomerAppPage"];
+        /**
+         * Clear a customer's app page
+         * @description Removes the customer's page. Its users then have no entry in the menu, except users with a
+         *     page of their own. **204** also when there was no page. A **502**
+         *     means the phone system failed part way; send it again.
+         */
+        delete: operations["clearCustomerAppPage"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/tenants/{tenant}": {
         parameters: {
             query?: never;
@@ -3092,6 +3158,71 @@ export interface paths {
          */
         post: operations["placePbxCall"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/pbx/subscribers/{subscriber}/app-page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX subscriber's id. */
+                subscriber: components["parameters"]["PbxSubscriberId"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read a subscriber's app page
+         * @description Reads the page of one subscriber, from our copy of the phone system's settings. It shows a
+         *     change a few seconds after a set or clear.
+         *
+         *     - `page` is the subscriber's own page, or `null` when there is none.
+         *     - `complete` is `false` while the three apps do not hold the same page: for a few seconds
+         *       after a change, or after a set or clear that failed part way (send it again). `true` does
+         *       not prove that a set finished: after a **502**, always send the request again, or compare
+         *       `page` with what you sent.
+         *     - `effective` is the page the apps show to this subscriber, or `null` when the menu has no entry.
+         *       `source` says where it comes from: `subscriber` (its own page), `customer` (the customer's
+         *       page) or `default` (a page our staff set for many customers).
+         */
+        get: operations["getSubscriberAppPage"];
+        put?: never;
+        /**
+         * Set a subscriber's app page
+         * @description Sets or replaces the page of one subscriber; it outranks the customer's page for that
+         *     subscriber. The same page goes to the iOS app, the Android app and the web phone. Safe to repeat: a set that the phone system already holds changes nothing.
+         *
+         *     **The body is flat JSON**, not a JSON:API document (a body with a top-level `data` is a
+         *     **422** on `/data`).
+         *
+         *     | Member | Rule |
+         *     |---|---|
+         *     | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+         *     | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
+         *     | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
+         *
+         *     A refused member is a **422** whose `source.pointer` names it, such as `/url`. Nothing is
+         *     written then.
+         *
+         *     **200** answers what was written. `effective` and `source` say what the apps now show to this
+         *     subscriber; a page that our staff set for many customers outranks it, and `GET` shows that.
+         *     **502**
+         *     (`title: Phone system unreachable`) means the phone system failed part way:
+         *     `errors[0].meta.changedSettings` counts what was already changed (0: nothing). Send the same
+         *     request again to finish it. Until then an app shows the entry only where its address was
+         *     written; for a subscriber, a label written without its address shows beside the customer's
+         *     address. **409** (`title: Change in progress`): another change of the same page is running.
+         */
+        post: operations["setSubscriberAppPage"];
+        /**
+         * Clear a subscriber's app page
+         * @description Removes the page of one subscriber. The subscriber then gets the customer's page. **204** also
+         *     when there was no page. A **502**
+         *     means the phone system failed part way; send it again.
+         */
+        delete: operations["clearSubscriberAppPage"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7564,6 +7695,66 @@ export interface components {
              */
             domainLabel?: string | null;
         };
+        /** @description The page to set — FLAT JSON. A `data` member is refused with a **422**. */
+        AppPageSetRequest: {
+            /**
+             * @description The page's address: `https` with a host, no user name or password, no `[` or `]`, no
+             *     space. `{sessionToken}` at most once, and only in the fragment (after `#`): the app puts
+             *     the user's session token there when the page opens.
+             * @example https://app.example.com/phone#t={sessionToken}
+             */
+            url: string;
+            /**
+             * @description The menu entry's text. No control character.
+             * @example Missed calls
+             */
+            label: string;
+            /**
+             * @description A Material icon name. `open_in_new` when absent or null.
+             * @example call_missed
+             */
+            icon?: string | null;
+        };
+        /** @description One page, as the apps show it. */
+        AppPageValue: {
+            /** @description The address, with `{sessionToken}` where the app puts the token. */
+            url: string;
+            label: string;
+            icon: string;
+        };
+        AppPage: {
+            /** @enum {string} */
+            type: "app-pages";
+            /**
+             * Format: uuid
+             * @description The customer's id, or the subscriber's.
+             */
+            id: string;
+            attributes: components["schemas"]["AppPageAttributes"];
+        };
+        AppPageDocument: {
+            data: components["schemas"]["AppPage"];
+        };
+        AppPageAttributes: {
+            /** @description The page set for this customer or subscriber itself; `null` when none is set. */
+            page: components["schemas"]["AppPageValue"] | null;
+            /**
+             * @description `true` when the iOS app, the Android app and the web phone hold the same page (or none).
+             *     `false` for a few seconds after a change, or after a set or clear that failed part way.
+             */
+            complete: boolean;
+            /**
+             * @description The page the apps show: to this subscriber, or, for a customer, to a subscriber with no
+             *     page of its own. `null` when the menu has no entry.
+             */
+            effective: components["schemas"]["AppPageValue"] | null;
+            /**
+             * @description Where `effective` comes from: `subscriber` (its own page), `customer` (the customer's
+             *     page) or `default` (a page our staff set for many customers). `null` when there is none.
+             * @enum {string|null}
+             */
+            source: "subscriber" | "customer" | "default" | null;
+        };
         /**
          * @description The reseller onboarding lifecycle (console ADR-0006). Only `active` opens the portal;
          *     `suspended` is a staff action reachable from any other state.
@@ -8846,6 +9037,45 @@ export interface components {
          *     itself answered with, so a refusal and an outage can be told apart.
          */
         PhoneSystemUnreachable: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+            };
+        };
+        /**
+         * @description The phone system failed part way (`title: Phone system unreachable`).
+         *     `errors[0].meta.changedSettings` counts the settings already changed (0: nothing). Send the
+         *     same request again to finish it.
+         */
+        AppPagePhoneSystemFailed: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                /**
+                 * @example {
+                 *       "errors": [
+                 *         {
+                 *           "status": "502",
+                 *           "title": "Phone system unreachable",
+                 *           "detail": "The phone system failed after 4 of the app page's settings were changed. Send the same request again to finish it.",
+                 *           "meta": {
+                 *             "changedSettings": 4
+                 *           }
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+            };
+        };
+        /**
+         * @description The app page cannot be read or written in this region just now (`title: Phone system data
+         *     unavailable` or `Phone system unavailable`). Nothing was changed; send the request again.
+         */
+        AppPageUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -12444,6 +12674,9 @@ export interface operations {
             /**
              * @description The body is refused, or an offer token is not one we issued to you. Or the
              *     `Idempotency-Key` was used before with a different body (`code: idempotency_key_reused`).
+             *     Or a number on the order cannot be sold (title `Number cannot be bought`). We check
+             *     every offer token before we order any number, so after a 422 nothing on the order was
+             *     bought.
              */
             422: {
                 headers: {
@@ -16267,6 +16500,195 @@ export interface operations {
             502: components["responses"]["CustomerPhoneSystemUnreachable"];
         };
     };
+    getCustomerAppPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "app-pages",
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "page": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "complete": true,
+                     *           "effective": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "source": "customer"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["AppPageDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The customer has no phone system (`title: No phone system`), or another change of the page is running (`title: Change in progress`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AppPageUnavailable"];
+        };
+    };
+    setCustomerAppPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "url": "https://app.example.com/phone#t={sessionToken}",
+                 *       "label": "Missed calls",
+                 *       "icon": "call_missed"
+                 *     }
+                 */
+                "application/json": components["schemas"]["AppPageSetRequest"];
+            };
+        };
+        responses: {
+            /** @description The page was set. The answer is what was written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "app-pages",
+                     *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
+                     *         "attributes": {
+                     *           "page": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "complete": true,
+                     *           "effective": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "source": "customer"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["AppPageDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The customer has no phone system (`title: No phone system`), or another change of the page is running (`title: Change in progress`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description A member was refused. `source.pointer` names it. Nothing was written. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "Put {sessionToken} in the fragment (after",
+                     *           "source": {
+                     *             "pointer": "/url"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["AppPagePhoneSystemFailed"];
+            503: components["responses"]["AppPageUnavailable"];
+        };
+    };
+    clearCustomerAppPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The customer's id. A customer that is not on your account is a 404. */
+                customer: components["parameters"]["CustomerId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page is cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The customer has no phone system (`title: No phone system`), or another change of the page is running (`title: Change in progress`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["AppPagePhoneSystemFailed"];
+            503: components["responses"]["AppPageUnavailable"];
+        };
+    };
     getTenant: {
         parameters: {
             query?: never;
@@ -16624,6 +17046,186 @@ export interface operations {
                     "application/vnd.api+json": components["schemas"]["ErrorDocument"];
                 };
             };
+        };
+    };
+    getSubscriberAppPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX subscriber's id. */
+                subscriber: components["parameters"]["PbxSubscriberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "app-pages",
+                     *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
+                     *         "attributes": {
+                     *           "page": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "complete": true,
+                     *           "effective": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "source": "subscriber"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["AppPageDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["RateLimited"];
+            503: components["responses"]["AppPageUnavailable"];
+        };
+    };
+    setSubscriberAppPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX subscriber's id. */
+                subscriber: components["parameters"]["PbxSubscriberId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "url": "https://app.example.com/phone#t={sessionToken}",
+                 *       "label": "Missed calls",
+                 *       "icon": "call_missed"
+                 *     }
+                 */
+                "application/json": components["schemas"]["AppPageSetRequest"];
+            };
+        };
+        responses: {
+            /** @description The page was set. The answer is what was written. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": {
+                     *         "type": "app-pages",
+                     *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
+                     *         "attributes": {
+                     *           "page": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "complete": true,
+                     *           "effective": {
+                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "label": "Missed calls",
+                     *             "icon": "call_missed"
+                     *           },
+                     *           "source": "subscriber"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["AppPageDocument"];
+                };
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Another change of this page is running (`title: Change in progress`). Nothing was changed; send it again in a moment. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            /** @description A member was refused. `source.pointer` names it. Nothing was written. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "errors": [
+                     *         {
+                     *           "status": "422",
+                     *           "title": "Unprocessable Entity",
+                     *           "detail": "Put {sessionToken} in the fragment (after",
+                     *           "source": {
+                     *             "pointer": "/url"
+                     *           }
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["AppPagePhoneSystemFailed"];
+            503: components["responses"]["AppPageUnavailable"];
+        };
+    };
+    clearSubscriberAppPage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The PBX subscriber's id. */
+                subscriber: components["parameters"]["PbxSubscriberId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The page is cleared. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthenticated"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description Another change of this page is running (`title: Change in progress`). Nothing was changed; send it again in a moment. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/vnd.api+json": components["schemas"]["ErrorDocument"];
+                };
+            };
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["AppPagePhoneSystemFailed"];
+            503: components["responses"]["AppPageUnavailable"];
         };
     };
     listPbxDevices: {
