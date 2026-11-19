@@ -10,10 +10,12 @@
  * -- WHAT IS RETRIED ---------------------------------------------------------
  * A request is retried only when sending it twice cannot do the act twice:
  * a GET, HEAD, OPTIONS, PUT or DELETE, or a write the caller marked safe —
- * one that carries an `Idempotency-Key` the endpoint honours, or a PATCH that
- * sets attributes to values (setting a value twice leaves the same value).
- * A POST with no key is never resent: if the first one reached the API and
- * only the answer was lost, a second would create a second row.
+ * one that carries an `Idempotency-Key` the endpoint honours, a PATCH that
+ * sets attributes to values (setting a value twice leaves the same value), or
+ * a POST the API declares safe to repeat (the app page set, a whole
+ * replacement). Any other POST with no key is never resent: if the first one
+ * reached the API and only the answer was lost, a second would create a
+ * second row.
  *
  * Then only the answers the API's contract calls transient: no answer at all
  * (a refused or reset connection, a timeout), 408, 429, any 5xx, and the 409
@@ -231,9 +233,11 @@ async function isTransient(response: Response): Promise<boolean> {
   if (status !== 409) {
     return false;
   }
-  // Only the key-in-use 409 is transient; every other 409 is a state that
-  // answers the same however often it is asked. A clone, so the body is still
-  // there for the error the caller may yet get.
+  // Only the key-in-use 409 is resent here; every other 409 is a state that
+  // answers the same however often it is asked — except the app page's
+  // `Change in progress`, which has no code and is left to the caller (the
+  // README's "Retrying from a queue" says how to match it). A clone, so the
+  // body is still there for the error the caller may yet get.
   try {
     const document: unknown = JSON.parse(await response.clone().text());
     const errors = (document as { errors?: unknown }).errors;

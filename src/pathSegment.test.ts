@@ -107,6 +107,13 @@ const CALLS: Array<[string, Call, string]> = [
   ],
   ["customers.get", (r, id) => r.customers.get(id), "a customer id is required"],
   [
+    "customers.setAppPage",
+    (r, id) => r.customers.setAppPage(id, { url: "https://a.example", label: "A" }),
+    "a customer id is required",
+  ],
+  ["customers.getAppPage", (r, id) => r.customers.getAppPage(id), "a customer id is required"],
+  ["customers.clearAppPage", (r, id) => r.customers.clearAppPage(id), "a customer id is required"],
+  [
     "inboundMessages.get",
     (r, id) => r.inboundMessages.get(id),
     "an inbound message id is required",
@@ -146,6 +153,21 @@ const CALLS: Array<[string, Call, string]> = [
   [
     "pbx.subscribers.call",
     (r, id) => r.pbx.subscribers.call(id, { destination: "1001" }),
+    "a pbx subscriber id is required",
+  ],
+  [
+    "pbx.subscribers.setAppPage",
+    (r, id) => r.pbx.subscribers.setAppPage(id, { url: "https://a.example", label: "A" }),
+    "a pbx subscriber id is required",
+  ],
+  [
+    "pbx.subscribers.getAppPage",
+    (r, id) => r.pbx.subscribers.getAppPage(id),
+    "a pbx subscriber id is required",
+  ],
+  [
+    "pbx.subscribers.clearAppPage",
+    (r, id) => r.pbx.subscribers.clearAppPage(id),
     "a pbx subscriber id is required",
   ],
   ["pbx.devices.get", (r, id) => r.pbx.devices.get(id), "a pbx device id is required"],

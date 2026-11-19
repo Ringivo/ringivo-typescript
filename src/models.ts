@@ -1610,6 +1610,77 @@ export function customerPageFromDocument(document: RawJson): PageParts<Customer>
 }
 
 /**
+ * One app page as the phone apps show it: an address, a menu label and an
+ * icon.
+ *
+ * `url` is the address the apps load, exactly as it was set: the apps add
+ * nothing about the user to it. `icon` is a Material icon name; the API
+ * answers `open_in_new` when the set named none.
+ */
+export interface AppPageValue {
+  readonly url: string | null;
+  readonly label: string | null;
+  readonly icon: string | null;
+  readonly raw: RawJson;
+}
+
+/**
+ * The app page of one customer or one subscriber — what
+ * `customers.getAppPage()`, `pbx.subscribers.getAppPage()` and the two
+ * `setAppPage()` calls return. `id` is the customer's id, or the
+ * subscriber's.
+ *
+ * -- page AND effective ARE NOT THE SAME THING ------------------------------
+ * `page` is the page set for THIS customer or subscriber itself, and `null`
+ * when it has none of its own. `effective` is the page the apps show: to this
+ * subscriber, or, on a customer, to a subscriber with no page of its own. It
+ * is `null` when the menu has no entry. `source` says where `effective` comes
+ * from: `subscriber`, `customer` or `default` (a page your provider set for
+ * many customers), and `null` when there is none. It is a `string` rather
+ * than the spec's enum, for the reason `Customer.regionPreference` is.
+ *
+ * -- complete IS NOT PROOF THAT A SET FINISHED ------------------------------
+ * `complete` is `true` when the iOS app, the Android app and the web phone
+ * hold the same page (or none), and `false` for a few seconds after a change
+ * or after a set or clear that failed part way. After a 502, send the set
+ * again, or compare `page` with what you sent.
+ */
+export interface AppPage {
+  readonly id: string;
+  readonly page: AppPageValue | null;
+  readonly complete: boolean | null;
+  readonly effective: AppPageValue | null;
+  readonly source: string | null;
+  readonly raw: RawJson;
+}
+
+function appPageValueFromJson(source: RawJson | null): AppPageValue | null {
+  if (source === null) {
+    return null;
+  }
+  return Object.freeze({
+    url: text(source, "url"),
+    label: text(source, "label"),
+    icon: text(source, "icon"),
+    raw: source,
+  });
+}
+
+/** Build from the `app-pages` resource object a read or a set answers. */
+export function appPageFromResource(resource: RawJson): AppPage {
+  const attributes = nested(resource, "attributes") ?? {};
+
+  return Object.freeze({
+    id: text(resource, "id") ?? "",
+    page: appPageValueFromJson(nested(attributes, "page")),
+    complete: boolean(attributes, "complete"),
+    effective: appPageValueFromJson(nested(attributes, "effective")),
+    source: text(attributes, "source"),
+    raw: resource,
+  });
+}
+
+/**
  * One media item of an MMS sent from your number, DESCRIBED: there are no
  * bytes and no URL.
  *

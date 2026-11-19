@@ -7,10 +7,12 @@
  * `client.pbx.subscribers` are every extension on the phone system — people
  * AND machines, told apart by `kind` — `client.pbx.devices` the SIP
  * registrations their phones made, and `client.pbx.callRecords` the call log.
- * There are two writes. `client.pbx.subscribers.call()` has a subscriber's
+ * There are two actions. `client.pbx.subscribers.call()` has a subscriber's
  * phone place a call, so the call goes out as them.
  * `client.pbx.callRecords.requestTranscript()` asks the phone system to
- * transcribe one capture of a call.
+ * transcribe one capture of a call. One setting is written too: a
+ * subscriber's app page (`subscribers.setAppPage()`, `getAppPage()`,
+ * `clearAppPage()`; appPages.ts), which needs `pbx-app-pages:write`.
  *
  * They sit under `client.pbx` rather than at the top level because `devices`
  * is a word other products use for other things. One namespace keeps the
@@ -24,10 +26,11 @@
  * Narrow to one customer with `customer`.
  *
  * -- WHAT IS SPEC-TYPED, AND WHAT IS HAND-BUILT -----------------------------
- * The nine reads and `callRecords.requestTranscript()`, which sends no body,
- * go through the `openapi-fetch` client in client.ts, so
- * `src/_generated/schema.d.ts` type-checks their paths, their query members
- * and their response bodies at compile time.
+ * The reads, `callRecords.requestTranscript()`, which sends no body, and the
+ * three app page calls, whose set sends flat JSON, go through the
+ * `openapi-fetch` client in client.ts, so `src/_generated/schema.d.ts`
+ * type-checks their paths, their query members, the set's body and their
+ * response bodies at compile time.
  *
  * `subscribers.call()` sends its document through `client.request()` instead, for
  * the one reason `faxAccountUsers.create()` does: a JSON:API resource route
@@ -47,8 +50,11 @@ import type { components } from "./_generated/schema.js";
 import type { Ringivo } from "./client.js";
 import { callOptions, type RequestOptions, sendThrough } from "./client.js";
 import { type PagePromise, paginate } from "./pagination.js";
-import { JSONAPI_MEDIA_TYPE, transportOf } from "./client.js";
+import { JSON_MEDIA_TYPE, JSONAPI_MEDIA_TYPE, transportOf } from "./client.js";
+import { appPageBody, type SetAppPageOptions } from "./appPages.js";
 import {
+  type AppPage,
+  appPageFromResource,
   type CallRecord,
   type CallRecordPage,
   type PbxCall,
@@ -690,6 +696,85 @@ export class PbxSubscribers {
     // fresh accept — the body is the first call's 202 either way.
     return pbxCallFromResource(dataObject(await response.json()), {
       idempotentReplay: response.headers.get("Idempotent-Replay") === "true",
+    });
+  }
+
+  /**
+   * Set or replace the app page of one subscriber. It outranks the
+   * customer's page for this subscriber, which is how you show a page to one
+   * user first. The same page goes to the iOS app, the Android app and the
+   * web phone.
+   *
+   * The apps load `url` as you set it and add nothing about the user, so your
+   * page signs its users in itself. Never put a secret in `url`: anyone can
+   * read it. appPages.ts says more.
+   *
+   * Resent on a transient failure, the 502 that says the phone system failed
+   * part way included: a set the phone system already holds changes nothing.
+   * A `ConflictError` titled `Change in progress` is not resent, and
+   * `isRetryable()` is `false` for it (it has no `code`; match its title):
+   * send it again yourself in a moment. A refused member is an `UnprocessableEntityError`
+   * whose `source.pointer` names it. A subscriber outside your customers'
+   * domains answers **404**.
+   *
+   * Answers the `AppPage` as written: an echo of the set, not a read.
+   * `complete` is always `true` there, and `effective` is the page you sent.
+   * A page your provider set for many customers (`source` `default`)
+   * outranks it, and only `getAppPage()` shows that. To see the change
+   * applied, read the page a few seconds later and compare `page` with what
+   * you sent.
+   *
+   * Needs `pbx-app-pages:write`, on a credential for your whole account.
+   */
+  async setAppPage(
+    subscriberId: string,
+    options: SetAppPageOptions,
+    requestOptions?: RequestOptions,
+  ): Promise<AppPage> {
+    const { data } = await transportOf(this.client)["/v1/pbx/subscribers/{subscriber}/app-page"].POST({
+      // Resendable: the API says a repeated set changes nothing.
+      ...callOptions(this.client, requestOptions, true),
+      // FLAT JSON: a JSON:API document (a top-level `data`) is a 422 here.
+      headers: { "Content-Type": JSON_MEDIA_TYPE },
+      params: {
+        path: { subscriber: idParam(subscriberId, "a pbx subscriber id is required") },
+      },
+      body: appPageBody(options),
+    });
+
+    return appPageFromResource(dataObject(data));
+  }
+
+  /**
+   * Read the app page of one subscriber. `page` is its own page, or `null`
+   * when it has none; `effective` is what its apps show, and `source` says
+   * where that comes from: `subscriber`, `customer` or `default`.
+   *
+   * Needs `pbx-app-pages:read`.
+   */
+  async getAppPage(subscriberId: string, requestOptions?: RequestOptions): Promise<AppPage> {
+    const { data } = await transportOf(this.client)["/v1/pbx/subscribers/{subscriber}/app-page"].GET({
+      ...callOptions(this.client, requestOptions),
+      params: {
+        path: { subscriber: idParam(subscriberId, "a pbx subscriber id is required") },
+      },
+    });
+
+    return appPageFromResource(dataObject(data));
+  }
+
+  /**
+   * Remove the app page of one subscriber. The subscriber then gets the
+   * customer's page. 204 also when there was no page.
+   *
+   * Needs `pbx-app-pages:write`.
+   */
+  async clearAppPage(subscriberId: string, requestOptions?: RequestOptions): Promise<void> {
+    await transportOf(this.client)["/v1/pbx/subscribers/{subscriber}/app-page"].DELETE({
+      ...callOptions(this.client, requestOptions),
+      params: {
+        path: { subscriber: idParam(subscriberId, "a pbx subscriber id is required") },
+      },
     });
   }
 }

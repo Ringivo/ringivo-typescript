@@ -42,10 +42,13 @@ anthropic-sdk-typescript `ea8d7de`, stripe-node `6d5ed96` (all read
 1. **Retry by default, 2 more times, and only what is safe to send twice.**
    Reads, DELETEs, the PATCH updates (setting a value twice leaves the same
    value), and a write that carries an `Idempotency-Key` the endpoint honours
-   (`faxes.send()`, `pbx.subscribers.call()`). Never a POST without a key:
-   unlike the Stainless and Stripe clients, this package cannot generate a key
-   for every POST, because most of this API's POSTs do not read one, and a key
-   the server ignores makes a retry a second create. Transient answers only:
+   (`faxes.send()`, `pbx.subscribers.call()`). Never a POST without a key,
+   unless the API's contract says a repeat changes nothing (the app page set,
+   `customers.setAppPage()` and `pbx.subscribers.setAppPage()`: a whole
+   replacement the API calls "safe to repeat", and asks for again after a
+   502): unlike the Stainless and Stripe clients, this package cannot generate
+   a key for every POST, because most of this API's POSTs do not read one, and
+   a key the server ignores makes a retry a second create. Transient answers only:
    no answer, a timeout, 408, 429, 5xx, and the 409
    `idempotency_key_in_use` — not every 409, because on this API a 409 is a
    state that answers the same next time. Wait the server's `Retry-After` when

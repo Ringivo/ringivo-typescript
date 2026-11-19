@@ -84,6 +84,7 @@
  * `Retry-After`. `isRetryable(error)` says whether the API's contract allows
  * the same call again later, from your own queue.
  */
+export type { SetAppPageOptions } from "./appPages.js";
 export { DEFAULT_MAX_RETRIES, Ringivo } from "./client.js";
 export type { HeadersLike, RequestOptions, RingivoOptions } from "./client.js";
 export { Customers } from "./customers.js";
@@ -148,6 +149,8 @@ export {
 } from "./messages.js";
 export type { RecordMessageOptions } from "./messages.js";
 export type {
+  AppPage,
+  AppPageValue,
   CallRecord,
   CallRecordPage,
   Customer,

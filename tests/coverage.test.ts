@@ -161,6 +161,9 @@ const COVERAGE: Record<string, string | { reason: typeof PAT | "SIGNED" | "MINT"
   deleteCustomer: "customers.delete",
   enableCustomerPbx: "customers.enablePbx",
   removeCustomerPbx: "customers.removePbx",
+  setCustomerAppPage: "customers.setAppPage",
+  getCustomerAppPage: "customers.getAppPage",
+  clearCustomerAppPage: "customers.clearAppPage",
 
   // The tenant
   getTenant: "tenants.get",
@@ -170,6 +173,9 @@ const COVERAGE: Record<string, string | { reason: typeof PAT | "SIGNED" | "MINT"
   listPbxSubscribers: "pbx.subscribers.list",
   getPbxSubscriber: "pbx.subscribers.get",
   placePbxCall: "pbx.subscribers.call",
+  setSubscriberAppPage: "pbx.subscribers.setAppPage",
+  getSubscriberAppPage: "pbx.subscribers.getAppPage",
+  clearSubscriberAppPage: "pbx.subscribers.clearAppPage",
   listPbxDevices: "pbx.devices.list",
   getPbxDevice: "pbx.devices.get",
   listCallRecords: "pbx.callRecords.list",

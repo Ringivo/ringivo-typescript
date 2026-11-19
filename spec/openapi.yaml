@@ -396,6 +396,43 @@ tags:
       **Scope note.** Every `/v1/pbx/` read is narrowed to the PBX domains of the customers your
       credential may read, and there is no unscoped form. A credential that reaches no customer with
       a phone system is refused with a **400**, never handed an empty page.
+  - name: App pages
+    description: |
+      The web page your customers' phone apps show as an entry in their menu: the iOS and Android
+      apps and the web phone. One page has an address (`url`), a menu label (`label`) and an icon
+      (`icon`), and it is set for a customer or for one of its subscribers. A subscriber with no page
+      of its own gets the customer's.
+
+      **Who the user is: the session token.** Put `{sessionToken}` in the fragment of the address
+      (after `#`). When a user opens the page, the app puts that user's session token there. Your
+      page reads it, removes it from the address, and sends it to your server. Your server then asks
+      us whose token it is. Any value of your own in the address is a hint only: it selects nothing.
+
+      **The call that answers "whose token is this?" is not available yet.** Until it is, do not put
+      `{sessionToken}` in an address. When it is:
+
+      - **The token's own contents prove nothing.** Anyone can make a token that decodes to any user
+        and domain. Only our answer says whose token it is.
+      - **The token is the user's whole phone-system session for up to 4 hours.** Do not log it,
+        store it or pass it on. Load no third-party script on the page that receives it. Send it to
+        your server once, make your own short session, and drop the token.
+      - **The web phone shows your page in a frame.** Your page must allow that frame, and its
+        cookies are third-party cookies there.
+      - The iOS app and the web phone were tested; the Android app was not yet.
+
+      **Who can set a page.** It needs its own scope (`pbx-app-pages:write`, which includes
+      `pbx-app-pages:read`), on a credential for your whole account; a credential for one customer can
+      only read. No other scope implies it, because a page that asks for `{sessionToken}` receives the
+      session token of each user who opens it. Each set and clear is in your audit log, with the
+      address before and after.
+
+      **A set or clear answers in the request.** **200** (or **204**) means the phone system took
+      every change. **502** means it failed part way; send the same request again. **409** means
+      another change of the same page is running; send it again in a moment. The phone system applies
+      a change some seconds after it answers, so a set or clear sent within a few seconds of the last
+      one can answer success and change nothing: then send it again a little later. A read shows a
+      change a few seconds after it was made, and the apps show it the next time the user signs in or
+      opens the app.
   - name: PBX devices
     description: |
       The registrations your customers' phones have made. A row exists because something sent a SIP
@@ -3690,7 +3727,8 @@ paths:
       description: |
         Numbers the carriers can sell you now, each with the `offerToken` you spend to buy it with
         `POST /v1/number-orders`. An offer is the carriers' answer to this one search, not a stored
-        record, so there is no `GET` by id: search again for fresh offers.
+        record, so there is no `GET` by id: search again for fresh offers. Only numbers we can sell
+        you are listed.
 
         **Search one way at a time.** By area code (`filter[npa]`, and `filter[nxx]` for one
         exchange), by place (`filter[state]`, and `filter[rateCenter]` within it), or toll-free
@@ -3871,6 +3909,9 @@ paths:
           description: |
             The body is refused, or an offer token is not one we issued to you. Or the
             `Idempotency-Key` was used before with a different body (`code: idempotency_key_reused`).
+            Or a number on the order cannot be sold (title `Number cannot be bought`). We check
+            every offer token before we order any number, so after a 422 nothing on the order was
+            bought.
           content:
             application/vnd.api+json:
               schema:
@@ -7682,6 +7723,190 @@ paths:
         '502':
           $ref: '#/components/responses/CustomerPhoneSystemUnreachable'
 
+  /v1/customers/{customer}/app-page:
+    parameters:
+      - $ref: '#/components/parameters/CustomerId'
+    post:
+      tags: [App pages]
+      operationId: setCustomerAppPage
+      summary: Set a customer's app page
+      description: |
+        Sets or replaces the customer's page: the page of every user of the customer that has none of
+        its own. The same page goes to the iOS app, the Android app and the web phone. Safe to repeat: a set that the phone system already holds changes nothing.
+
+        **The body is flat JSON**, not a JSON:API document (a body with a top-level `data` is a
+        **422** on `/data`).
+
+        | Member | Rule |
+        |---|---|
+        | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+        | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
+        | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
+
+        A refused member is a **422** whose `source.pointer` names it, such as `/url`. Nothing is
+        written then.
+
+        **200** answers what was written. `effective` and `source` say what the apps now show to a
+        subscriber with no page of its own; a page that our staff set for many customers outranks
+        it, and `GET` shows that. **502**
+        (`title: Phone system unreachable`) means the phone system failed part way:
+        `errors[0].meta.changedSettings` counts what was already changed (0: nothing). Send the same
+        request again to finish it. Until then an app shows the entry only where its address was
+        written; for a subscriber, a label written without its address shows beside the customer's
+        address. **409** (`title: Change in progress`): another change of the same page is running.
+      security:
+        - bearerAuth: [pbx-app-pages:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppPageSetRequest'
+            example:
+              url: 'https://app.example.com/phone#t={sessionToken}'
+              label: Missed calls
+              icon: call_missed
+      responses:
+        '200':
+          description: The page was set. The answer is what was written.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/AppPageDocument'
+              example:
+                data:
+                  type: app-pages
+                  id: 0198c4a1-9203-74c5-a6d7-819203142536
+                  attributes:
+                    page:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    complete: true
+                    effective:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    source: customer
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'The customer has no phone system (`title: No phone system`), or another change of the page is running (`title: Change in progress`).'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          description: A member was refused. `source.pointer` names it. Nothing was written.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    title: Unprocessable Entity
+                    detail: Put {sessionToken} in the fragment (after #), so that the token is not sent to a server.
+                    source:
+                      pointer: /url
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/AppPagePhoneSystemFailed'
+        '503':
+          $ref: '#/components/responses/AppPageUnavailable'
+    get:
+      tags: [App pages]
+      operationId: getCustomerAppPage
+      summary: Read a customer's app page
+      description: |
+        Reads the customer's page, from our copy of the phone system's settings. It shows a change a
+        few seconds after a set or clear.
+
+        - `page` is the customer's own page, or `null` when there is none.
+        - `complete` is `false` while the three apps do not hold the same page: for a few seconds
+          after a change, or after a set or clear that failed part way (send it again). `true` does
+          not prove that a set finished: after a **502**, always send the request again, or compare
+          `page` with what you sent.
+        - `effective` is the page the apps show to a subscriber with no page of its own, or `null`
+          when the menu has no entry. `source` says where it comes from: `customer` (this page) or
+          `default` (a page our staff set for many customers).
+      security:
+        - bearerAuth: [pbx-app-pages:read]
+      responses:
+        '200':
+          description: The page.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/AppPageDocument'
+              example:
+                data:
+                  type: app-pages
+                  id: 0198c4a1-9203-74c5-a6d7-819203142536
+                  attributes:
+                    page:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    complete: true
+                    effective:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    source: customer
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'The customer has no phone system (`title: No phone system`), or another change of the page is running (`title: Change in progress`).'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AppPageUnavailable'
+    delete:
+      tags: [App pages]
+      operationId: clearCustomerAppPage
+      summary: Clear a customer's app page
+      description: |
+        Removes the customer's page. Its users then have no entry in the menu, except users with a
+        page of their own. **204** also when there was no page. A **502**
+        means the phone system failed part way; send it again.
+      security:
+        - bearerAuth: [pbx-app-pages:write]
+      responses:
+        '204':
+          description: The page is cleared.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'The customer has no phone system (`title: No phone system`), or another change of the page is running (`title: Change in progress`).'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/AppPagePhoneSystemFailed'
+        '503':
+          $ref: '#/components/responses/AppPageUnavailable'
+
   /v1/tenants/{tenant}:
     parameters:
       - $ref: '#/components/parameters/TenantId'
@@ -8062,6 +8287,184 @@ paths:
             application/vnd.api+json:
               schema:
                 $ref: '#/components/schemas/ErrorDocument'
+  /v1/pbx/subscribers/{subscriber}/app-page:
+    parameters:
+      - $ref: '#/components/parameters/PbxSubscriberId'
+    post:
+      tags: [App pages]
+      operationId: setSubscriberAppPage
+      summary: Set a subscriber's app page
+      description: |
+        Sets or replaces the page of one subscriber; it outranks the customer's page for that
+        subscriber. The same page goes to the iOS app, the Android app and the web phone. Safe to repeat: a set that the phone system already holds changes nothing.
+
+        **The body is flat JSON**, not a JSON:API document (a body with a top-level `data` is a
+        **422** on `/data`).
+
+        | Member | Rule |
+        |---|---|
+        | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+        | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
+        | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
+
+        A refused member is a **422** whose `source.pointer` names it, such as `/url`. Nothing is
+        written then.
+
+        **200** answers what was written. `effective` and `source` say what the apps now show to this
+        subscriber; a page that our staff set for many customers outranks it, and `GET` shows that.
+        **502**
+        (`title: Phone system unreachable`) means the phone system failed part way:
+        `errors[0].meta.changedSettings` counts what was already changed (0: nothing). Send the same
+        request again to finish it. Until then an app shows the entry only where its address was
+        written; for a subscriber, a label written without its address shows beside the customer's
+        address. **409** (`title: Change in progress`): another change of the same page is running.
+      security:
+        - bearerAuth: [pbx-app-pages:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppPageSetRequest'
+            example:
+              url: 'https://app.example.com/phone#t={sessionToken}'
+              label: Missed calls
+              icon: call_missed
+      responses:
+        '200':
+          description: The page was set. The answer is what was written.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/AppPageDocument'
+              example:
+                data:
+                  type: app-pages
+                  id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                  attributes:
+                    page:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    complete: true
+                    effective:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    source: subscriber
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'Another change of this page is running (`title: Change in progress`). Nothing was changed; send it again in a moment.'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '422':
+          description: A member was refused. `source.pointer` names it. Nothing was written.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+              example:
+                errors:
+                  - status: '422'
+                    title: Unprocessable Entity
+                    detail: Put {sessionToken} in the fragment (after #), so that the token is not sent to a server.
+                    source:
+                      pointer: /url
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/AppPagePhoneSystemFailed'
+        '503':
+          $ref: '#/components/responses/AppPageUnavailable'
+    get:
+      tags: [App pages]
+      operationId: getSubscriberAppPage
+      summary: Read a subscriber's app page
+      description: |
+        Reads the page of one subscriber, from our copy of the phone system's settings. It shows a
+        change a few seconds after a set or clear.
+
+        - `page` is the subscriber's own page, or `null` when there is none.
+        - `complete` is `false` while the three apps do not hold the same page: for a few seconds
+          after a change, or after a set or clear that failed part way (send it again). `true` does
+          not prove that a set finished: after a **502**, always send the request again, or compare
+          `page` with what you sent.
+        - `effective` is the page the apps show to this subscriber, or `null` when the menu has no entry.
+          `source` says where it comes from: `subscriber` (its own page), `customer` (the customer's
+          page) or `default` (a page our staff set for many customers).
+      security:
+        - bearerAuth: [pbx-app-pages:read]
+      responses:
+        '200':
+          description: The page.
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/AppPageDocument'
+              example:
+                data:
+                  type: app-pages
+                  id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
+                  attributes:
+                    page:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    complete: true
+                    effective:
+                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      label: Missed calls
+                      icon: call_missed
+                    source: subscriber
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/AppPageUnavailable'
+    delete:
+      tags: [App pages]
+      operationId: clearSubscriberAppPage
+      summary: Clear a subscriber's app page
+      description: |
+        Removes the page of one subscriber. The subscriber then gets the customer's page. **204** also
+        when there was no page. A **502**
+        means the phone system failed part way; send it again.
+      security:
+        - bearerAuth: [pbx-app-pages:write]
+      responses:
+        '204':
+          description: The page is cleared.
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: 'Another change of this page is running (`title: Change in progress`). Nothing was changed; send it again in a moment.'
+          content:
+            application/vnd.api+json:
+              schema:
+                $ref: '#/components/schemas/ErrorDocument'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '502':
+          $ref: '#/components/responses/AppPagePhoneSystemFailed'
+        '503':
+          $ref: '#/components/responses/AppPageUnavailable'
+
   /v1/pbx/devices:
     get:
       tags: [PBX devices]
@@ -10180,6 +10583,30 @@ components:
         The phone system refused the request or could not be reached. Nothing was dialled and the
         request may be retried. `errors[0].meta.vendor_status` carries the status the phone system
         itself answered with, so a refusal and an outage can be told apart.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+    AppPagePhoneSystemFailed:
+      description: |
+        The phone system failed part way (`title: Phone system unreachable`).
+        `errors[0].meta.changedSettings` counts the settings already changed (0: nothing). Send the
+        same request again to finish it.
+      content:
+        application/vnd.api+json:
+          schema:
+            $ref: '#/components/schemas/ErrorDocument'
+          example:
+            errors:
+              - status: '502'
+                title: Phone system unreachable
+                detail: The phone system failed after 4 of the app page's settings were changed. Send the same request again to finish it.
+                meta:
+                  changedSettings: 4
+    AppPageUnavailable:
+      description: |
+        The app page cannot be read or written in this region just now (`title: Phone system data
+        unavailable` or `Phone system unavailable`). Nothing was changed; send the request again.
       content:
         application/vnd.api+json:
           schema:
@@ -14540,6 +14967,88 @@ components:
             lowercase letters, digits and hyphens, with no hyphen at either end. Absent or empty keeps
             the customer's current `code`.
           example: acme-dental
+
+    # -- app pages (console ADR-0118) ---------------------------------------------------------------
+    AppPageSetRequest:
+      type: object
+      description: The page to set — FLAT JSON. A `data` member is refused with a **422**.
+      required: [url, label]
+      properties:
+        url:
+          type: string
+          maxLength: 2000
+          description: |
+            The page's address: `https` with a host, no user name or password, no `[` or `]`, no
+            space. `{sessionToken}` at most once, and only in the fragment (after `#`): the app puts
+            the user's session token there when the page opens.
+          example: 'https://app.example.com/phone#t={sessionToken}'
+        label:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The menu entry's text. No control character.
+          example: Missed calls
+        icon:
+          type: [string, 'null']
+          pattern: '^[a-z0-9_]{1,64}$'
+          description: A Material icon name. `open_in_new` when absent or null.
+          example: call_missed
+    AppPageValue:
+      type: object
+      description: One page, as the apps show it.
+      required: [url, label, icon]
+      properties:
+        url:
+          type: string
+          description: The address, with `{sessionToken}` where the app puts the token.
+        label: { type: string }
+        icon: { type: string }
+    AppPage:
+      type: object
+      required: [type, id, attributes]
+      properties:
+        type:
+          type: string
+          enum: [app-pages]
+        id:
+          type: string
+          format: uuid
+          description: The customer's id, or the subscriber's.
+        attributes:
+          $ref: '#/components/schemas/AppPageAttributes'
+    AppPageDocument:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/AppPage'
+    AppPageAttributes:
+      type: object
+      required: [page, complete, effective, source]
+      properties:
+        page:
+          description: The page set for this customer or subscriber itself; `null` when none is set.
+          oneOf:
+            - $ref: '#/components/schemas/AppPageValue'
+            - type: 'null'
+        complete:
+          type: boolean
+          description: |
+            `true` when the iOS app, the Android app and the web phone hold the same page (or none).
+            `false` for a few seconds after a change, or after a set or clear that failed part way.
+        effective:
+          description: |
+            The page the apps show: to this subscriber, or, for a customer, to a subscriber with no
+            page of its own. `null` when the menu has no entry.
+          oneOf:
+            - $ref: '#/components/schemas/AppPageValue'
+            - type: 'null'
+        source:
+          type: [string, 'null']
+          enum: [subscriber, customer, default, null]
+          description: |
+            Where `effective` comes from: `subscriber` (its own page), `customer` (the customer's
+            page) or `default` (a page our staff set for many customers). `null` when there is none.
 
     # -- tenants (the credential's own view of itself, ADR-0029) -----------------------------------
     TenantStatus:
