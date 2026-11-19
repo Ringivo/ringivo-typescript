@@ -3,7 +3,8 @@
 The TypeScript and JavaScript client for the Ringivo API. Create your
 customers and give them a phone system, assign and route their numbers, and
 read those phone systems: their call records, who holds which extension, what
-their phones have registered, and click-to-dial. Send a fax, read one, list
+their phones have registered, and click-to-dial. Set the web page their phone
+apps show in the menu. Send a fax, read one, list
 them, cancel one, fetch its pages, manage your customers' fax accounts, say who
 may read them, register the webhooks that tell you what happened — and verify
 them when they arrive. For text
@@ -68,7 +69,9 @@ scope, so a credential issued for one customer cannot hold it however it is
 asked for — and `webhooks:read` / `webhooks:write` for webhook endpoints and
 their deliveries. The phone-system surface needs `pbx-call-records:read` for
 the call log, `pbx-users:read` for the subscribers and their devices alike,
-and `pbx-calls:write` for click-to-dial. `customers:read` lists your customers
+and `pbx-calls:write` for click-to-dial. The app page in your customers' phone
+apps needs `pbx-app-pages:write` to set or clear it (an account-wide scope) and
+`pbx-app-pages:read` to read it. `customers:read` lists your customers
 and reads one, and only a credential issued for your whole account holds it.
 Recording a text you already sent needs `messages:record`, and reading the
 texts sent to your numbers needs `numbers:read` or `numbers:messaging`.
@@ -791,6 +794,57 @@ customer never holds them: they are dropped when the token is minted.
 `provisioningState` are all `null`. The order of `transports` is data: it is
 the order the transports are offered in DNS, first preferred. A customer that
 is not on your account answers **404**, not 403.
+
+### The app page in your customers' phone apps
+
+An app page is one web page of yours, shown as an entry in the menu of the
+iOS app, the Android app and the web phone. It has an address (`url`), a menu
+label (`label`) and an icon (`icon`, a Material icon name). Set it for a
+customer, and every user of that customer sees it. Set it for one subscriber,
+and that page outranks the customer's for that user, which is how you show a
+page to one user first.
+
+```ts
+const page = await client.customers.setAppPage(customer.id, {
+  url: "https://app.example.com/phone",
+  label: "Missed calls",
+  icon: "call_missed",
+});
+console.log(page.effective?.url, page.source);
+
+// One user only:
+await client.pbx.subscribers.setAppPage(subscriber.id, {
+  url: "https://app.example.com/phone",
+  label: "Missed calls",
+});
+
+const current = await client.customers.getAppPage(customer.id);
+await client.pbx.subscribers.clearAppPage(subscriber.id); // back to the customer's page
+```
+
+**Your page signs its users in itself.** The apps load the address as you set
+it and give your page nothing about the user. Use your own sign-in on the
+page. Never put a secret in the address: anyone can read it. A value of your
+own in it, such as your own customer id, is a hint only. To match a signed-in
+user to a phone user, read `client.pbx.subscribers.list()`: each subscriber has
+its extension, its email and its customer.
+
+A set replaces the whole page. The body is flat JSON, and `icon` is left off
+when you do not name it (the API then uses `open_in_new`). The API says a
+repeated set changes nothing, so the client resends a set on a transient
+failure, like an update, the 502 that says the phone system failed part way
+included. A `ConflictError` titled `Change in progress` is not resent: send it
+again yourself in a moment. A refused address or label is an
+`UnprocessableEntityError` whose `errors[0].source.pointer` names it (`/url`,
+`/label`), and nothing is written. The phone system applies a change a few
+seconds after it answers: `complete` is `false` until the three apps hold the
+same page.
+
+`page` is the page set for that customer or subscriber itself, `null` when it
+has none. `effective` is what the apps show, and `source` says where it comes
+from (`subscriber`, `customer` or `default`). Setting and clearing need
+`pbx-app-pages:write`, on a credential for your whole account; reading needs
+`pbx-app-pages:read`.
 
 ## Phone numbers
 
@@ -1609,6 +1663,9 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.customers.enablePbx(customerId, { residential?, callLimit?, callLimitExternal?, transports?, domainLabel? })` | `customers:write` | Starts building the phone system. Sent once. |
 | `client.customers.waitForPbx(customerId, { intervalMs?, timeoutMs? })` | `customers:read` | Reads until `provisioningState` is `active` or `failed`. Throws `PbxProvisioningTimeoutError` past `timeoutMs` (5 min by default). |
 | `client.customers.removePbx(customerId)` | `customers:write` | Accepted; takes the phone system away and keeps the customer. |
+| `client.customers.setAppPage(customerId, { url, label, icon? })` | `pbx-app-pages:write` | Set or replace the customer's app page: the menu entry its users' phone apps show. The `AppPage` as written. Resent on a transient failure. |
+| `client.customers.getAppPage(customerId)` | `pbx-app-pages:read` | The customer's `AppPage`: its own `page` (`null` when none), and the `effective` page with its `source`. |
+| `client.customers.clearAppPage(customerId)` | `pbx-app-pages:write` | Removes the customer's app page. 204 also when there was none. |
 | `client.regions.list()` | — | Every `Region` (a country) with the `regionPreference` options you may choose there. |
 | `client.phoneNumbers.list({ e164?, status?, sort?, after?, before?, pageSize? })` | `numbers:read` | A `PagePromise` of `PhoneNumber`s, each with its `customerId`. |
 | `client.phoneNumbers.get(phoneNumberId)` | `numbers:read` | One `PhoneNumber`. |
@@ -1626,6 +1683,9 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `client.pbx.subscribers.list({ customer?, user?, search?, kind?, hasDevices?, after?, before?, pageSize? })` | `pbx-users:read` | A `PagePromise`: one `PbxSubscriberPage` (`data`, `nextCursor`), or every item with `for await`. `user` is the exact extension; `search` is the directory box; `kind` is one word, a comma list or an array; `hasDevices` narrows to subscribers with (or without) a device. |
 | `client.pbx.subscribers.get(subscriberId)` | `pbx-users:read` | One `PbxSubscriber`. Its `createdAt`/`updatedAt` are strings, not `Date`s. |
 | `client.pbx.subscribers.call(subscriberId, { destination, callerId?, autoAnswer?, device?, idempotencyKey? })` | `pbx-calls:write` | Have that subscriber's phone place a call. Resolves to a `PbxCall` — an intent, not a call that happened. Sends an `Idempotency-Key` on every request (yours, or a fresh UUID); `idempotentReplay` says when the answer replays an earlier call. |
+| `client.pbx.subscribers.setAppPage(subscriberId, { url, label, icon? })` | `pbx-app-pages:write` | Set or replace one subscriber's app page; it outranks the customer's. The `AppPage` as written. Resent on a transient failure. |
+| `client.pbx.subscribers.getAppPage(subscriberId)` | `pbx-app-pages:read` | The subscriber's `AppPage`; `source` is `subscriber`, `customer` or `default`. |
+| `client.pbx.subscribers.clearAppPage(subscriberId)` | `pbx-app-pages:write` | Removes the subscriber's own page; it then gets the customer's. |
 | `client.pbx.devices.list({ customer?, subscriber?, registered?, after?, before?, pageSize? })` | `pbx-users:read` | A `PagePromise`: one `PbxDevicePage` (`data`, `nextCursor`), or every item with `for await`. `subscriber` is a subscribers id, not an extension. |
 | `client.pbx.devices.get(pbxDeviceId)` | `pbx-users:read` | One `PbxDevice` — one registration, not one handset. |
 | `client.messages.record({ from, to, senderLabel, providerMessageId, providerPartIds, sentAt, body?, mediaUrls?, markConversationRead? })` | `messages:record` | Record a text you already sent. Resolves to an `OutboundMessage`; `replayed` is `true` on a repeat. |
@@ -1653,6 +1713,7 @@ Every method below also takes a last, optional `RequestOptions` argument
 | `senderLabel(text)` | — | Any text as a label that keeps the label rule. |
 | `isRetryable(error)` | — | Whether the API's contract allows the same call again. |
 
+`AppPage`, `AppPageValue`,
 `CallRecord`, `CallRecordPage`, `Customer`, `CustomerPage`, `Fax`,
 `FaxAccount`, `FaxAccountNumber`, `FaxAccountPage`, `FaxAccountUser`,
 `FaxAccountUserPage`, `FaxDocument`, `FaxPage`, `InboundMessage`,

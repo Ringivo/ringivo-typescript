@@ -285,7 +285,7 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.subscribers))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["call", "get", "list"]);
+    ).toEqual(["call", "clearAppPage", "get", "getAppPage", "list", "setAppPage"]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.pbx.devices))
         .filter((name) => name !== "constructor")
@@ -308,7 +308,19 @@ describe.each(["esm", "cjs"] as const)("the built %s entrypoint", (kind) => {
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.customers))
         .filter((name) => name !== "constructor")
         .sort(),
-    ).toEqual(["create", "delete", "enablePbx", "get", "list", "removePbx", "update", "waitForPbx"]);
+    ).toEqual([
+      "clearAppPage",
+      "create",
+      "delete",
+      "enablePbx",
+      "get",
+      "getAppPage",
+      "list",
+      "removePbx",
+      "setAppPage",
+      "update",
+      "waitForPbx",
+    ]);
     expect(
       Object.getOwnPropertyNames(Object.getPrototypeOf(client.regions))
         .filter((name) => name !== "constructor")

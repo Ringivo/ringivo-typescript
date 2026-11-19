@@ -1,6 +1,7 @@
 /**
  * Your customers: list them, read one, create one, change one, delete one,
- * and give one a phone system or take it away.
+ * give one a phone system or take it away, and set the app page its phone
+ * apps show (`setAppPage()`, `getAppPage()`, `clearAppPage()`; appPages.ts).
  *
  *     const [us] = await client.regions.list();
  *     const customer = await client.customers.create({
@@ -45,8 +46,9 @@
  * `create()` and `enablePbx()` are sent once: the API takes no
  * `Idempotency-Key` on either, so a lost answer may hide a customer that was
  * made, and a second POST would make another (or answer 409). Look the
- * customer up before you send a create again. `update()`, `delete()` and
- * `removePbx()` are resent on a transient failure, like every read. A resent
+ * customer up before you send a create again. `update()`, `delete()`,
+ * `removePbx()`, `setAppPage()` and `clearAppPage()` are resent on a
+ * transient failure, like every read. A resent
  * DELETE whose first attempt did land answers 404 (`delete()`) or 409 `No
  * phone system` (`removePbx()`): read either as "already done".
  *
@@ -60,8 +62,11 @@
  */
 import { JSONAPI_MEDIA_TYPE, JSON_MEDIA_TYPE, type Ringivo, callOptions, type RequestOptions, transportOf } from "./client.js";
 import type { components } from "./_generated/schema.js";
+import { appPageBody, type SetAppPageOptions } from "./appPages.js";
 import { PbxProvisioningTimeoutError, RequestAbortedError } from "./errors.js";
 import {
+  type AppPage,
+  appPageFromResource,
   type Customer,
   type RawJson,
   type RegionPreference,
@@ -413,6 +418,74 @@ export class Customers {
    */
   async removePbx(customerId: string, requestOptions?: RequestOptions): Promise<void> {
     await transportOf(this.client)["/v1/customers/{customer}/pbx"].DELETE({
+      ...callOptions(this.client, requestOptions),
+      params: { path: { customer: customerIdParam(customerId) } },
+    });
+  }
+
+  /**
+   * Set or replace the customer's app page: the menu entry of every user of
+   * the customer that has no page of its own, in the iOS app, the Android app
+   * and the web phone.
+   *
+   * The apps load `url` as you set it and add nothing about the user, so your
+   * page signs its users in itself. Never put a secret in `url`: anyone can
+   * read it. appPages.ts says more.
+   *
+   * Resent on a transient failure: a set the phone system already holds
+   * changes nothing, and after a 502 (the phone system failed part way,
+   * `errors[0].meta.changedSettings` counts what was already changed) the API
+   * asks for the same set again. A `ConflictError` titled `Change in
+   * progress` is not resent: send it again yourself in a moment. A refused
+   * member is an `UnprocessableEntityError` whose `source.pointer` names it;
+   * a customer with no phone system is a `ConflictError` (`No phone system`).
+   *
+   * Answers the `AppPage` as written; `effective` and `source` say what the
+   * apps now show to a subscriber with no page of its own.
+   *
+   * Needs `pbx-app-pages:write`, on a credential for your whole account.
+   */
+  async setAppPage(
+    customerId: string,
+    options: SetAppPageOptions,
+    requestOptions?: RequestOptions,
+  ): Promise<AppPage> {
+    const { data } = await transportOf(this.client)["/v1/customers/{customer}/app-page"].POST({
+      // Resendable: the API says a repeated set changes nothing.
+      ...callOptions(this.client, requestOptions, true),
+      // FLAT JSON: a JSON:API document (a top-level `data`) is a 422 here.
+      headers: { "Content-Type": JSON_MEDIA_TYPE },
+      params: { path: { customer: customerIdParam(customerId) } },
+      body: appPageBody(options),
+    });
+
+    return appPageFromResource(dataObject(data));
+  }
+
+  /**
+   * Read the customer's app page. `page` is `null` when the customer has no
+   * page of its own. A read shows a change a few seconds after a set or
+   * clear; `complete` is `false` until the three apps hold the same page.
+   *
+   * Needs `pbx-app-pages:read`.
+   */
+  async getAppPage(customerId: string, requestOptions?: RequestOptions): Promise<AppPage> {
+    const { data } = await transportOf(this.client)["/v1/customers/{customer}/app-page"].GET({
+      ...callOptions(this.client, requestOptions),
+      params: { path: { customer: customerIdParam(customerId) } },
+    });
+
+    return appPageFromResource(dataObject(data));
+  }
+
+  /**
+   * Remove the customer's app page. Its users then have no entry in the menu,
+   * except users with a page of their own. 204 also when there was no page.
+   *
+   * Needs `pbx-app-pages:write`.
+   */
+  async clearAppPage(customerId: string, requestOptions?: RequestOptions): Promise<void> {
+    await transportOf(this.client)["/v1/customers/{customer}/app-page"].DELETE({
       ...callOptions(this.client, requestOptions),
       params: { path: { customer: customerIdParam(customerId) } },
     });

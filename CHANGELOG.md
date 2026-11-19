@@ -1,5 +1,29 @@
 # Release notes
 
+## Unreleased — Added
+
+- **The app page: a web page of yours in the menu of your customers' phone
+  apps.** `customers.setAppPage(customerId, { url, label, icon? })` sets or
+  replaces a customer's page, and
+  `pbx.subscribers.setAppPage(subscriberId, { url, label, icon? })` sets one
+  subscriber's page, which outranks the customer's. `getAppPage()` reads
+  either, and `clearAppPage()` removes it (204 also when there was none). A
+  set sends flat JSON and leaves `icon` off when it is not named (the API then
+  uses `open_in_new`). It is resent on a transient failure like an update,
+  because the API says a repeated set changes nothing; a `ConflictError`
+  titled `Change in progress` is not resent. The apps pass nothing about the
+  user to the page, so the page signs its users in itself; never put a secret
+  in `url`. Setting and clearing need `pbx-app-pages:write`; reading needs
+  `pbx-app-pages:read`.
+- **New types `AppPage`, `AppPageValue` and `SetAppPageOptions`.** `AppPage`
+  has `id` (the customer's or subscriber's), `page` (its own page, or `null`),
+  `complete`, `effective` (what the apps show, or `null`) and `source`
+  (`subscriber`, `customer` or `default`, or `null`). `AppPageValue` has
+  `url`, `label` and `icon`. Both keep the JSON they were read from in `raw`.
+- The vendored API description is the current one. Besides the app page
+  operations, it changes two descriptions of the number search and number
+  order operations; no shape changed.
+
 ## 0.28.0 (2026-11-05) — Changed
 
 A wire rename in the API, so a minor release before 1.0.
