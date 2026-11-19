@@ -32,8 +32,15 @@
  * this client resends it like an update: after no answer, a 429 or a 5xx —
  * the 502 that says the phone system failed part way included, which the
  * API asks you to answer by sending the same set again. A 409 titled
- * `Change in progress` is not resent by the client: send it again yourself
- * in a moment. `clearAppPage()` is a DELETE that answers 204 also when there
+ * `Change in progress` is not resent by the client, and `isRetryable()` is
+ * `false` for it, because it carries no `code`: match its title and send it
+ * again yourself in a moment.
+ *
+ * -- THE ANSWER OF A SET IS AN ECHO, NOT A READ ------------------------------
+ * A set answers what was written: `complete` is always `true` there, and
+ * `effective` is the page sent. A page your provider set for many customers
+ * (`source` `default`) outranks a customer's page, and only `getAppPage()`
+ * shows that. `clearAppPage()` is a DELETE that answers 204 also when there
  * was no page, and is resent like every DELETE.
  *
  * -- WHAT IS REFUSED --------------------------------------------------------
@@ -52,8 +59,9 @@ import type { components } from "./_generated/schema.js";
 export interface SetAppPageOptions {
   /**
    * The page's address: `https://` and a host name, at most 2,000
-   * characters. The apps load it as it stands. The API refuses an address it
-   * cannot pass to the apps safely with a 422 on `/url`.
+   * characters. The apps load it as it stands. No IP address as the host, no
+   * user name or password, and no `[` or `]` (also not percent-encoded): each
+   * is a 422 on `/url`, and its `detail` says why.
    */
   url: string;
   /** The text of the menu entry, 1 to 64 characters. */

@@ -11,7 +11,13 @@
   set sends flat JSON and leaves `icon` off when it is not named (the API then
   uses `open_in_new`). It is resent on a transient failure like an update,
   because the API says a repeated set changes nothing; a `ConflictError`
-  titled `Change in progress` is not resent. The apps pass nothing about the
+  titled `Change in progress` is not resent, has no `code`, and
+  `isRetryable()` is `false` for it: match its title (the README's "Retrying
+  from a queue" shows how). The answer of a set is an echo of what was written
+  (`complete` always `true`); read the page with `getAppPage()` to see what the
+  apps show. The retry rules in ADR-0001 decision 1, the transport, the
+  `maxRetries` doc and the README's "Retries" now name this POST as resent. The
+  apps pass nothing about the
   user to the page, so the page signs its users in itself; never put a secret
   in `url`. Setting and clearing need `pbx-app-pages:write`; reading needs
   `pbx-app-pages:read`.

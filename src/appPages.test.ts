@@ -17,7 +17,7 @@ import { HttpResponse, http } from "msw";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { Calls, mockServer } from "../tests/msw.js";
-import { ConflictError, Ringivo, UnprocessableEntityError } from "./index.js";
+import { ConflictError, Ringivo, UnprocessableEntityError, isRetryable } from "./index.js";
 
 const BASE_URL = "https://api.yourprovider.example";
 const TOKEN_URL = `${BASE_URL}/oauth/token`;
@@ -132,8 +132,16 @@ describe("a customer's app page", () => {
       }),
     );
 
-    await expect(client().customers.setAppPage(CUSTOMER_ID, PAGE)).rejects.toBeInstanceOf(ConflictError);
+    const error = await client()
+      .customers.setAppPage(CUSTOMER_ID, PAGE)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConflictError);
     expect(posts.count).toBe(1);
+    // It has no `code`, so the retry helper says no; the README tells the
+    // caller to match the title instead.
+    expect((error as ConflictError).errors[0]?.title).toBe("Change in progress");
+    expect(isRetryable(error)).toBe(false);
   });
 
   it("surfaces a refused url on its pointer", async () => {
@@ -201,6 +209,29 @@ describe("a customer's app page", () => {
 });
 
 describe("a subscriber's app page", () => {
+  it("resends a set after a 502, like the customer's", async () => {
+    const posts = new Calls();
+    server.use(
+      http.post(SUBSCRIBER_PAGE_URL, async ({ request }) => {
+        await posts.record(request);
+        if (posts.count === 1) {
+          return HttpResponse.json(
+            { errors: [{ status: "502", title: "Phone system unreachable", meta: { changedSettings: 0 } }] },
+            { status: 502, headers: { "Retry-After": "0" } },
+          );
+        }
+        return HttpResponse.json(
+          pageDocument(SUBSCRIBER_ID, { page: PAGE, complete: true, effective: PAGE, source: "subscriber" }),
+        );
+      }),
+    );
+
+    await client().pbx.subscribers.setAppPage(SUBSCRIBER_ID, PAGE);
+
+    expect(posts.count).toBe(2);
+    expect(posts.at(1).body).toBe(posts.at(0).body);
+  });
+
   it("sets the page with flat JSON and reads the answer", async () => {
     const posts = new Calls();
     server.use(

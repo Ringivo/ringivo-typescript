@@ -489,7 +489,12 @@ const KEY_IN_USE = "idempotency_key_in_use";
  * something changes first — the request itself, or the account. A 401, 403 or 404 can be a setting that is
  * fixed later; for example `messages.record()` answers 404 while recording
  * texts is not turned on for the platform yet. Retry those only after the
- * change, or slowly. `false` for anything else, because this package did not
+ * change, or slowly. ONE 409 IS TRANSIENT AND STILL `false` HERE: the app
+ * page's `Change in progress` (another change of the same page is running).
+ * It carries no `code`, so this function cannot tell it from a 409 that
+ * answers the same every time. Match `error.statusCode === 409` and
+ * `error.errors[0]?.title === "Change in progress"` yourself, and send the
+ * same call again after a few seconds. `false` for anything else, because this package did not
  * throw it for the API — a refusal before any request included.
  *
  * NO ANSWER is an `ApiConnectionError` (an `ApiTimeoutError` included): the

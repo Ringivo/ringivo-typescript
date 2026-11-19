@@ -711,13 +711,18 @@ export class PbxSubscribers {
    *
    * Resent on a transient failure, the 502 that says the phone system failed
    * part way included: a set the phone system already holds changes nothing.
-   * A `ConflictError` titled `Change in progress` is not resent: send it again
-   * yourself in a moment. A refused member is an `UnprocessableEntityError`
+   * A `ConflictError` titled `Change in progress` is not resent, and
+   * `isRetryable()` is `false` for it (it has no `code`; match its title):
+   * send it again yourself in a moment. A refused member is an `UnprocessableEntityError`
    * whose `source.pointer` names it. A subscriber outside your customers'
    * domains answers **404**.
    *
-   * Answers the `AppPage` as written; `effective` and `source` say what this
-   * subscriber's apps now show.
+   * Answers the `AppPage` as written: an echo of the set, not a read.
+   * `complete` is always `true` there, and `effective` is the page you sent.
+   * A page your provider set for many customers (`source` `default`)
+   * outranks it, and only `getAppPage()` shows that. To see the change
+   * applied, read the page a few seconds later and compare `page` with what
+   * you sent.
    *
    * Needs `pbx-app-pages:write`, on a credential for your whole account.
    */

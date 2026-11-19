@@ -200,9 +200,10 @@ export interface RingivoOptions {
    * retries off.
    *
    * Only what is safe to send twice is retried: reads, deletes, the PATCH
-   * updates, and the writes that carry an `Idempotency-Key` (a fax send,
-   * click-to-dial). A create without a key is sent once, because a lost answer
-   * may hide a row that was made. Only transient answers are retried: no
+   * updates, the writes that carry an `Idempotency-Key` (a fax send,
+   * click-to-dial), and a POST the API declares safe to repeat (the app page
+   * set). A create without a key is sent once, because a lost answer may hide
+   * a row that was made. Only transient answers are retried: no
    * answer, a timeout, 408, 429, any 5xx, and the 409 `idempotency_key_in_use`.
    * The wait is the server's `Retry-After` when it gives one of up to 60
    * seconds, and otherwise a backoff from 0.5 s to 8 s with jitter. A longer
@@ -465,7 +466,8 @@ export class Ringivo {
 /**
  * Send one request through the client's loop. Internal: the resource methods
  * call this with `resendable` set for the writes that are safe to send twice
- * (a PATCH of attribute values), which `request()` cannot know about a request
+ * (a PATCH of attribute values, or a POST the API declares safe to repeat,
+ * such as the app page set), which `request()` cannot know about a request
  * it did not build. A request carrying an `Idempotency-Key` is resendable
  * either way.
  */

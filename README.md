@@ -800,17 +800,18 @@ is not on your account answers **404**, not 403.
 An app page is one web page of yours, shown as an entry in the menu of the
 iOS app, the Android app and the web phone. It has an address (`url`), a menu
 label (`label`) and an icon (`icon`, a Material icon name). Set it for a
-customer, and every user of that customer sees it. Set it for one subscriber,
+customer, and every user of that customer with no page of its own sees it,
+unless your provider set a page for many customers, which outranks it. Set it
+for one subscriber,
 and that page outranks the customer's for that user, which is how you show a
 page to one user first.
 
 ```ts
-const page = await client.customers.setAppPage(customer.id, {
+await client.customers.setAppPage(customer.id, {
   url: "https://app.example.com/phone",
   label: "Missed calls",
   icon: "call_missed",
 });
-console.log(page.effective?.url, page.source);
 
 // One user only:
 await client.pbx.subscribers.setAppPage(subscriber.id, {
@@ -818,7 +819,10 @@ await client.pbx.subscribers.setAppPage(subscriber.id, {
   label: "Missed calls",
 });
 
-const current = await client.customers.getAppPage(customer.id);
+// A few seconds later: what the apps show, and where it comes from.
+const page = await client.customers.getAppPage(customer.id);
+console.log(page.effective?.url, page.source, page.complete);
+
 await client.pbx.subscribers.clearAppPage(subscriber.id); // back to the customer's page
 ```
 
@@ -833,11 +837,20 @@ A set replaces the whole page. The body is flat JSON, and `icon` is left off
 when you do not name it (the API then uses `open_in_new`). The API says a
 repeated set changes nothing, so the client resends a set on a transient
 failure, like an update, the 502 that says the phone system failed part way
-included. A `ConflictError` titled `Change in progress` is not resent: send it
-again yourself in a moment. A refused address or label is an
+included. A `ConflictError` titled `Change in progress` is not resent, and
+`isRetryable()` is `false` for it ("Retrying from a queue" says how to match
+it): send it again yourself in a moment. A refused address or label is an
 `UnprocessableEntityError` whose `errors[0].source.pointer` names it (`/url`,
-`/label`), and nothing is written. The phone system applies a change a few
-seconds after it answers: `complete` is `false` until the three apps hold the
+`/label`), and nothing is written: for `url`, an IP address as the host, a
+user name or password, and `[` or `]` (also percent-encoded) are each refused,
+and the `detail` says why.
+
+**The answer of a set is an echo, not a read.** It is what was written:
+`complete` is always `true` there, and `effective` is the page you sent. A
+page your provider set for many customers (`source` `default`) outranks yours,
+and only `getAppPage()` shows that. The phone system applies a change a few
+seconds after it answers, so read the page a few seconds later and compare
+`page` with what you sent: `complete` is `false` until the three apps hold the
 same page.
 
 `page` is the page set for that customer or subscriber itself, `null` when it
@@ -1531,10 +1544,11 @@ endpoint.
 **The client retries for you**, up to 2 more times by default. It retries only
 what is safe to send twice, and only an answer that may be different next time:
 
-- **What:** reads, deletes, the PATCH updates, and the writes that carry an
+- **What:** reads, deletes, the PATCH updates, the writes that carry an
   `Idempotency-Key` (`faxes.send()` and `pbx.subscribers.call()`; the same key
-  goes out on every attempt). A create with no key is sent **once**: if its
-  answer is lost, a second POST could make a second row.
+  goes out on every attempt), and a POST the API declares safe to repeat (the
+  app page set, `setAppPage()`, a whole replacement). A create with no key is
+  sent **once**: if its answer is lost, a second POST could make a second row.
 - **When:** no answer (a refused or reset connection, a timeout), 408, 429,
   any 5xx, and the 409 `idempotency_key_in_use`.
 - **How long:** the server's `Retry-After` when it sends one of up to 60
@@ -1584,6 +1598,13 @@ request gets the same answer until something changes first. `false` for
 API. A 401, 403 or 404 can be an account setting that is fixed later, such as
 a missing scope; a queue may retry those slowly, after the change.
 
+**One 409 is transient and carries no `code`:** the app page's `Change in
+progress`, which says another change of the same page is running.
+`isRetryable()` is `false` for it, because a 409 with no code is told apart
+only by its title. Match `error.statusCode === 409 &&
+error.errors[0]?.title === "Change in progress"`, and send the same call again
+after a few seconds.
+
 **Retry with the same `Idempotency-Key`.** For `faxes.send()` and
 `pbx.subscribers.call()`, a retry is safe only when it sends the key the first
 attempt sent: pass your own `idempotencyKey` and keep it with the queued job.
@@ -1599,6 +1620,12 @@ try {
     // Unchanged means the same idempotency key too, for a send or a call.
     const wait = error instanceof ApiError ? error.retryAfter : undefined; // seconds, or undefined
     queue.retryLater(wait ?? yourBackoff(attempt));
+  } else if (
+    error instanceof ApiError &&
+    error.statusCode === 409 &&
+    error.errors[0]?.title === "Change in progress"
+  ) {
+    queue.retryLater(5); // an app page change is still running
   } else if (error instanceof ApiError && [401, 403, 404].includes(error.statusCode)) {
     // An account setting, such as a missing scope: retry slowly, and
     // alert someone to fix it.

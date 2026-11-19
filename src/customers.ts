@@ -436,12 +436,17 @@ export class Customers {
    * changes nothing, and after a 502 (the phone system failed part way,
    * `errors[0].meta.changedSettings` counts what was already changed) the API
    * asks for the same set again. A `ConflictError` titled `Change in
-   * progress` is not resent: send it again yourself in a moment. A refused
+   * progress` is not resent, and `isRetryable()` is `false` for it (it has
+   * no `code`; match its title): send it again yourself in a moment. A refused
    * member is an `UnprocessableEntityError` whose `source.pointer` names it;
    * a customer with no phone system is a `ConflictError` (`No phone system`).
    *
-   * Answers the `AppPage` as written; `effective` and `source` say what the
-   * apps now show to a subscriber with no page of its own.
+   * Answers the `AppPage` as written: an echo of the set, not a read.
+   * `complete` is always `true` there, and `effective` is the page you sent.
+   * A page your provider set for many customers (`source` `default`)
+   * outranks it, and only `getAppPage()` shows that. To see the change
+   * applied, read the page a few seconds later and compare `page` with what
+   * you sent.
    *
    * Needs `pbx-app-pages:write`, on a credential for your whole account.
    */
