@@ -403,28 +403,36 @@ tags:
       (`icon`), and it is set for a customer or for one of its subscribers. A subscriber with no page
       of its own gets the customer's.
 
-      **Who the user is: the session token.** Put `{sessionToken}` in the fragment of the address
-      (after `#`). When a user opens the page, the app puts that user's session token there. Your
-      page reads it, removes it from the address, and sends it to your server. Your server then asks
-      us whose token it is. Any value of your own in the address is a hint only: it selects nothing.
+      **Your page signs its users in itself.** The app gives your page nothing about the user: no
+      session token, no user id and no sign-in. When a user opens the page, the app loads the
+      address exactly as you set it. Use your own sign-in on the page, and keep your own session
+      cookie.
 
-      **The call that answers "whose token is this?" is not available yet.** Until it is, do not put
-      `{sessionToken}` in an address. When it is:
-
-      - **The token's own contents prove nothing.** Anyone can make a token that decodes to any user
-        and domain. Only our answer says whose token it is.
-      - **The token is the user's whole phone-system session for up to 4 hours.** Do not log it,
-        store it or pass it on. Load no third-party script on the page that receives it. Send it to
-        your server once, make your own short session, and drop the token.
-      - **The web phone shows your page in a frame.** Your page must allow that frame, and its
-        cookies are third-party cookies there.
-      - The iOS app and the web phone were tested; the Android app was not yet.
+      - **Never put a secret in the address.** Anyone can read a page's address, with no sign-in.
+        A value of your own in the address (for example a customer id on a customer's page) is a
+        hint only: it proves nothing about the user.
+      - **The phone system's placeholders are refused.** An address with `[JWT_TOKEN]`,
+        `[COOKIE_NAME]` or `[COOKIE]` (also percent-encoded, at any depth) is a **422**: the apps would put the
+        user's phone-system session there. So is `{sessionToken}`, which an earlier version of this
+        API took.
+      - **To match a signed-in user to a phone user**, read your customers' subscribers
+        (`GET /v1/pbx/subscribers`, scope `pbx-users:read`): each one has its extension, its email
+        and its customer.
+      - **The iOS app opens your page full screen** in its own web view. We read in the app that the
+        web view keeps cookies between opens, and that it keeps the page on the host of the address
+        (a link to a different host opens in Safari). We have not tested either on a phone yet, so
+        keep the sign-in and every screen on that one host, and do not depend on the cookie alone.
+      - **The web phone shows your page in a frame**, from the host the user opened the web phone on.
+        Your page must allow that frame. Its cookies are third-party cookies there (`SameSite=None;
+        Secure`), and some browsers block them.
+      - Tested on a phone: the page opens from the menu in the iOS app and in the web phone. Not
+        tested yet: the iOS cookie and host behaviour above, and the Android app.
 
       **Who can set a page.** It needs its own scope (`pbx-app-pages:write`, which includes
       `pbx-app-pages:read`), on a credential for your whole account; a credential for one customer can
-      only read. No other scope implies it, because a page that asks for `{sessionToken}` receives the
-      session token of each user who opens it. Each set and clear is in your audit log, with the
-      address before and after.
+      only read. No other scope implies it, because the page opens inside the phone app of each user
+      it is set for, on any https host. Each set and clear is in your audit log, with the address
+      before and after.
 
       **A set or clear answers in the request.** **200** (or **204**) means the phone system took
       every change. **502** means it failed part way; send the same request again. **409** means
@@ -6286,8 +6294,8 @@ paths:
         ## The lifecycle, in words
 
         ```
-        draft  →  awaiting_review  →  submitted  →  foc_assigned  →  completed
-          │                                                     →  failed
+        draft  →  awaiting_review  →  submitting  →  submitted  →  foc_assigned  →  completed
+          │                                                                      →  failed
           └ reads awaiting_signature while the letter is out and not signed yet
         ```
 
@@ -6302,20 +6310,28 @@ paths:
         puts the order back to `awaiting_signature`, because your customer still holds the link.
         Until 2026-11-07 a signed order went on reading `awaiting_signature` until it was submitted.
         **`awaiting_review`** is our desk's: the request is in, and from here on it is worked rather
-        than edited. Our desk can return it to `draft` with a note, which is the one edge in this
-        lifecycle that goes backwards. Everything past it — `submitted` to a carrier,
+        than edited. Our desk can return it to `draft` with a note. Everything past it —
+        `submitting` while we send it to a carrier, `submitted` once the carrier has it,
         `foc_assigned` once one commits to a cutover date, then `completed` or `failed` — is us
-        working the port.
+        working the port. **`submitting`** is brief: it lasts while our filing call is at the
+        carrier. When the carrier did not take the request and nothing was filed, the order goes back
+        to `awaiting_review` (`submitting` → `awaiting_review`), so `awaiting_review` can follow
+        `submitting`. An order can also read `submitting` for longer, while our desk confirms with
+        the carrier whether a filing whose answer was lost went through. When our desk files an
+        order outside the console and records it by hand, the order goes from `awaiting_review` to
+        `submitted` with no `submitting`. Until 2026-11-19 an order read `awaiting_review` during
+        this step.
 
         **No operation on this API hands the letter over.** An order reads `awaiting_signature`
         after the hand-over in the portal, and `port_order.status_changed` reports the move
         (`draft` → `awaiting_signature`) like any other. It reports the signature too
         (`awaiting_signature` → `draft`).
 
-        **The numbers share the lifecycle, except `awaiting_signature`.** A port splits — a carrier
-        can commit to three lines and refuse the fourth — so each number carries its own status in
-        `numberStates`, and a number has no paperwork of its own, so it stays `draft` until the
-        order enters review.
+        **The numbers share the lifecycle, except `awaiting_signature` and `submitting`.** A port
+        splits — a carrier can commit to three lines and refuse the fourth — so each number carries
+        its own status in `numberStates`, and a number has no paperwork of its own, so it stays
+        `draft` until the order enters review. A number stays `awaiting_review` while its order is
+        `submitting`.
 
         ## What a create takes
 
@@ -7739,7 +7755,7 @@ paths:
 
         | Member | Rule |
         |---|---|
-        | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+        | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not percent-encoded at any depth (`%5B`, `%255B`), so no phone-system placeholder such as `[JWT_TOKEN]`. No `{` or `}`. |
         | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
         | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
 
@@ -7763,7 +7779,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AppPageSetRequest'
             example:
-              url: 'https://app.example.com/phone#t={sessionToken}'
+              url: 'https://app.example.com/phone?tab=missed'
               label: Missed calls
               icon: call_missed
       responses:
@@ -7779,12 +7795,12 @@ paths:
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
                   attributes:
                     page:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     complete: true
                     effective:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     source: customer
@@ -7810,7 +7826,7 @@ paths:
                 errors:
                   - status: '422'
                     title: Unprocessable Entity
-                    detail: Put {sessionToken} in the fragment (after #), so that the token is not sent to a server.
+                    detail: 'The url must not contain [JWT_TOKEN], [COOKIE_NAME], [COOKIE]: the app would put the user''s session there. Sign your users in on your own page.'
                     source:
                       pointer: /url
         '429':
@@ -7850,12 +7866,12 @@ paths:
                   id: 0198c4a1-9203-74c5-a6d7-819203142536
                   attributes:
                     page:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     complete: true
                     effective:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     source: customer
@@ -8303,7 +8319,7 @@ paths:
 
         | Member | Rule |
         |---|---|
-        | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+        | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not percent-encoded at any depth (`%5B`, `%255B`), so no phone-system placeholder such as `[JWT_TOKEN]`. No `{` or `}`. |
         | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
         | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
 
@@ -8327,7 +8343,7 @@ paths:
             schema:
               $ref: '#/components/schemas/AppPageSetRequest'
             example:
-              url: 'https://app.example.com/phone#t={sessionToken}'
+              url: 'https://app.example.com/phone?tab=missed'
               label: Missed calls
               icon: call_missed
       responses:
@@ -8343,12 +8359,12 @@ paths:
                   id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
                   attributes:
                     page:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     complete: true
                     effective:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     source: subscriber
@@ -8374,7 +8390,7 @@ paths:
                 errors:
                   - status: '422'
                     title: Unprocessable Entity
-                    detail: Put {sessionToken} in the fragment (after #), so that the token is not sent to a server.
+                    detail: 'The url must not contain [JWT_TOKEN], [COOKIE_NAME], [COOKIE]: the app would put the user''s session there. Sign your users in on your own page.'
                     source:
                       pointer: /url
         '429':
@@ -8414,12 +8430,12 @@ paths:
                   id: 0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f
                   attributes:
                     page:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     complete: true
                     effective:
-                      url: 'https://app.example.com/phone#t={sessionToken}'
+                      url: 'https://app.example.com/phone?tab=missed'
                       label: Missed calls
                       icon: call_missed
                     source: subscriber
@@ -9844,7 +9860,11 @@ webhooks:
         `awaiting_signature` → `draft`, and submitting the signed order fires `draft` →
         `awaiting_review`. An edit, a regenerated letter (`generate-loa`) or a removed document
         that cancels a signed letter fires `draft` → `awaiting_signature`, because your customer
-        still holds the link.
+        still holds the link. Our filing fires `awaiting_review` → `submitting`, then `submitting`
+        → `submitted` when the carrier takes the request, or `submitting` → `awaiting_review` when
+        nothing was filed. A filing our desk records by hand still fires one event,
+        `awaiting_review` → `submitted`, so act on `to`, not on the pair. Before 2026-11-19 every
+        filing fired that one event.
 
         **`awaiting_signature` → `draft` means "signed" from 2026-11-07.** Before 2026-09-29 the
         same move meant the order was reopened and its letters discarded; that act no longer exists.
@@ -9872,7 +9892,7 @@ webhooks:
               data:
                 portOrderId: 0198c4a1-9203-74c5-a6d7-819203142536
                 tenantId: 0198c4a1-b425-76e7-18e9-031425364a5b
-                from: awaiting_review
+                from: submitting
                 to: submitted
       responses:
         '2XX':
@@ -14152,18 +14172,25 @@ components:
         draft whose Letter of Authorization is with your customer and not signed yet — still yours
         to edit, and it reads this way from the hand-over until your customer signs, when it reads
         `draft` again (`documents.loa` then holds the signed letter); `awaiting_review` is with our desk;
-        `submitted` means the paperwork went to a carrier; `foc_assigned` means one committed to a
-        cutover date; `completed` and `failed` are the two ends.
+        `submitting` means we are sending it to a carrier now (brief; it goes on to `submitted`, or
+        back to `awaiting_review` when nothing was filed; added 2026-11-19); `submitted` means the
+        paperwork went to a carrier; `foc_assigned` means one committed to a cutover date;
+        `completed` and `failed` are the two ends.
 
-        **The order and each of its numbers share this vocabulary, except `awaiting_signature`.**
-        That one is the order's alone: it is a fact about the paperwork, and a number has none of
-        its own — so a number stays `draft` until the order enters review. `filter[status]` takes
-        the same words: `awaiting_signature` selects the drafts whose letter is out and not signed
-        yet, and `draft` every other draft — also a signed one.
+        **The order and each of its numbers share this vocabulary, except `awaiting_signature` and
+        `submitting`.** Those are the order's alone: `awaiting_signature` is a fact about the
+        paperwork, and a number has none of its own — so a number stays `draft` until the order
+        enters review; a number stays `awaiting_review` while its order is `submitting`.
+        `filter[status]` takes the same words: `awaiting_signature` selects the drafts whose letter
+        is out and not signed yet, and `draft` every other draft — also a signed one.
+
+        **Treat a status you do not know as a step in progress, not an error.** We add a value only
+        with a changelog entry, and `submitting` (2026-11-19) is the newest.
       enum:
         - draft
         - awaiting_signature
         - awaiting_review
+        - submitting
         - submitted
         - foc_assigned
         - completed
@@ -14458,7 +14485,7 @@ components:
             **Is this port waiting on you?** True while a carrier is holding a number pending a
             correction, or our desk has asked you for one. Derived on every read from those markers,
             so it un-sets itself the moment a carrier withdraws its objection — which is exactly why
-            it is a flag beside `status` and not an eighth state.
+            it is a flag beside `status` and not one more state.
         correctionsNote:
           type: [string, 'null']
           description: |
@@ -14978,10 +15005,10 @@ components:
           type: string
           maxLength: 2000
           description: |
-            The page's address: `https` with a host, no user name or password, no `[` or `]`, no
-            space. `{sessionToken}` at most once, and only in the fragment (after `#`): the app puts
-            the user's session token there when the page opens.
-          example: 'https://app.example.com/phone#t={sessionToken}'
+            The page's address: `https` with a host, no user name or password, no `[` or `]` (so
+            no phone-system placeholder such as `[JWT_TOKEN]`), no `{` or `}`, no space. The app
+            loads it as it stands and adds nothing about the user.
+          example: 'https://app.example.com/phone?tab=missed'
         label:
           type: string
           minLength: 1
@@ -15000,7 +15027,10 @@ components:
       properties:
         url:
           type: string
-          description: The address, with `{sessionToken}` where the app puts the token.
+          description: |
+            The address as stored. If it holds a phone-system placeholder such as `[JWT_TOKEN]`, it was
+            set outside this API (or before the API refused it), and the apps put the user's session
+            there: set the page again, or clear it.
         label: { type: string }
         icon: { type: string }
     AppPage:

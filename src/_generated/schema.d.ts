@@ -2295,8 +2295,8 @@ export interface paths {
          * @description ## The lifecycle, in words
          *
          *     ```
-         *     draft  →  awaiting_review  →  submitted  →  foc_assigned  →  completed
-         *       │                                                     →  failed
+         *     draft  →  awaiting_review  →  submitting  →  submitted  →  foc_assigned  →  completed
+         *       │                                                                      →  failed
          *       └ reads awaiting_signature while the letter is out and not signed yet
          *     ```
          *
@@ -2311,20 +2311,28 @@ export interface paths {
          *     puts the order back to `awaiting_signature`, because your customer still holds the link.
          *     Until 2026-11-07 a signed order went on reading `awaiting_signature` until it was submitted.
          *     **`awaiting_review`** is our desk's: the request is in, and from here on it is worked rather
-         *     than edited. Our desk can return it to `draft` with a note, which is the one edge in this
-         *     lifecycle that goes backwards. Everything past it — `submitted` to a carrier,
+         *     than edited. Our desk can return it to `draft` with a note. Everything past it —
+         *     `submitting` while we send it to a carrier, `submitted` once the carrier has it,
          *     `foc_assigned` once one commits to a cutover date, then `completed` or `failed` — is us
-         *     working the port.
+         *     working the port. **`submitting`** is brief: it lasts while our filing call is at the
+         *     carrier. When the carrier did not take the request and nothing was filed, the order goes back
+         *     to `awaiting_review` (`submitting` → `awaiting_review`), so `awaiting_review` can follow
+         *     `submitting`. An order can also read `submitting` for longer, while our desk confirms with
+         *     the carrier whether a filing whose answer was lost went through. When our desk files an
+         *     order outside the console and records it by hand, the order goes from `awaiting_review` to
+         *     `submitted` with no `submitting`. Until 2026-11-19 an order read `awaiting_review` during
+         *     this step.
          *
          *     **No operation on this API hands the letter over.** An order reads `awaiting_signature`
          *     after the hand-over in the portal, and `port_order.status_changed` reports the move
          *     (`draft` → `awaiting_signature`) like any other. It reports the signature too
          *     (`awaiting_signature` → `draft`).
          *
-         *     **The numbers share the lifecycle, except `awaiting_signature`.** A port splits — a carrier
-         *     can commit to three lines and refuse the fourth — so each number carries its own status in
-         *     `numberStates`, and a number has no paperwork of its own, so it stays `draft` until the
-         *     order enters review.
+         *     **The numbers share the lifecycle, except `awaiting_signature` and `submitting`.** A port
+         *     splits — a carrier can commit to three lines and refuse the fourth — so each number carries
+         *     its own status in `numberStates`, and a number has no paperwork of its own, so it stays
+         *     `draft` until the order enters review. A number stays `awaiting_review` while its order is
+         *     `submitting`.
          *
          *     ## What a create takes
          *
@@ -2980,7 +2988,7 @@ export interface paths {
          *
          *     | Member | Rule |
          *     |---|---|
-         *     | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+         *     | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not percent-encoded at any depth (`%5B`, `%255B`), so no phone-system placeholder such as `[JWT_TOKEN]`. No `{` or `}`. |
          *     | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
          *     | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
          *
@@ -3199,7 +3207,7 @@ export interface paths {
          *
          *     | Member | Rule |
          *     |---|---|
-         *     | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not as `%5B` or `%5D`. `{sessionToken}` at most once, and only in the fragment. |
+         *     | `url` | required. `https://`, a host name (punycode for other scripts; no IP address), an optional port, then a path, query and fragment of letters, digits and `- . _ ~ ! $ & ( ) * + , ; = : @ / ? % #` only. At most 2,000 characters. `&` only before a parameter name and `=` (`?a=1&b=2`): no `&#`, and no `&` before a letter in any other shape. Percent-encode anything else. No `[` or `]`, also not percent-encoded at any depth (`%5B`, `%255B`), so no phone-system placeholder such as `[JWT_TOKEN]`. No `{` or `}`. |
          *     | `label` | required. The menu entry's text: 1 to 64 letters, digits, spaces and `. , : ; ! ? ( ) / _ # + -`, starting with a letter or a digit. |
          *     | `icon` | optional. A Material icon name: 1 to 64 lower-case letters, digits and `_`. `open_in_new` when absent. |
          *
@@ -3879,7 +3887,11 @@ export interface webhooks {
          *     `awaiting_signature` → `draft`, and submitting the signed order fires `draft` →
          *     `awaiting_review`. An edit, a regenerated letter (`generate-loa`) or a removed document
          *     that cancels a signed letter fires `draft` → `awaiting_signature`, because your customer
-         *     still holds the link.
+         *     still holds the link. Our filing fires `awaiting_review` → `submitting`, then `submitting`
+         *     → `submitted` when the carrier takes the request, or `submitting` → `awaiting_review` when
+         *     nothing was filed. A filing our desk records by hand still fires one event,
+         *     `awaiting_review` → `submitted`, so act on `to`, not on the pair. Before 2026-11-19 every
+         *     filing fired that one event.
          *
          *     **`awaiting_signature` → `draft` means "signed" from 2026-11-07.** Before 2026-09-29 the
          *     same move meant the order was reopened and its letters discarded; that act no longer exists.
@@ -7028,17 +7040,23 @@ export interface components {
          *     draft whose Letter of Authorization is with your customer and not signed yet — still yours
          *     to edit, and it reads this way from the hand-over until your customer signs, when it reads
          *     `draft` again (`documents.loa` then holds the signed letter); `awaiting_review` is with our desk;
-         *     `submitted` means the paperwork went to a carrier; `foc_assigned` means one committed to a
-         *     cutover date; `completed` and `failed` are the two ends.
+         *     `submitting` means we are sending it to a carrier now (brief; it goes on to `submitted`, or
+         *     back to `awaiting_review` when nothing was filed; added 2026-11-19); `submitted` means the
+         *     paperwork went to a carrier; `foc_assigned` means one committed to a cutover date;
+         *     `completed` and `failed` are the two ends.
          *
-         *     **The order and each of its numbers share this vocabulary, except `awaiting_signature`.**
-         *     That one is the order's alone: it is a fact about the paperwork, and a number has none of
-         *     its own — so a number stays `draft` until the order enters review. `filter[status]` takes
-         *     the same words: `awaiting_signature` selects the drafts whose letter is out and not signed
-         *     yet, and `draft` every other draft — also a signed one.
+         *     **The order and each of its numbers share this vocabulary, except `awaiting_signature` and
+         *     `submitting`.** Those are the order's alone: `awaiting_signature` is a fact about the
+         *     paperwork, and a number has none of its own — so a number stays `draft` until the order
+         *     enters review; a number stays `awaiting_review` while its order is `submitting`.
+         *     `filter[status]` takes the same words: `awaiting_signature` selects the drafts whose letter
+         *     is out and not signed yet, and `draft` every other draft — also a signed one.
+         *
+         *     **Treat a status you do not know as a step in progress, not an error.** We add a value only
+         *     with a changelog entry, and `submitting` (2026-11-19) is the newest.
          * @enum {string}
          */
-        PortOrderStatus: "draft" | "awaiting_signature" | "awaiting_review" | "submitted" | "foc_assigned" | "completed" | "failed";
+        PortOrderStatus: "draft" | "awaiting_signature" | "awaiting_review" | "submitting" | "submitted" | "foc_assigned" | "completed" | "failed";
         /**
          * @description Why ONE number left the port, beside the `failed` status it shares with every other way of
          *     ending. `withdrawn` — it was taken off the order before it moved, and nothing refused it.
@@ -7302,7 +7320,7 @@ export interface components {
              * @description **Is this port waiting on you?** True while a carrier is holding a number pending a
              *     correction, or our desk has asked you for one. Derived on every read from those markers,
              *     so it un-sets itself the moment a carrier withdraws its objection — which is exactly why
-             *     it is a flag beside `status` and not an eighth state.
+             *     it is a flag beside `status` and not one more state.
              */
             correctionsRequired?: boolean;
             /**
@@ -7698,10 +7716,10 @@ export interface components {
         /** @description The page to set — FLAT JSON. A `data` member is refused with a **422**. */
         AppPageSetRequest: {
             /**
-             * @description The page's address: `https` with a host, no user name or password, no `[` or `]`, no
-             *     space. `{sessionToken}` at most once, and only in the fragment (after `#`): the app puts
-             *     the user's session token there when the page opens.
-             * @example https://app.example.com/phone#t={sessionToken}
+             * @description The page's address: `https` with a host, no user name or password, no `[` or `]` (so
+             *     no phone-system placeholder such as `[JWT_TOKEN]`), no `{` or `}`, no space. The app
+             *     loads it as it stands and adds nothing about the user.
+             * @example https://app.example.com/phone?tab=missed
              */
             url: string;
             /**
@@ -7717,7 +7735,11 @@ export interface components {
         };
         /** @description One page, as the apps show it. */
         AppPageValue: {
-            /** @description The address, with `{sessionToken}` where the app puts the token. */
+            /**
+             * @description The address as stored. If it holds a phone-system placeholder such as `[JWT_TOKEN]`, it was
+             *     set outside this API (or before the API refused it), and the apps put the user's session
+             *     there: set the page again, or clear it.
+             */
             url: string;
             label: string;
             icon: string;
@@ -16525,13 +16547,13 @@ export interface operations {
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
                      *         "attributes": {
                      *           "page": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
                      *           "complete": true,
                      *           "effective": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
@@ -16573,7 +16595,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "url": "https://app.example.com/phone#t={sessionToken}",
+                 *       "url": "https://app.example.com/phone?tab=missed",
                  *       "label": "Missed calls",
                  *       "icon": "call_missed"
                  *     }
@@ -16595,13 +16617,13 @@ export interface operations {
                      *         "id": "0198c4a1-9203-74c5-a6d7-819203142536",
                      *         "attributes": {
                      *           "page": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
                      *           "complete": true,
                      *           "effective": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
@@ -16637,7 +16659,7 @@ export interface operations {
                      *         {
                      *           "status": "422",
                      *           "title": "Unprocessable Entity",
-                     *           "detail": "Put {sessionToken} in the fragment (after",
+                     *           "detail": "The url must not contain [JWT_TOKEN], [COOKIE_NAME], [COOKIE]: the app would put the user's session there. Sign your users in on your own page.",
                      *           "source": {
                      *             "pointer": "/url"
                      *           }
@@ -17073,13 +17095,13 @@ export interface operations {
                      *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
                      *         "attributes": {
                      *           "page": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
                      *           "complete": true,
                      *           "effective": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
@@ -17112,7 +17134,7 @@ export interface operations {
             content: {
                 /**
                  * @example {
-                 *       "url": "https://app.example.com/phone#t={sessionToken}",
+                 *       "url": "https://app.example.com/phone?tab=missed",
                  *       "label": "Missed calls",
                  *       "icon": "call_missed"
                  *     }
@@ -17134,13 +17156,13 @@ export interface operations {
                      *         "id": "0198c4a1-2b3c-7d4e-8f50-1a2b3c4d5e6f",
                      *         "attributes": {
                      *           "page": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
                      *           "complete": true,
                      *           "effective": {
-                     *             "url": "https://app.example.com/phone#t={sessionToken}",
+                     *             "url": "https://app.example.com/phone?tab=missed",
                      *             "label": "Missed calls",
                      *             "icon": "call_missed"
                      *           },
@@ -17176,7 +17198,7 @@ export interface operations {
                      *         {
                      *           "status": "422",
                      *           "title": "Unprocessable Entity",
-                     *           "detail": "Put {sessionToken} in the fragment (after",
+                     *           "detail": "The url must not contain [JWT_TOKEN], [COOKIE_NAME], [COOKIE]: the app would put the user's session there. Sign your users in on your own page.",
                      *           "source": {
                      *             "pointer": "/url"
                      *           }
@@ -18710,7 +18732,7 @@ export interface operations {
                  *       "data": {
                  *         "portOrderId": "0198c4a1-9203-74c5-a6d7-819203142536",
                  *         "tenantId": "0198c4a1-b425-76e7-18e9-031425364a5b",
-                 *         "from": "awaiting_review",
+                 *         "from": "submitting",
                  *         "to": "submitted"
                  *       }
                  *     }
