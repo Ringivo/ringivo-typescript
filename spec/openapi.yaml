@@ -15216,7 +15216,10 @@ components:
         wherever it registered from, so it works behind NAT and on a dynamic address.
         `static` — the phone system never signs in; you list the addresses it calls from and the
         hosts we send its calls to.
-      enum: [static, register]
+        `webex` — a Webex Calling trunk, made in the customer's Webex organization from the portal's
+        Webex trunk page. It is read-only here: a create or update cannot name this mode, and an
+        update or delete of such a trunk is refused.
+      enum: [static, register, webex]
     SipTrunkRegistrationMode:
       type: string
       description: |
@@ -15249,8 +15252,9 @@ components:
       type: string
       description: |
         `anchored` keeps the audio on our edge, which is what makes recording and mid-call features
-        possible. `direct` lets the audio flow end to end.
-      enum: [anchored, direct]
+        possible. `direct` lets the audio flow end to end. `srtp` is a Webex trunk's: anchored, with
+        encrypted audio toward Webex. A create or update cannot name it.
+      enum: [anchored, direct, srtp]
     SipTrunkTransport:
       type: string
       description: The transport a destination is reached over.

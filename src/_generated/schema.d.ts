@@ -7869,9 +7869,12 @@ export interface components {
          *     wherever it registered from, so it works behind NAT and on a dynamic address.
          *     `static` — the phone system never signs in; you list the addresses it calls from and the
          *     hosts we send its calls to.
+         *     `webex` — a Webex Calling trunk, made in the customer's Webex organization from the portal's
+         *     Webex trunk page. It is read-only here: a create or update cannot name this mode, and an
+         *     update or delete of such a trunk is refused.
          * @enum {string}
          */
-        SipTrunkMode: "static" | "register";
+        SipTrunkMode: "static" | "register" | "webex";
         /**
          * @description `replace` — one binding, replaced on every sign-in, which is what every mainstream phone
          *     system does. `additive` — several bindings held at once, for a system that registers more
@@ -7903,10 +7906,11 @@ export interface components {
         SipTrunkDialPolicy: "us_canada" | "nanp" | "permit_all";
         /**
          * @description `anchored` keeps the audio on our edge, which is what makes recording and mid-call features
-         *     possible. `direct` lets the audio flow end to end.
+         *     possible. `direct` lets the audio flow end to end. `srtp` is a Webex trunk's: anchored, with
+         *     encrypted audio toward Webex. A create or update cannot name it.
          * @enum {string}
          */
-        SipTrunkMediaMode: "anchored" | "direct";
+        SipTrunkMediaMode: "anchored" | "direct" | "srtp";
         /**
          * @description The transport a destination is reached over.
          * @enum {string}
