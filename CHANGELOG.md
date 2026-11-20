@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased — Added
+## 0.29.0 (2026-11-20) — Added
 
 - **The app page: a web page of yours in the menu of your customers' phone
   apps.** `customers.setAppPage(customerId, { url, label, icon? })` sets or
@@ -27,8 +27,9 @@
   (`subscriber`, `customer` or `default`, or `null`). `AppPageValue` has
   `url`, `label` and `icon`. Both keep the JSON they were read from in `raw`.
 - The vendored API description is the current one. Besides the app page
-  operations, it changes two descriptions of the number search and number
-  order operations; no shape changed.
+  operations, it adds the port order status `submitting`, which an order
+  reads while it is sent to a carrier, and it changes some descriptions.
+  `PortOrder.status` is a `string`, so no type of this package changed.
 
 ## 0.28.0 (2026-11-05) — Changed
 
