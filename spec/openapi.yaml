@@ -8722,6 +8722,7 @@ paths:
                       fromName: Dr Bell
                       callerIdRestricted: false
                       callerNumberDisplay: '+13025556789'
+                      callerNameDisplay: Dr Bell
                       toNumber: '+14075550101'
                       dialedNumber: '+14075550101'
                       routedByExtension: null
@@ -10147,6 +10148,7 @@ webhooks:
                 fromName: 'WIRELESS CALLER'
                 callerIdRestricted: false
                 callerNumberDisplay: '+17406495415'
+                callerNameDisplay: 'WIRELESS CALLER'
                 toNumber: '+17402084385'
                 dialedNumber: '+17402084385'
                 routedByExtension: null
@@ -12760,7 +12762,8 @@ components:
         fromExtension: { type: [string, 'null'], description: 'As on the call-record resource.' }
         fromName: { type: [string, 'null'], description: 'As on the call-record resource.' }
         callerIdRestricted: { type: [boolean, 'null'], description: 'As on the call-record resource: true when the caller withheld their caller ID; recorded only on inbound calls, so null (unknown) on outbound and internal calls and where the phone system does not record it.' }
-        callerNumberDisplay: { type: [string, 'null'], description: 'As on the call-record resource: `Anonymous` when `callerIdRestricted` is true, otherwise `fromNumber`. The name stays real in `fromName`.' }
+        callerNumberDisplay: { type: [string, 'null'], description: 'As on the call-record resource: `Anonymous` when `callerIdRestricted` is true, otherwise `fromNumber`. The number stays real in `fromNumber`.' }
+        callerNameDisplay: { type: [string, 'null'], description: 'As on the call-record resource: `Anonymous` when `callerIdRestricted` is true, otherwise `fromName`. The name stays real in `fromName`.' }
         toNumber: { type: [string, 'null'], description: 'As on the call-record resource: E.164 or null.' }
         dialedNumber: { type: [string, 'null'], description: 'As on the call-record resource: E.164 or null.' }
         routedByExtension: { type: [string, 'null'], description: 'As on the call-record resource.' }
@@ -16066,7 +16069,8 @@ components:
 
             `fromNumber`, `fromName`, `rawFromUri` and `rawFromUser` still carry the real caller ID
             when this is true. If you show the call to an end user, show `callerNumberDisplay` instead
-            of `fromNumber`, and do not show `fromName`, `rawFromUri` or `rawFromUser`.
+            of `fromNumber` and `callerNameDisplay` instead of `fromName`, and do not show `rawFromUri`
+            or `rawFromUser`.
           example: false
         callerNumberDisplay:
           type: [string, 'null']
@@ -16075,10 +16079,21 @@ components:
             is true, this is the literal string `Anonymous`. Otherwise (false or null) it is the same
             value as `fromNumber`: E.164 or null.
 
-            It is null when there was no caller at all, also on a withheld call. It masks the number
-            only: the caller's name is still in `fromName`. This field is not a `*Number` field,
-            because `Anonymous` is not a telephone number.
+            It is `Anonymous` on every withheld call, also when the phone system recorded no caller.
+            It is null only on a call that is not withheld and has no caller number. It masks the
+            number only: `callerNameDisplay` masks the name. This field is not a `*Number` field, because
+            `Anonymous` is not a telephone number.
           example: '+17406495415'
+        callerNameDisplay:
+          type: [string, 'null']
+          description: |
+            **The caller's name as the phone system's own API shows it.** When `callerIdRestricted`
+            is true, this is the literal string `Anonymous`. Otherwise (false or null) it is the same
+            value as `fromName`.
+
+            It is `Anonymous` on every withheld call, also when the phone system recorded no name.
+            The real name stays in `fromName`.
+          example: WIRELESS CALLER
         toNumber:
           type: [string, 'null']
           description: |
